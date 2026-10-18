@@ -1,0 +1,51 @@
+Media Lab 1.0.0
+
+BRIA RMBG 1.4
+Copyright BRIA Artificial Intelligence Ltd.
+https://huggingface.co/briaai/RMBG-1.4
+
+RMBG 1.4: BRIA's model license for non-commercial evaluation.
+License: https://bria.ai/bria-huggingface-model-license-agreement/
+An archived license is included in assets/licenses/RMBG-1.4-LICENSE.txt.
+Model revision: 2ceba5a5efaec153162aedea169f76caf9b46cf8
+
+Modifications: model converted to FP32 TensorFlow Lite format using onnx2tf
+2.6.9 with a fixed 1024 x 1024 input. Training weights were retained.
+These modifications and this application are not endorsed by BRIA.
+The model license governs the weights and compiled models separately from application code.
+
+LiteRT: Copyright Google LLC and contributors, Apache License 2.0.
+https://github.com/google-ai-edge/LiteRT
+Qualcomm QNN runtime: Qualcomm AI Hub Runtime Software License.
+The supplied LICENSE.pdf and third-party NOTICE.txt are included under assets/licenses/.
+
+AndroidX / Jetpack Compose / Media3: Copyright The Android Open Source Project, Apache License 2.0.
+Kotlin / kotlinx.coroutines: Copyright JetBrains and contributors, Apache License 2.0.
+Pillow resampling semantics: Copyright Secret Labs AB and Fredrik Lundh and contributors.
+The Pillow license is included under assets/licenses/.
+
+Complete bundled notices and license texts are in assets/licenses/.
+
+TagLib Android bindings 1.0.6: Copyright Kyant0 and contributors, Apache License 2.0.
+https://github.com/Kyant0/taglib
+Media Lab modifies JNI string conversion and resource release; the patch and
+corresponding source archives are included in third_party/.
+TagLib 2.3: Copyright Scott Wheeler and contributors, Mozilla Public License 1.1
+(selected from TagLib's dual licensing). Corresponding core source:
+https://github.com/taglib/taglib/releases/download/v2.3/taglib-2.3.tar.gz
+The corresponding license is included in assets/licenses/TagLib-COPYING.MPL.txt.
+utfcpp: Copyright Nemanja Trifunovic and contributors, Boost Software License 1.0.
+https://github.com/nemtrif/utfcpp
+The license is included in assets/licenses/utfcpp-LICENSE.txt.
+
+NCM decoding: algorithm adapted from Pacoshao/DeNcm and taurusxin/ncmdump,
+MIT License. The streaming decoder was reimplemented in Kotlin using Android's
+cryptographic primitives. Both projects' license text is in assets/licenses/NCM-LICENSE.txt.
+https://github.com/Pacoshao/DeNcm
+https://github.com/taurusxin/ncmdump
+
+libjpeg-turbo 3.2.0: Copyright the libjpeg-turbo Project and contributors.
+Distributed under the IJG, Modified BSD and zlib licenses as described in
+assets/licenses/libjpeg-turbo-LICENSE.md and libjpeg-turbo-README.ijg.
+Source archive: third_party/libjpeg-turbo-3.2.0.tar.gz.
+https://github.com/libjpeg-turbo/libjpeg-turbo

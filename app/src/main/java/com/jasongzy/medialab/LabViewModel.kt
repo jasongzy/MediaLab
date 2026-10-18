@@ -1,0 +1,700 @@
+package com.jasongzy.medialab
+
+import android.app.Application
+import android.graphics.Bitmap
+import android.graphics.Rect
+import android.net.Uri
+import android.os.Build
+import android.os.SystemClock
+import android.util.Log
+import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
+import com.kyant.taglib.Picture
+import java.io.File
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
+
+internal enum class ImportType {
+    IMAGE,
+    AUDIO,
+}
+
+internal data class PhotoState(
+    val name: String = "",
+    val history: List<PhotoFrame> = emptyList(),
+    val position: Int = 0,
+    val preview: Bitmap? = null,
+    val original: Bitmap? = null,
+    val info: PhotoInfo? = null,
+    val colors: List<Int> = emptyList(),
+    val picked: Int? = null,
+    val backgroundElapsedMs: Long? = null,
+) {
+    val frame
+        get() = history.getOrNull(position)
+}
+
+internal data class LabState(
+    val tab: Int = 0,
+    val photo: PhotoState = PhotoState(),
+    val batchPage: Boolean = false,
+    val audio: AudioDocument? = null,
+    val audioDirty: Boolean = false,
+    val replacing: ImportType? = null,
+    val busy: Boolean = false,
+    val refreshingMedia: Boolean = false,
+    val stage: Int = R.string.loading_photo,
+    val error: String? = null,
+    val notice: Int? = null,
+    val exportFile: File? = null,
+    val exportPreview: Bitmap? = null,
+    val mode: ColorMode = ColorMode.SYSTEM,
+) {
+    val workingFiles: Set<File>
+        get() =
+            (photo.history.flatMap { it.files } + listOfNotNull(audio?.file, exportFile))
+                .toSet()
+}
+
+internal class LabViewModel(application: Application) : AndroidViewModel(application) {
+    private val context = application
+    private val mutable = MutableStateFlow(LabState())
+    val state = mutable.asStateFlow()
+    private var job: Job? = null
+    private var pickJob: Job? = null
+    private var pendingPick: Pair<Int, Int>? = null
+    private val settings = context.getSharedPreferences("settings", 0)
+    private var exportOptions: ExportOptions? = null
+    private var exportedSource: PhotoFrame? = null
+    private var playbackPosition: Pair<File, Long>? = null
+    private var history: PhotoHistory? = null
+    private var resizePreview: ResizePreview? = null
+    private var replacement: CompletableDeferred<Boolean>? = null
+    private val imageAccess = Mutex()
+
+    private data class ResizePreview(
+        val source: PhotoFrame,
+        val width: Int,
+        val height: Int,
+        val method: Int,
+        val bitmap: Bitmap,
+        val preview: Bitmap,
+    )
+
+    init {
+        mutable.update {
+            it.copy(mode = ColorMode.fromStored(settings.getString("colorMode", null)))
+        }
+        work(R.string.preparing_image) {
+            File(context.cacheDir, "work")
+                .listFiles()
+                ?.filter { it.isFile }
+                ?.forEach { it.delete() }
+        }
+    }
+
+    private fun work(stage: Int, action: suspend () -> Unit) {
+        if (state.value.busy) return
+        mutable.update {
+            it.copy(busy = true, stage = stage, error = null)
+        }
+        job = viewModelScope.launch {
+            try {
+                pickJob?.cancelAndJoin()
+                withContext(Dispatchers.IO) { imageAccess.withLock { action() } }
+            } catch (_: CancellationException) {} catch (error: UnsupportedMediaException) {
+                mutable.update { it.copy(notice = error.messageRes) }
+            } catch (error: Exception) {
+                mutable.update { it.copy(error = error.stackTraceToString()) }
+            } catch (error: OutOfMemoryError) {
+                mutable.update { it.copy(error = context.getString(R.string.memory_error)) }
+            } finally {
+                mutable.update { it.copy(busy = false) }
+            }
+        }
+    }
+
+    fun mode(mode: ColorMode) {
+        settings.edit().putString("colorMode", mode.name).apply()
+        mutable.update { it.copy(mode = mode) }
+    }
+
+    fun tab(tab: Int) {
+        mutable.update { it.copy(tab = tab) }
+    }
+
+    fun showBatch(show: Boolean) {
+        mutable.update { it.copy(batchPage = show, tab = 1) }
+    }
+
+    fun playbackPosition(file: File): Long =
+        playbackPosition?.takeIf { it.first == file }?.second ?: 0
+
+    fun rememberPlaybackPosition(file: File, position: Long) {
+        playbackPosition = file to position
+    }
+
+    fun clearError() {
+        mutable.update { it.copy(error = null) }
+    }
+
+    fun clearNotice() {
+        mutable.update { it.copy(notice = null) }
+    }
+
+    fun clearCache() =
+        work(R.string.clearing_cache) {
+            if (NcmBatch.state.value.busy)
+                throw UnsupportedMediaException(R.string.batch_cache_busy)
+            discardResize()
+            MediaFiles.clearCache(context.cacheDir, state.value.workingFiles)
+            mutable.update { it.copy(notice = R.string.cache_cleared) }
+        }
+
+    fun refreshMediaIndex() {
+        if (state.value.refreshingMedia) return
+        mutable.update { it.copy(refreshingMedia = true) }
+        viewModelScope.launch {
+            try {
+                val success = withContext(Dispatchers.IO) { MediaFiles.refreshMediaIndex(context) }
+                mutable.update {
+                    it.copy(
+                        notice =
+                            if (success) R.string.media_index_refreshed
+                            else R.string.media_index_failed
+                    )
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                if (BuildConfig.DEBUG) Log.e("MediaIndex", "Media scan failed", error)
+                mutable.update { it.copy(notice = R.string.media_index_failed) }
+            } finally {
+                mutable.update { it.copy(refreshingMedia = false) }
+            }
+        }
+    }
+
+    fun cancel() {
+        mutable.update { it.copy(stage = R.string.cancelling) }
+        job?.cancel()
+    }
+
+    fun confirmReplacement(discard: Boolean) {
+        replacement?.complete(discard)
+    }
+
+    private suspend fun canReplace(type: ImportType): Boolean {
+        val current = state.value
+        val edited =
+            if (type == ImportType.IMAGE) current.photo.history.size > 1 else current.audioDirty
+        if (!edited) return true
+        val answer = CompletableDeferred<Boolean>()
+        replacement = answer
+        mutable.update { it.copy(replacing = type) }
+        return try {
+            answer.await()
+        } finally {
+            replacement = null
+            mutable.update { it.copy(replacing = null) }
+        }
+    }
+
+    fun open(uri: Uri, type: ImportType?) =
+        work(
+            if (type == null || type == ImportType.IMAGE) R.string.loading_photo
+            else R.string.loading_audio
+        ) {
+            if (
+                type == null &&
+                    (MediaFiles.name(context, uri).endsWith(".ncm", true) ||
+                        context.contentResolver.openInputStream(uri)?.use { Ncm.matches(it) } == true)
+            ) {
+                NcmBatch.addFiles(context, listOf(uri), shared = true)
+                showBatch(true)
+                return@work
+            }
+            val (file, name) = MediaFiles.import(context, uri)
+            try {
+                val bounds =
+                    android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                android.graphics.BitmapFactory.decodeFile(file.path, bounds)
+                val isImage = if (type == null) bounds.outWidth > 0 else type == ImportType.IMAGE
+                val typeError =
+                    when {
+                        isImage -> R.string.select_image_only
+                        else -> R.string.select_audio_only
+                    }
+                if ((bounds.outWidth > 0) != isImage) throw UnsupportedMediaException(typeError)
+                if (!isImage) {
+                    if (Ncm.matches(file)) throw UnsupportedMediaException(typeError)
+                    AudioFiles.validate(file)
+                }
+                if (!canReplace(if (isImage) ImportType.IMAGE else ImportType.AUDIO)) return@work
+                if (isImage) {
+                    val info = Photos.info(file)
+                    val preview = Photos.preview(file)
+                    val next =
+                        PhotoHistory(File(context.cacheDir, "work"), PhotoFrame(file, info))
+                    val photo = PhotoState(name, next.frames, 0, preview, preview, info)
+                    currentCoroutineContext().ensureActive()
+                    val old = history
+                    val oldExport = state.value.exportFile
+                    discardResize()
+                    history = next
+                    mutable.update {
+                        it.copy(
+                            photo = photo,
+                            tab = 0,
+                            exportFile = null,
+                            exportPreview = null,
+                        )
+                    }
+                    old?.close()
+                    oldExport?.delete()
+                } else {
+                    val document = AudioFiles.read(file, name)
+                    currentCoroutineContext().ensureActive()
+                    val old = state.value.audio?.file
+                    mutable.update {
+                        it.copy(
+                            audio = document,
+                            audioDirty = false,
+                            batchPage = false,
+                            tab = 1,
+                        )
+                    }
+                    old?.delete()
+                }
+            } finally {
+                if (file !in state.value.workingFiles) file.delete()
+            }
+        }
+
+    private fun discardResize(retained: Bitmap? = null) {
+        resizePreview?.bitmap?.takeIf { it !== retained }?.recycle()
+        resizePreview = null
+    }
+
+    private fun publish(preview: Bitmap, applied: Boolean = true) {
+        val history = checkNotNull(history)
+        val old = state.value.photo
+        val oldExport = state.value.exportFile
+        val photo =
+            PhotoState(
+                old.name,
+                history.frames,
+                history.position,
+                preview,
+                old.original,
+                history.current.info,
+            )
+        mutable.update {
+            it.copy(
+                photo = photo,
+                exportFile = null,
+                exportPreview = null,
+                notice = if (applied) R.string.changes_applied else null,
+            )
+        }
+        oldExport?.delete()
+    }
+
+    private suspend fun push(file: File) {
+        val frame = PhotoFrame(file, Photos.info(file))
+        val preview = Photos.preview(file)
+        checkNotNull(history).append(frame)
+        discardResize()
+        publish(preview)
+    }
+
+    private suspend fun push(bitmap: Bitmap, preview: Bitmap? = null, clearMetadata: Boolean = false) {
+        if (Build.VERSION.SDK_INT >= 34) bitmap.gainmap = null
+        val rendered = preview ?: Photos.preview(bitmap)
+        val metadata = if (clearMetadata) emptyList() else checkNotNull(state.value.photo.info).metadata
+        val frame = PhotoFrame(null, Photos.rasterInfo(bitmap, metadata), bitmap)
+        checkNotNull(history).append(frame)
+        discardResize(bitmap)
+        publish(rendered)
+    }
+
+    fun undo(direction: Int) =
+        work(R.string.preparing_image) {
+            val history = checkNotNull(history)
+            val position = (history.position + direction).coerceIn(history.frames.indices)
+            val frame = history.frames[position]
+            discardResize()
+            val preview =
+                if (frame.source != null) Photos.preview(frame.source)
+                else Photos.preview(history.bitmap(frame))
+            currentCoroutineContext().ensureActive()
+            history.move(position)
+            publish(preview, applied = false)
+        }
+
+    private suspend fun bitmapEdit(
+        crop: Rect? = null,
+        clearMetadata: Boolean = false,
+        transform: suspend (Bitmap) -> Unit = {},
+    ) {
+        discardResize()
+        val bitmap = checkNotNull(history).copy(crop)
+        try {
+            transform(bitmap)
+            currentCoroutineContext().ensureActive()
+            push(bitmap, clearMetadata = clearMetadata)
+        } catch (error: Throwable) {
+            bitmap.recycle()
+            throw error
+        }
+    }
+
+    fun crop(rect: Rect, lossless: Boolean) =
+        work(R.string.preparing_image) {
+            if (lossless) {
+                val photo = state.value.photo
+                val info = checkNotNull(photo.info)
+                require(
+                    info.mime == "image/jpeg" &&
+                        info.orientation == 1 &&
+                        info.container?.gainmap == null
+                ) {
+                    context.getString(R.string.jpeg_crop_requirement)
+                }
+                val target = MediaFiles.temporary(context, "jpg")
+                try {
+                    JpegNative.crop(
+                        checkNotNull(photo.frame?.source).path,
+                        target.path,
+                        rect.left,
+                        rect.top,
+                        rect.width(),
+                        rect.height(),
+                    )
+                    PhotoMetadata.write(target, info.metadata, rect.width(), rect.height())
+                    currentCoroutineContext().ensureActive()
+                    push(target)
+                } catch (error: Exception) {
+                    target.delete()
+                    throw error
+                }
+            } else bitmapEdit(rect)
+        }
+
+    fun expand(bounds: Rect, color: Int) =
+        work(R.string.preparing_image) {
+            discardResize()
+            val history = checkNotNull(history)
+            val source = history.bitmap()
+            require(bounds.width() > 0 && bounds.height() > 0)
+            history.reserve(
+                bounds.width().toLong() * bounds.height() *
+                    if (source.config == Bitmap.Config.RGBA_F16) 8 else 4
+            )
+            val bitmap = Photos.expand(source, bounds, color)
+            try {
+                currentCoroutineContext().ensureActive()
+                push(bitmap)
+            } catch (error: Throwable) {
+                bitmap.recycle()
+                throw error
+            }
+        }
+
+    fun resize(width: Int, height: Int, method: Int) =
+        work(R.string.preparing_image) {
+            val result = resized(width, height, method)
+            push(result.bitmap, result.preview)
+        }
+
+    fun previewResize(width: Int, height: Int, method: Int, ready: (Bitmap) -> Unit) =
+        work(R.string.preparing_image) {
+            val result = resized(width, height, method)
+            withContext(Dispatchers.Main) { ready(result.preview) }
+        }
+
+    private suspend fun resized(width: Int, height: Int, method: Int): ResizePreview {
+        require(width > 0 && height > 0 && method in 0..2)
+        val history = checkNotNull(history)
+        resizePreview
+            ?.takeIf {
+                it.source === history.current &&
+                    it.width == width &&
+                    it.height == height &&
+                    it.method == method
+            }
+            ?.let {
+                return it
+            }
+        discardResize()
+        val source = history.bitmap()
+        val bytesPerPixel = if (method == 0 && source.config == Bitmap.Config.RGBA_F16) 8 else 4
+        history.reserve(width.toLong() * height * bytesPerPixel)
+        val scaled = Photos.resize(source, width, height, method)
+        val bitmap =
+            if (scaled === source) checkNotNull(source.copy(source.config!!, true)) else scaled
+        try {
+            currentCoroutineContext().ensureActive()
+            if (Build.VERSION.SDK_INT >= 34) bitmap.gainmap = null
+            val result =
+                ResizePreview(
+                    history.current,
+                    width,
+                    height,
+                    method,
+                    bitmap,
+                    Photos.preview(bitmap),
+                )
+            resizePreview = result
+            return result
+        } catch (error: Throwable) {
+            bitmap.recycle()
+            throw error
+        }
+    }
+
+    fun cover(strokes: List<Stroke>) =
+        work(R.string.preparing_image) {
+            bitmapEdit {
+                Photos.cover(it, strokes)
+            }
+        }
+
+    fun removeBackground() =
+        work(R.string.preparing_image) {
+            mutable.update { it.copy(photo = it.photo.copy(backgroundElapsedMs = null)) }
+            val started = SystemClock.elapsedRealtime()
+            bitmapEdit { bitmap ->
+                Photos.removeBackground(context, bitmap) { stage ->
+                    mutable.update { it.copy(stage = stage) }
+                }
+            }
+            val elapsed = SystemClock.elapsedRealtime() - started
+            mutable.update { it.copy(photo = it.photo.copy(backgroundElapsedMs = elapsed)) }
+        }
+
+    fun palette() =
+        work(R.string.analyzing_colors) {
+            val photo = state.value.photo
+            val frame = checkNotNull(photo.frame)
+            val colors =
+                if (frame.pixels != null || frame.source == null)
+                    Photos.palette(checkNotNull(history).bitmap(frame))
+                else Photos.palette(frame.source, frame.info)
+            mutable.update { it.copy(photo = it.photo.copy(colors = colors)) }
+        }
+
+    fun pick(x: Int, y: Int) {
+        if (state.value.busy) return
+        val frame = state.value.photo.frame ?: return
+        pendingPick = x to y
+        if (pickJob?.isActive == true) return
+        pickJob = viewModelScope.launch {
+            try {
+                while (true) {
+                    val (sampleX, sampleY) = pendingPick ?: break
+                    pendingPick = null
+                    val color =
+                        withContext(Dispatchers.IO) {
+                            imageAccess.withLock {
+                                if (state.value.photo.frame !== frame || state.value.busy) null
+                                else if (frame.pixels != null || frame.source == null)
+                                    checkNotNull(history)
+                                        .bitmap(frame)
+                                        .getPixel(
+                                            sampleX.coerceIn(0, frame.info.width - 1),
+                                            sampleY.coerceIn(0, frame.info.height - 1),
+                                        )
+                                else Photos.pixel(frame.source, frame.info, sampleX, sampleY)
+                            }
+                        }
+                    if (color != null && state.value.photo.frame === frame && !state.value.busy)
+                        mutable.update { it.copy(photo = it.photo.copy(picked = color)) }
+                    delay(32)
+                }
+            } catch (_: CancellationException) {} catch (error: Exception) {
+                mutable.update { it.copy(error = error.stackTraceToString()) }
+            } finally {
+                pendingPick = null
+            }
+        }
+    }
+
+    fun clean(static: Boolean, flatten: Boolean, metadata: Boolean, keepColor: Boolean) =
+        work(R.string.preparing_image) {
+            val photo = state.value.photo
+            val frame = checkNotNull(photo.frame)
+            if (frame.source == null) {
+                if (metadata && frame.info.metadata.isNotEmpty()) bitmapEdit(clearMetadata = true)
+                else mutable.update { it.copy(notice = R.string.changes_applied) }
+                return@work
+            }
+            discardResize()
+            val options =
+                ExportOptions(
+                    metadata = metadata,
+                    static = static,
+                    flatten = flatten,
+                    keepColor = keepColor,
+                )
+            val target = Photos.export(context, frame.source, frame.info, options)
+            try {
+                push(target)
+            } catch (error: Throwable) {
+                target.delete()
+                throw error
+            }
+        }
+
+    private suspend fun prepare(options: ExportOptions): File {
+        val photo = state.value.photo
+        val frame = checkNotNull(photo.frame)
+        if (
+            exportOptions == options &&
+                exportedSource === frame &&
+                state.value.exportFile?.isFile == true
+        )
+            return state.value.exportFile!!
+        discardResize()
+        val file =
+            if (frame.source != null) Photos.export(context, frame.source, frame.info, options)
+            else {
+                val history = checkNotNull(history)
+                val bitmap = history.bitmap(frame)
+                if (options.format == ImageFormat.JPEG && bitmap.hasAlpha())
+                    history.reserve(bitmap.width.toLong() * bitmap.height * 4)
+                Photos.export(context, bitmap, frame.info, options)
+            }
+        val preview =
+            try {
+                Photos.preview(file).also { currentCoroutineContext().ensureActive() }
+            } catch (error: Throwable) {
+                file.delete()
+                throw error
+            }
+        val old = state.value.exportFile
+        mutable.update { it.copy(exportFile = file, exportPreview = preview) }
+        old?.delete()
+        exportOptions = options
+        exportedSource = frame
+        return file
+    }
+
+    fun previewExport(options: ExportOptions, ready: () -> Unit) =
+        work(R.string.preparing_image) {
+            prepare(options)
+            withContext(Dispatchers.Main) { ready() }
+        }
+
+    fun saveImage(options: ExportOptions) =
+        work(R.string.saving) {
+            val file = prepare(options)
+            MediaFiles.save(
+                context,
+                file,
+                MediaFiles.outputName(state.value.photo.name, file.extension),
+                true,
+            )
+            mutable.update { it.copy(notice = R.string.image_saved) }
+        }
+
+    fun shareImage(options: ExportOptions, ready: (File) -> Unit) =
+        work(R.string.preparing_image) {
+            val file = prepare(options)
+            val directory = File(context.cacheDir, "exports").apply { mkdirs() }
+            val target =
+                File(directory, MediaFiles.outputName(state.value.photo.name, file.extension))
+            file.inputStream().use { input ->
+                target.outputStream().use { MediaFiles.copy(input, it) }
+            }
+            withContext(Dispatchers.Main) { ready(target) }
+        }
+
+    fun editAudio(tags: Map<String, List<String>>, pictures: List<Picture>) {
+        mutable.update {
+            it.copy(audio = it.audio?.copy(tags = tags, pictures = pictures), audioDirty = true)
+        }
+    }
+
+    fun saveAudio(tags: Map<String, List<String>>, pictures: List<Picture>) =
+        work(R.string.saving) {
+            val document = state.value.audio!!
+            val file = AudioFiles.save(context, document, tags, pictures)
+            try {
+                MediaFiles.save(
+                    context,
+                    file,
+                    MediaFiles.outputName(document.name, file.extension),
+                    false,
+                )
+                val audio = AudioFiles.read(file, document.name)
+                mutable.update {
+                    it.copy(
+                        audio = audio,
+                        audioDirty = false,
+                        notice = R.string.audio_saved,
+                    )
+                }
+                document.file.delete()
+            } catch (error: Exception) {
+                file.delete()
+                throw error
+            }
+        }
+
+    fun cover(uri: Uri, ready: (Picture) -> Unit) =
+        work(R.string.loading_photo) {
+            val (file, _) = MediaFiles.import(context, uri)
+            try {
+                val info = Photos.info(file)
+                val bitmap = Photos.decode(file, info)
+                try {
+                    val bytes =
+                        java.io.ByteArrayOutputStream().use {
+                            check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, it))
+                            it.toByteArray()
+                        }
+                    require(bytes.size <= 32 * 1024 * 1024) { "Cover exceeds 32 MB" }
+                    withContext(Dispatchers.Main) {
+                        ready(Picture(bytes, "", "Front Cover", "image/png"))
+                    }
+                } finally {
+                    bitmap.recycle()
+                }
+            } finally {
+                file.delete()
+            }
+        }
+
+    fun saveCover(picture: Picture) =
+        work(R.string.saving) {
+            val mime = AudioFiles.pictureMime(picture.data)
+            val file =
+                MediaFiles.temporary(
+                    context,
+                    checkNotNull(
+                        android.webkit.MimeTypeMap.getSingleton().getExtensionFromMimeType(mime)
+                    ),
+                )
+            try {
+                file.writeBytes(picture.data)
+                MediaFiles.save(context, file, "cover.${file.extension}", true)
+                mutable.update { it.copy(notice = R.string.image_saved) }
+            } finally {
+                file.delete()
+            }
+        }
+}

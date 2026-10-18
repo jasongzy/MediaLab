@@ -1,0 +1,17 @@
+TagLib Android 1.0.6
+https://github.com/Kyant0/taglib/tree/957fd7c2794457a14c1484fa3e3b58382aca4202
+
+taglib-android-1.0.6.tar.gz contains the unchanged taglib.cpp, utils.h,
+fileref_ext.cpp and fileref_ext.h from src/main/cpp, plus the upstream LICENSE.
+The Kotlin API and keep rules are extracted from the verified Maven AAR.
+taglib-android-unicode.patch converts JNI strings through UTF-16 in both
+directions and releases temporary JNI resources. CMake applies the patch to
+a fresh build-directory copy whenever configuring the native build.
+
+TagLib 2.3
+https://github.com/taglib/taglib/releases/download/v2.3/taglib-2.3.tar.gz
+
+This official release archive includes utfcpp. The Android wrapper's recorded
+core commit 1cbd910c3da4818e835ee6d6e467157366d5f1bb is unavailable from the
+public TagLib repository; Media Lab pins the 2.3 release for reproducible builds.
+Archive SHA-256 values are checked in app/src/main/cpp/CMakeLists.txt.

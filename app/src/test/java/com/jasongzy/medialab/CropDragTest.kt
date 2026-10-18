@@ -1,0 +1,187 @@
+package com.jasongzy.medialab
+
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.unit.IntRect
+import androidx.compose.ui.unit.IntSize
+import org.junit.Assert.*
+import org.junit.Test
+
+class CropDragTest {
+    private val image = Size(1000f, 800f)
+    private val original = Rect(200f, 200f, 600f, 400f)
+
+    @Test
+    fun expansionRoundsDimensionsOnceAndKeepsFractionalEdgesOutside() {
+        assertEquals(IntSize(178, 100), expandedSize(100, 100, 16f / 9))
+        assertEquals(IntSize(64, 114), expandedSize(64, 48, 9f / 16))
+        assertEquals(IntSize(64, 48), expandedSize(64, 48, 0f))
+        val ratio = 4f / 3
+        val minimum = expandedSize(1000, 800, ratio)
+        val rounded = Rect(-33f, 0f, 1034f, 800f)
+        val start = Offset(rounded.left, rounded.center.y)
+        val returning = CropDrag(rounded, start, image, 20f, ratio,
+            Rect(-2000f, -2000f, 3000f, 3000f), expand = true)
+        assertEquals(IntRect(-33, 0, 1034, 800), returning.pixelBounds(start))
+        val frame = Rect(-33.333332f, 0f, 1033.3334f, 800f)
+        val drag = CropDrag(frame, Offset(-33.333332f, 400f), image, 20f, ratio,
+            Rect(-2000f, -2000f, 3000f, 3000f), expand = true)
+        for (end in listOf(Offset(-33.333332f, 400f), Offset(50f, 400f), Offset(-500f, 400f))) {
+            val result = drag.pixelBounds(end)
+            assertTrue(result.left <= 0 && result.top <= 0 && result.right >= 1000 && result.bottom >= 800)
+            assertTrue(result.width >= minimum.width && result.height >= minimum.height)
+        }
+        val crop = CropDrag(original, original.center, image, 20f, 0f)
+        assertEquals(IntRect(200, 200, 600, 400), crop.pixelBounds(original.center + Offset(0.4f, 0.4f)))
+        val padded = Rect(-20f, -10f, 1040f, 830f)
+        val move = CropDrag(padded, padded.center, image, 20f, 0f, expand = true)
+        for (delta in listOf(Offset(0.4f, 0.4f), Offset(-0.4f, -0.4f), Offset(500f, -500f))) {
+            val result = move.pixelBounds(padded.center + delta)
+            assertEquals(1060, result.width)
+            assertEquals(840, result.height)
+        }
+    }
+
+    @Test
+    fun expansionHandlesAndMovesKeepTheWholeImage() {
+        val full = Rect(Offset.Zero, image)
+        val visible = Rect(-1000f, -1000f, 2000f, 2000f)
+        val corner = CropDrag(full, Offset.Zero, image, 20f, 0f, visible, expand = true)
+        assertEquals(Rect(-200f, -100f, 1000f, 800f), corner.update(Offset(-200f, -100f)))
+        assertEquals(full, corner.update(Offset(200f, 100f)))
+        val right = CropDrag(full, Offset(1000f, 400f), image, 20f, 0f, visible, expand = true)
+        assertEquals(Rect(0f, 0f, 1400f, 800f), right.update(Offset(1400f, 400f)))
+        val frame = Rect(-200f, -100f, 1400f, 1000f)
+        val move = CropDrag(frame, frame.center, image, 20f, 0f, visible, expand = true)
+        assertEquals(Rect(0f, 0f, 1600f, 1100f), move.update(Offset(3000f, 3000f)))
+        assertEquals(Rect(-600f, -300f, 1000f, 800f), move.update(Offset(-3000f, -3000f)))
+    }
+
+    @Test
+    fun expansionDrawingAndResizingRespectTheRatioAndOriginalPixels() {
+        val visible = Rect(-1000f, -1000f, 2000f, 2000f)
+        val full = Rect(Offset.Zero, image)
+        val drawing = CropDrag(full, Offset(-400f, -200f), image, 20f, 2f, visible, expand = true)
+        assertEquals(Rect(-700f, -200f, 1300f, 800f), drawing.update(Offset(-100f, -20f)))
+        val frame = Rect(-300f, 0f, 1300f, 800f)
+        val resizing = CropDrag(frame, Offset(-300f, 400f), image, 20f, 2f, visible, expand = true)
+        assertEquals(Rect(-500f, -50f, 1300f, 850f), resizing.update(Offset(-500f, 400f)))
+        assertEquals(frame, resizing.update(Offset(500f, 400f)))
+    }
+
+    @Test
+    fun fullImageAndFullyHiddenFrameCreateNewCropsWithAFixedAnchor() {
+        val full = Rect(Offset.Zero, image)
+        val frame = Rect(200f, 150f, 800f, 650f)
+        val hidden = Rect(210f, 160f, 790f, 640f)
+        for ((crop, visible, start) in
+            listOf(
+                Triple(full, full, Offset(500f, 400f)),
+                Triple(full, hidden, Offset(500f, 400f)),
+                Triple(frame, hidden, Offset(215f, 165f)),
+            )) {
+            val drag = CropDrag(crop, start, image, 20f, 0f, visible)
+            assertEquals(crop, drag.update(start))
+            assertEquals(
+                Rect(start, start + Offset(100f, 80f)),
+                drag.update(start + Offset(100f, 80f)),
+            )
+            assertEquals(
+                Rect(start, start + Offset(200f, 160f)),
+                drag.update(start + Offset(200f, 160f)),
+            )
+        }
+        val oneVisibleEdge = Rect(200f, 160f, 790f, 640f)
+        val moving = CropDrag(frame, frame.center, image, 20f, 0f, oneVisibleEdge)
+        assertEquals(
+            frame.translate(Offset(50f, 50f)),
+            moving.update(frame.center + Offset(50f, 50f)),
+        )
+    }
+
+    @Test
+    fun visibleHandlesTakePriorityWithAConstantScreenTolerance() {
+        val full = Rect(Offset.Zero, image)
+        val corner = CropDrag(full, Offset(10f, 10f), image, 20f, 0f)
+        assertEquals(Rect(100f, 100f, 1000f, 800f), corner.update(Offset(110f, 110f)))
+        val visible = Rect(200f, 210f, 590f, 390f)
+        val left = CropDrag(original, Offset(208f, 300f), image, 20f, 0f, visible)
+        assertEquals(Rect(300f, 200f, 600f, 400f), left.update(Offset(308f, 300f)))
+        for (fit in listOf(0.4f, 1f, 4f)) {
+            for (distance in listOf(20f, 32f)) {
+                val start = Offset(original.left + distance / fit, original.center.y)
+                val drag = CropDrag(original, start, image, 28f / fit, 0f)
+                assertEquals(
+                    if (distance < 28f) Rect(250f, 200f, 600f, 400f)
+                    else original.translate(Offset(50f, 0f)),
+                    drag.update(start + Offset(50f, 0f)),
+                )
+            }
+        }
+    }
+
+    @Test
+    fun drawingOnEdgeExtensionsStartsANewRectangleInAllFourDirections() {
+        val directions =
+            listOf(
+                Offset(-60f, -40f) to Rect(-60f, -40f, 0f, 0f),
+                Offset(60f, -40f) to Rect(0f, -40f, 60f, 0f),
+                Offset(-60f, 40f) to Rect(-60f, 0f, 0f, 40f),
+                Offset(60f, 40f) to Rect(0f, 0f, 60f, 40f),
+            )
+        for (start in listOf(Offset(200f, 100f), Offset(100f, 200f))) {
+            val drag = CropDrag(original, start, image, 20f, 0f)
+            assertEquals(original, drag.update(start))
+            for ((direction, expected) in directions) {
+                assertEquals(expected.translate(start), drag.update(start + direction))
+            }
+        }
+        val outside = CropDrag(Rect(0f, 0f, 1000f, 800f), Offset(-40f, -40f), image, 20f, 0f)
+        assertEquals(Rect(0f, 0f, 100f, 100f), outside.update(Offset(100f, 100f)))
+    }
+
+    @Test
+    fun resizingUsesTheNearestHandleAndPreservesUntouchedEdges() {
+        val cases =
+            listOf(
+                Triple(Offset(208f, 300f), Offset(108f, 310f), Rect(100f, 200f, 600f, 400f)),
+                Triple(Offset(592f, 300f), Offset(692f, 280f), Rect(200f, 200f, 700f, 400f)),
+                Triple(Offset(400f, 208f), Offset(410f, 108f), Rect(200f, 100f, 600f, 400f)),
+                Triple(Offset(400f, 392f), Offset(420f, 492f), Rect(200f, 200f, 600f, 500f)),
+                Triple(Offset(208f, 208f), Offset(108f, 108f), Rect(100f, 100f, 600f, 400f)),
+                Triple(Offset(592f, 208f), Offset(692f, 108f), Rect(200f, 100f, 700f, 400f)),
+                Triple(Offset(208f, 392f), Offset(108f, 492f), Rect(100f, 200f, 600f, 500f)),
+                Triple(Offset(592f, 392f), Offset(692f, 492f), Rect(200f, 200f, 700f, 500f)),
+            )
+        for ((start, end, expected) in cases) {
+            val drag = CropDrag(original, start, image, 20f, 0f)
+            assertEquals(original, drag.update(start))
+            assertEquals(expected, drag.update(end))
+        }
+        val small = Rect(200f, 200f, 220f, 220f)
+        val drag = CropDrag(small, Offset(219f, 210f), image, 28f, 0f)
+        assertEquals(Rect(200f, 200f, 230f, 220f), drag.update(Offset(229f, 210f)))
+    }
+
+    @Test
+    fun ratioAndImageBoundsArePreservedWhenDrawingResizingAndMoving() {
+        val start = Offset(100f, 100f)
+        val newCrop = CropDrag(original, start, image, 20f, 2f)
+        for (x in listOf(-1, 1)) for (y in listOf(-1, 1)) {
+            val result = newCrop.update(start + Offset(x * 80f, y * 80f))
+            assertEquals(80f, result.width, 0.001f)
+            assertEquals(40f, result.height, 0.001f)
+            assertEquals(start.x, if (x < 0) result.right else result.left, 0f)
+            assertEquals(start.y, if (y < 0) result.bottom else result.top, 0f)
+        }
+        val left = CropDrag(original, Offset(200f, 300f), image, 20f, 2f)
+        assertEquals(Rect(0f, 150f, 600f, 450f), left.update(Offset(-100f, 500f)))
+        val top = CropDrag(original, Offset(400f, 200f), image, 20f, 2f)
+        assertEquals(Rect(0f, 0f, 800f, 400f), top.update(Offset(500f, -500f)))
+        val corner = CropDrag(original, Offset(600f, 400f), image, 20f, 2f)
+        assertEquals(Rect(200f, 200f, 1000f, 600f), corner.update(Offset(2000f, 2000f)))
+        val move = CropDrag(original, original.center, image, 20f, 2f)
+        assertEquals(Rect(600f, 600f, 1000f, 800f), move.update(Offset(2000f, 2000f)))
+    }
+}
