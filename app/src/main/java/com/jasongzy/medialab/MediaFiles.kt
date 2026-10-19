@@ -8,9 +8,14 @@ import android.os.Environment
 import android.provider.MediaStore
 import android.provider.OpenableColumns
 import android.webkit.MimeTypeMap
+import java.io.EOFException
 import java.io.File
+import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
+import java.net.HttpURLConnection
+import java.net.Proxy
+import java.net.URI
 import java.nio.file.Files
 import java.nio.file.LinkOption
 import java.nio.file.NoSuchFileException
@@ -59,15 +64,18 @@ internal object MediaFiles {
         }
     }
 
-    fun name(context: Context, uri: Uri): String =
-        context.contentResolver
-            .query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
-            ?.use {
-                if (it.moveToFirst()) it.getString(0) else null
-            }
+    fun name(context: Context, uri: Uri): String {
+        val name =
+            if (uri.scheme == "http") uri.lastPathSegment
+            else
+                context.contentResolver
+                    .query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
+                    ?.use { if (it.moveToFirst()) it.getString(0) else null }
+        return name
             ?.substringAfterLast('/')
             ?.substringAfterLast('\\')
             ?.takeIf { it.isNotBlank() } ?: "media"
+    }
 
     fun temporary(context: Context, extension: String): File =
         File(context.cacheDir, "work/${UUID.randomUUID()}.$extension").also {
@@ -94,14 +102,48 @@ internal object MediaFiles {
         val name = name(context, uri)
         val file = temporary(context, name.substringAfterLast('.', "bin").lowercase().take(10))
         try {
-            checkNotNull(context.contentResolver.openInputStream(uri)).use { input ->
-                file.outputStream().buffered().use { copy(input, it) }
+            file.outputStream().buffered().use { output ->
+                if (uri.scheme == "http") copyLocalImage(uri.toString(), output)
+                else
+                    checkNotNull(context.contentResolver.openInputStream(uri)).use {
+                        copy(it, output)
+                    }
             }
             require(file.length() > 0) { "Empty input" }
             return file to name
         } catch (error: Exception) {
             file.delete()
             throw error
+        }
+    }
+
+    suspend fun copyLocalImage(source: String, output: OutputStream) {
+        val uri = URI(source)
+        if (uri.scheme != "http" || uri.host != "127.0.0.1" || uri.userInfo != null)
+            throw UnsupportedMediaException(R.string.image_stream_unavailable)
+        currentCoroutineContext().ensureActive()
+        val connection = uri.toURL().openConnection(Proxy.NO_PROXY) as HttpURLConnection
+        try {
+            connection.apply {
+                connectTimeout = 10_000
+                readTimeout = 15_000
+                instanceFollowRedirects = false
+                useCaches = false
+                setRequestProperty("Accept-Encoding", "identity")
+            }
+            val status = connection.responseCode
+            if (status != HttpURLConnection.HTTP_OK) throw IOException("HTTP $status")
+            val expected = connection.contentLengthLong
+            var copied = 0L
+            connection.inputStream.use { copy(it, output) { count -> copied = count } }
+            if (expected >= 0 && copied != expected) throw EOFException("Incomplete image stream")
+        } catch (error: IOException) {
+            currentCoroutineContext().ensureActive()
+            throw UnsupportedMediaException(R.string.image_stream_unavailable).apply {
+                initCause(error)
+            }
+        } finally {
+            connection.disconnect()
         }
     }
 

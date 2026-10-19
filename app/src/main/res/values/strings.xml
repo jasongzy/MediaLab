@@ -173,6 +173,7 @@
     <string name="exit_message">Exiting will clear the current workspace. Unsaved changes will be lost.</string>
     <string name="exit">Exit</string>
     <string name="select_image_only">Choose a supported image file.</string>
+    <string name="image_stream_unavailable">Could not read the image. Extract or save it to your device, then open it again.</string>
     <string name="select_audio_only">Please choose a supported audio file.</string>
     <string name="transparency_background">Transparency background</string>
     <string name="jpeg_background_hint">JPEG fills transparent areas with this color.</string>

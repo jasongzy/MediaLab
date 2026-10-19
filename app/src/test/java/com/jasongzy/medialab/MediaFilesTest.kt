@@ -1,6 +1,10 @@
 package com.jasongzy.medialab
 
+import com.sun.net.httpserver.HttpServer
+import java.io.ByteArrayOutputStream
 import java.io.File
+import java.net.InetSocketAddress
+import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
 import org.junit.Rule
@@ -9,6 +13,50 @@ import org.junit.rules.TemporaryFolder
 
 class MediaFilesTest {
     @get:Rule val folder = TemporaryFolder()
+
+    @Test
+    fun localImageStreamsPreserveBytesAndRestrictRequests() = runBlocking {
+        val bytes = ByteArray(300_000) { it.toByte() }
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        val imageRequests = AtomicInteger()
+        server.createContext("/image.webp") { exchange ->
+            imageRequests.incrementAndGet()
+            exchange.sendResponseHeaders(200, bytes.size.toLong())
+            exchange.responseBody.use { it.write(bytes) }
+        }
+        server.createContext("/redirect") { exchange ->
+            exchange.responseHeaders.add("Location", "/image.webp")
+            exchange.sendResponseHeaders(302, -1)
+            exchange.close()
+        }
+        server.start()
+        try {
+            val base = "http://127.0.0.1:${server.address.port}"
+            val output = ByteArrayOutputStream()
+            MediaFiles.copyLocalImage("$base/image.webp", output)
+            assertArrayEquals(bytes, output.toByteArray())
+            for (source in
+                listOf(
+                    "$base/redirect",
+                    "$base/missing",
+                    "$base/image.webp".replace("127.0.0.1", "localhost"),
+                    "$base/image.webp".replace("127.0.0.1", "user@127.0.0.1"),
+                    "$base/image.webp".replace("http:", "https:"),
+                )) {
+                val rejected = ByteArrayOutputStream()
+                try {
+                    MediaFiles.copyLocalImage(source, rejected)
+                    fail(source)
+                } catch (error: UnsupportedMediaException) {
+                    assertEquals(R.string.image_stream_unavailable, error.messageRes)
+                    assertEquals(0, rejected.size())
+                }
+            }
+            assertEquals(1, imageRequests.get())
+        } finally {
+            server.stop(0)
+        }
+    }
 
     @Test
     fun clearingCachePreservesWorkspaceAndPersistentFiles() = runBlocking {

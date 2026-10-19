@@ -87,7 +87,7 @@ class MainActivity : AppCompatActivity() {
                 Intent.ACTION_VIEW -> intent.data
                 else -> null
             }
-        if (uri != null) model.open(uri, null)
+        if (uri != null) model.open(uri, if (uri.scheme == "http") ImportType.IMAGE else null)
     }
 }
 
