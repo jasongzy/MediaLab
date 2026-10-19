@@ -16,16 +16,44 @@ internal fun expandedSize(width: Int, height: Int, ratio: Float): IntSize =
         maxOf(height, ceil(width / ratio).toInt()),
     ) else IntSize(width, height)
 
+internal fun croppedSize(width: Int, height: Int, ratio: Float): IntSize =
+    if (ratio > 0) IntSize(
+        minOf(width, (height * ratio).roundToInt().coerceAtLeast(1)),
+        minOf(height, (width / ratio).roundToInt().coerceAtLeast(1)),
+    ) else IntSize(width, height)
+
 internal fun ratioBounds(bounds: IntRect, ratio: Float, expand: Boolean): IntRect {
     if (ratio <= 0) return bounds
     val width = bounds.width
     val height = bounds.height
-    val size = if (expand) expandedSize(width, height, ratio) else IntSize(
-        minOf(width, (height * ratio).roundToInt().coerceAtLeast(1)),
-        minOf(height, (width / ratio).roundToInt().coerceAtLeast(1)),
-    )
+    val size = if (expand) expandedSize(width, height, ratio) else croppedSize(width, height, ratio)
     val left = bounds.left + (width - size.width) / 2
     val top = bounds.top + (height - size.height) / 2
+    return IntRect(left, top, left + size.width, top + size.height)
+}
+
+internal fun resizedBounds(bounds: IntRect, image: IntSize, size: IntSize, expand: Boolean): IntRect {
+    require(size.width > 0 && size.height > 0)
+    val left = if (expand) bounds.left.coerceIn(image.width - size.width, 0)
+        else bounds.left.coerceIn(0, image.width - size.width)
+    val top = if (expand) bounds.top.coerceIn(image.height - size.height, 0)
+        else bounds.top.coerceIn(0, image.height - size.height)
+    return IntRect(left, top, left + size.width, top + size.height)
+}
+
+internal fun positionedBounds(
+    bounds: IntRect,
+    image: IntSize,
+    left: Int,
+    top: Int,
+    ratio: Float,
+    expand: Boolean,
+): IntRect {
+    require(if (expand) left <= 0 && top <= 0 else left in 0 until image.width && top in 0 until image.height)
+    val width = if (expand) maxOf(bounds.width, image.width - left) else minOf(bounds.width, image.width - left)
+    val height = if (expand) maxOf(bounds.height, image.height - top) else minOf(bounds.height, image.height - top)
+    val size = if (width == bounds.width && height == bounds.height) IntSize(width, height)
+        else if (expand) expandedSize(width, height, ratio) else croppedSize(width, height, ratio)
     return IntRect(left, top, left + size.width, top + size.height)
 }
 

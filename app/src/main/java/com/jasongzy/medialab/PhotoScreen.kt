@@ -48,6 +48,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntRect
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import kotlin.math.roundToInt
@@ -238,8 +239,8 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
                                 }
                                 HistoryButtons(frameHistory)
                             }
+                            FrameFields(frameHistory, info, expanding)
                             if (expanding) {
-                                ExpansionFields(bounds, info, ratio, ::setBounds)
                                 ColorField(background, allowTransparent = true, pick = { dropper = !dropper }) {
                                     background = it
                                     dropper = false
@@ -248,83 +249,6 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
                                     stringResource(R.string.tap_color),
                                     style = MaterialTheme.typography.bodySmall,
                                 )
-                            } else {
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    NumberField(
-                                        R.string.width,
-                                        bounds.width(),
-                                        Modifier.weight(1f),
-                                        1..if (ratio > 0)
-                                                minOf(
-                                                    info.width - bounds.left,
-                                                    ((info.height - bounds.top) * ratio)
-                                                        .roundToInt()
-                                                        .coerceAtLeast(1),
-                                                )
-                                            else info.width - bounds.left,
-                                    ) { w ->
-                                        val h =
-                                            if (ratio > 0)
-                                                (w / ratio)
-                                                    .roundToInt()
-                                                    .coerceIn(1, info.height - bounds.top)
-                                            else bounds.height()
-                                        setBounds(Rect(bounds.left, bounds.top, bounds.left + w, bounds.top + h))
-                                    }
-                                    NumberField(
-                                        R.string.height,
-                                        bounds.height(),
-                                        Modifier.weight(1f),
-                                        1..if (ratio > 0)
-                                                minOf(
-                                                    info.height - bounds.top,
-                                                    ((info.width - bounds.left) / ratio)
-                                                        .roundToInt()
-                                                        .coerceAtLeast(1),
-                                                )
-                                            else info.height - bounds.top,
-                                    ) { h ->
-                                        val w =
-                                            if (ratio > 0)
-                                                (h * ratio)
-                                                    .roundToInt()
-                                                    .coerceIn(1, info.width - bounds.left)
-                                            else bounds.width()
-                                        setBounds(Rect(bounds.left, bounds.top, bounds.left + w, bounds.top + h))
-                                    }
-                                }
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    NumberField(
-                                        R.string.left,
-                                        bounds.left,
-                                        Modifier.weight(1f),
-                                        0..info.width - bounds.width(),
-                                    ) { x ->
-                                        setBounds(
-                                            Rect(
-                                                x,
-                                                bounds.top,
-                                                x + bounds.width(),
-                                                bounds.bottom,
-                                            )
-                                        )
-                                    }
-                                    NumberField(
-                                        R.string.top,
-                                        bounds.top,
-                                        Modifier.weight(1f),
-                                        0..info.height - bounds.height(),
-                                    ) { y ->
-                                        setBounds(
-                                            Rect(
-                                                bounds.left,
-                                                y,
-                                                bounds.right,
-                                                y + bounds.height(),
-                                            )
-                                        )
-                                    }
-                                }
                             }
                             val jpeg = info.container?.jpeg
                             val canLossless =
@@ -1007,29 +931,55 @@ private fun HistoryButtons(history: ToolHistory<*>) {
 }
 
 @Composable
-private fun ExpansionFields(bounds: Rect, info: PhotoInfo, ratio: Float, change: (Rect) -> Unit) {
-    fun resize(width: Int, height: Int) {
-        val left = bounds.left.coerceIn(info.width - width, 0)
-        val top = bounds.top.coerceIn(info.height - height, 0)
-        change(Rect(left, top, left + width, top + height))
-    }
-    val minimum = expandedSize(info.width, info.height, ratio)
-    val minWidth = minimum.width
-    val minHeight = minimum.height
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        NumberField(R.string.width, bounds.width(), Modifier.weight(1f), minWidth..maxOf(100000, bounds.width(), minWidth)) {
-            resize(it, if (ratio > 0) (it / ratio).roundToInt().coerceAtLeast(minHeight) else bounds.height())
-        }
-        NumberField(R.string.height, bounds.height(), Modifier.weight(1f), minHeight..maxOf(100000, bounds.height(), minHeight)) {
-            resize(if (ratio > 0) (it * ratio).roundToInt().coerceAtLeast(minWidth) else bounds.width(), it)
-        }
+private fun FrameFields(history: ToolHistory<FrameSelection>, info: PhotoInfo, expand: Boolean) {
+    val selection = history.value
+    val bounds = selection.bounds
+    val ratio = selection.ratio
+    val frame = IntRect(bounds.left, bounds.top, bounds.right, bounds.bottom)
+    val image = IntSize(info.width, info.height)
+    val minimum = if (expand) expandedSize(image.width, image.height, ratio) else IntSize(1, 1)
+    val maximum = if (expand) IntSize(
+        maxOf(100000, frame.width, minimum.width),
+        maxOf(100000, frame.height, minimum.height),
+    ) else croppedSize(image.width, image.height, ratio)
+    fun update(next: IntRect) {
+        val value = selection.copy(bounds = Rect(next.left, next.top, next.right, next.bottom))
+        history.change(value)
     }
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        NumberField(R.string.left_padding, -bounds.left, Modifier.weight(1f), 0..bounds.width() - info.width) {
-            change(Rect(-it, bounds.top, bounds.width() - it, bounds.bottom))
+        NumberField(
+            R.string.width, frame.width, Modifier.weight(1f), minimum.width..maximum.width,
+        ) { width ->
+            val height = if (ratio > 0) (width / ratio).roundToInt().coerceIn(
+                minimum.height, if (expand) Int.MAX_VALUE else image.height,
+            ) else frame.height
+            update(resizedBounds(frame, image, IntSize(width, height), expand))
         }
-        NumberField(R.string.top_padding, -bounds.top, Modifier.weight(1f), 0..bounds.height() - info.height) {
-            change(Rect(bounds.left, -it, bounds.right, bounds.height() - it))
+        NumberField(
+            R.string.height, frame.height, Modifier.weight(1f), minimum.height..maximum.height,
+        ) { height ->
+            val width = if (ratio > 0) (height * ratio).roundToInt().coerceIn(
+                minimum.width, if (expand) Int.MAX_VALUE else image.width,
+            ) else frame.width
+            update(resizedBounds(frame, image, IntSize(width, height), expand))
+        }
+    }
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        NumberField(
+            if (expand) R.string.left_padding else R.string.left,
+            if (expand) -frame.left else frame.left,
+            Modifier.weight(1f),
+            0..if (expand) maximum.width - image.width else image.width - 1,
+        ) { left ->
+            update(positionedBounds(frame, image, if (expand) -left else left, frame.top, ratio, expand))
+        }
+        NumberField(
+            if (expand) R.string.top_padding else R.string.top,
+            if (expand) -frame.top else frame.top,
+            Modifier.weight(1f),
+            0..if (expand) maximum.height - image.height else image.height - 1,
+        ) { top ->
+            update(positionedBounds(frame, image, frame.left, if (expand) -top else top, ratio, expand))
         }
     }
 }

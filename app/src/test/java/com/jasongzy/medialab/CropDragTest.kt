@@ -13,6 +13,35 @@ class CropDragTest {
     private val original = Rect(200f, 200f, 600f, 400f)
 
     @Test
+    fun resizingPreservesRequestedDimensionsAndSnapsTheOrigin() {
+        val image = IntSize(1000, 800)
+        val crop = IntRect(600, 500, 1000, 800)
+        assertEquals(IntRect(300, 300, 1000, 800), resizedBounds(crop, image, IntSize(700, 500), false))
+        assertEquals(IntRect(600, 500, 800, 600), resizedBounds(crop, image, IntSize(200, 100), false))
+        val canvas = IntRect(-400, -300, 1000, 800)
+        assertEquals(IntRect(-100, -100, 1000, 800), resizedBounds(canvas, image, IntSize(1100, 900), true))
+        assertEquals(IntRect(-400, -300, 1600, 1300), resizedBounds(canvas, image, IntSize(2000, 1600), true))
+        val full = IntRect(0, 0, 1000, 800)
+        assertEquals(full, resizedBounds(crop, image, image, false))
+        assertEquals(full, resizedBounds(canvas, image, image, true))
+    }
+
+    @Test
+    fun movingPreservesTheOriginAndFitsDimensionsOnlyWhenNeeded() {
+        val image = IntSize(1000, 800)
+        val crop = IntRect(600, 500, 1000, 800)
+        assertEquals(IntRect(800, 500, 1000, 800), positionedBounds(crop, image, 800, 500, 0f, false))
+        assertEquals(IntRect(800, 500, 1000, 600), positionedBounds(crop, image, 800, 500, 2f, false))
+        assertEquals(IntRect(600, 700, 800, 800), positionedBounds(crop, image, 600, 700, 2f, false))
+        assertEquals(IntRect(999, 799, 1000, 800), positionedBounds(crop, image, 999, 799, 2f, false))
+        val canvas = IntRect(-100, -100, 1000, 800)
+        assertEquals(IntRect(-400, -300, 1000, 800), positionedBounds(canvas, image, -400, -300, 0f, true))
+        assertEquals(IntRect(-400, -300, 1800, 800), positionedBounds(canvas, image, -400, -300, 2f, true))
+        val rounded = IntRect(-33, 0, 1034, 800)
+        assertEquals(IntRect(-20, 0, 1047, 800), positionedBounds(rounded, image, -20, 0, 4f / 3, true))
+    }
+
+    @Test
     fun presetsUseTheCurrentFrameCenterAndRespectTheEditingDirection() {
         val crop = IntRect(210, 130, 610, 430)
         assertEquals(IntRect(260, 130, 560, 430), ratioBounds(crop, 1f, expand = false))
