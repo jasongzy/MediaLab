@@ -86,8 +86,8 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
     val editor = checkNotNull(photo.editor)
     var menu by remember(editor) { mutableStateOf(false) }
     var tool by editor::tool
-    val toolScroll = rememberLazyListState()
-    val panelScroll = rememberScrollState()
+    val toolScroll = key(photo.history.first()) { rememberLazyListState() }
+    val panelScroll = key(photo.history.first()) { rememberScrollState() }
     val exportHighlight = remember(editor) { Animatable(0f) }
     val highlightColor = MaterialTheme.colorScheme.primary
     var exportRequest by remember(editor) { mutableIntStateOf(0) }
