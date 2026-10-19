@@ -37,6 +37,7 @@ internal enum class DiscardAction(val title: Int, val message: Int, val confirm:
     UNDO(R.string.undo, R.string.discard_unapplied_message),
     REDO(R.string.redo, R.string.discard_unapplied_message),
     APPLY(R.string.apply, R.string.discard_other_edits_message, R.string.apply),
+    RESTORE(R.string.restore_original, R.string.discard_unapplied_message, R.string.restore_original),
 }
 
 internal data class PhotoState(
@@ -65,7 +66,6 @@ internal data class LabState(
     val photo: PhotoState = PhotoState(),
     val batchPage: Boolean = false,
     val audio: AudioDocument? = null,
-    val audioDirty: Boolean = false,
     val confirmation: DiscardAction? = null,
     val busy: Boolean = false,
     val refreshingMedia: Boolean = false,
@@ -76,6 +76,8 @@ internal data class LabState(
     val exportPreview: Bitmap? = null,
     val mode: ColorMode = ColorMode.SYSTEM,
 ) {
+    val audioDirty: Boolean
+        get() = audio?.dirty == true
     val workingFiles: Set<File>
         get() =
             (photo.history.flatMap { it.files } + listOfNotNull(audio?.file, exportFile))
@@ -299,7 +301,6 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
                     mutable.update {
                         it.copy(
                             audio = document,
-                            audioDirty = false,
                             batchPage = false,
                             tab = 1,
                         )
@@ -316,7 +317,7 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
         resizePreview = null
     }
 
-    private fun publish(preview: Bitmap, applied: Boolean = true) {
+    private fun publish(preview: Bitmap, notice: Int? = R.string.changes_applied) {
         val history = checkNotNull(history)
         val old = state.value.photo
         val oldExport = state.value.exportFile
@@ -336,7 +337,7 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
                 photo = photo,
                 exportFile = null,
                 exportPreview = null,
-                notice = if (applied) Notice(R.string.changes_applied) else null,
+                notice = notice?.let { message -> Notice(message) },
             )
         }
         oldExport?.delete()
@@ -375,7 +376,19 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
                 else Photos.preview(history.bitmap(frame))
             currentCoroutineContext().ensureActive()
             history.move(position)
-            publish(preview, applied = false)
+            publish(preview, notice = null)
+        }
+
+    fun restoreOriginal() =
+        work(R.string.preparing_image) {
+            val history = checkNotNull(history)
+            val original = history.frames.first()
+            if (history.current === original) return@work
+            if (state.value.photo.pending.isNotEmpty() && !canDiscard(DiscardAction.RESTORE)) return@work
+            val preview = checkNotNull(state.value.photo.original)
+            history.append(original)
+            discardResize()
+            publish(preview, R.string.original_image_restored)
         }
 
     private suspend fun bitmapEdit(
@@ -666,15 +679,27 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
         }
 
     fun editAudio(tags: Map<String, List<String>>, pictures: List<Picture>) {
-        mutable.update {
-            it.copy(audio = it.audio?.copy(tags = tags, pictures = pictures), audioDirty = true)
-        }
+        state.value.audio?.editor?.history?.change(AudioMetadata(tags, pictures))
     }
 
-    fun saveAudio(tags: Map<String, List<String>>, pictures: List<Picture>) =
+    fun undoAudio(direction: Int) {
+        val audio = state.value.audio ?: return
+        if (state.value.busy || audio.editor.hasDraft) return
+        if (direction < 0) audio.editor.history.undo() else audio.editor.history.redo()
+    }
+
+    fun restoreAudio() {
+        val editor = state.value.audio?.editor ?: return
+        if (state.value.busy || editor.hasDraft || editor.history.value == editor.original) return
+        editor.history.change(editor.original)
+        mutable.update { it.copy(notice = Notice(R.string.original_audio_restored)) }
+    }
+
+    fun saveAudio() =
         work(R.string.saving) {
             val document = state.value.audio!!
-            val file = AudioFiles.save(workspace.work, document, tags, pictures)
+            val metadata = document.editor.history.value
+            val file = AudioFiles.save(workspace.work, document, metadata.tags, metadata.pictures)
             try {
                 val path = MediaFiles.save(
                     context,
@@ -683,13 +708,13 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
                     false,
                 )
                 val audio = AudioFiles.read(file, document.name).copy(
+                    saved = metadata, editor = document.editor,
                     sourceUri = document.sourceUri, sourceBytes = document.sourceBytes,
                     sourceDuration = document.sourceDuration,
                 )
                 mutable.update {
                     it.copy(
                         audio = audio,
-                        audioDirty = false,
                         notice = Notice(R.string.file_saved, path),
                     )
                 }

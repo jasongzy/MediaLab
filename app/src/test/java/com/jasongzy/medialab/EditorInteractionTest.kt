@@ -4,6 +4,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.geometry.center
+import com.kyant.taglib.Picture
+import java.io.File
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -20,6 +22,49 @@ class EditorInteractionTest {
         assertFalse(clean.preservesSource(info.copy(orientation = 6)))
         assertFalse(clean.preservesSource(info.copy(mime = "image/heif")))
         assertFalse(ExportOptions(format = ImageFormat.PNG).preservesSource(info))
+    }
+
+    @Test
+    fun audioHistoryRestoresTagsAndArtworkAcrossSaveAndBranching() {
+        val original = AudioMetadata(mapOf("TITLE" to listOf("Original")), emptyList())
+        val audio = AudioDocument(File("song.mp3"), "song.mp3", null, original, emptyList())
+        val history = audio.editor.history
+        history.change(original)
+        assertFalse(history.canUndo)
+        assertFalse(audio.dirty)
+        val tagged = original.copy(tags = mapOf("TITLE" to listOf("Edited")))
+        history.change(tagged)
+        val picture = Picture(byteArrayOf(1, 2, 3), "Cover", "Front Cover", "image/png")
+        val illustrated = tagged.copy(pictures = listOf(picture))
+        history.change(illustrated)
+        history.undo()
+        assertEquals(tagged.tags, audio.tags)
+        assertTrue(audio.pictures.isEmpty())
+        history.undo()
+        assertFalse(audio.dirty)
+        history.redo()
+        history.redo()
+        val saved = audio.copy(saved = history.value)
+        assertFalse(saved.dirty)
+        assertSame(picture.data, saved.pictures.single().data)
+        history.undo()
+        assertTrue(saved.dirty)
+        history.redo()
+        assertFalse(saved.dirty)
+        history.change(saved.editor.original)
+        assertEquals(original.tags, saved.tags)
+        assertTrue(saved.pictures.isEmpty())
+        assertTrue(saved.dirty)
+        history.undo()
+        assertEquals(illustrated, history.value)
+        history.redo()
+        assertEquals(original, history.value)
+        history.undo()
+        history.change(tagged)
+        assertFalse(history.canRedo)
+        assertTrue(saved.dirty)
+        assertEquals(tagged.tags, saved.tags)
+        assertFalse(AudioDocument(audio.file, audio.name, null, original, emptyList()).editor.history.canUndo)
     }
 
     @Test

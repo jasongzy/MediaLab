@@ -19,14 +19,20 @@ internal data class AudioDocument(
     val file: File,
     val name: String,
     val properties: AudioProperties?,
-    val tags: Map<String, List<String>>,
-    val pictures: List<Picture>,
+    val saved: AudioMetadata,
     val technical: List<Pair<String, String>>,
-    val editor: AudioEditorState = AudioEditorState(),
+    val editor: AudioEditorState = AudioEditorState(saved),
     val sourceUri: Uri? = null,
     val sourceBytes: Long? = null,
     val sourceDuration: Long? = properties?.length?.toLong(),
-)
+) {
+    val tags: Map<String, List<String>>
+        get() = editor.history.value.tags
+    val pictures: List<Picture>
+        get() = editor.history.value.pictures
+    val dirty: Boolean
+        get() = editor.history.value != saved
+}
 
 internal object AudioFiles {
     fun validate(file: File) {
@@ -78,8 +84,7 @@ internal object AudioFiles {
             file,
             name,
             properties,
-            metadata.propertyMap.mapValues { it.value.toList() },
-            metadata.pictures.toList(),
+            AudioMetadata(metadata.propertyMap.mapValues { it.value.toList() }, metadata.pictures.toList()),
             technical,
         )
     }

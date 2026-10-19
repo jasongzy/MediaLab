@@ -187,6 +187,8 @@ internal class PhotoRegression(
                 check(history.bitmap(second).getPixel(0, 0) == Color.WHITE)
                 history.move(1)
                 history.bitmap(first)
+                history.append(first)
+                check(history.residentBytes == first.pixels!!.allocationByteCount.toLong())
                 history.move(0)
                 val branchBitmap = history.copy().apply { eraseColor(Color.BLACK) }
                 check(pixels(history.bitmap()).contentEquals(expected))
@@ -316,6 +318,15 @@ internal class PhotoRegression(
             val editedAudio = checkNotNull(model.state.value.audio)
             check(editedAudio.sourceUri == Uri.fromFile(audio))
             check(editedAudio.sourceBytes == audio.length())
+            check(model.state.value.audioDirty)
+            instrumentation.runOnMainSync {
+                model.restoreAudio()
+                check(!model.state.value.audioDirty && model.state.value.notice?.message == R.string.original_audio_restored)
+                model.clearNotice()
+                model.restoreAudio()
+                check(model.state.value.notice == null)
+                model.undoAudio(-1)
+            }
             check(model.state.value.audioDirty)
             val before = work.listFiles()!!.toSet()
             for (type in listOf(ImportType.AUDIO, null)) {
@@ -563,6 +574,30 @@ internal class PhotoRegression(
             instrumentation.runOnMainSync { model.previewExport(ExportOptions(format = ImageFormat.JPEG)) {} }
             idle(model)
             checkCapture(checkNotNull(model.state.value.exportFile), false)
+            val beforeRestore = model.state.value.photo
+            val original = beforeRestore.history.first()
+            instrumentation.runOnMainSync {
+                beforeRestore.editor!!.resize.width++
+                model.restoreOriginal()
+            }
+            answer(model, DiscardAction.RESTORE, false)
+            check(model.state.value.photo === beforeRestore && beforeRestore.pending == listOf(PhotoTool.RESIZE))
+            instrumentation.runOnMainSync { model.restoreOriginal() }
+            answer(model, DiscardAction.RESTORE, true)
+            check(model.state.value.photo.frame === original && model.state.value.photo.pending.isEmpty())
+            check(model.state.value.photo.info!!.color == info.color)
+            check(model.state.value.notice?.message == R.string.original_image_restored)
+            checkCapture(original.source!!)
+            val restoredSize = model.state.value.photo.history.size
+            instrumentation.runOnMainSync { model.restoreOriginal() }
+            idle(model)
+            check(model.state.value.photo.history.size == restoredSize)
+            instrumentation.runOnMainSync { model.undo(-1) }
+            idle(model)
+            check(model.state.value.photo.frame === beforeRestore.frame)
+            instrumentation.runOnMainSync { model.undo(1) }
+            idle(model)
+            check(model.state.value.photo.frame === original)
         } finally {
             reference.recycle()
             instrumentation.runOnMainSync { store.clear() }

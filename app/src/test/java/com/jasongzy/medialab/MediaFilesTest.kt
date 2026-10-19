@@ -17,6 +17,36 @@ class MediaFilesTest {
     @get:Rule val folder = TemporaryFolder()
 
     @Test
+    fun restoredOriginalSurvivesUndoRedoAndBranchCleanup() = runBlocking {
+        val info = PhotoInfo(1, 1, 1, 1, 1, "image/jpeg", 5, PhotoColor(), null, emptyList())
+        val original = PhotoFrame(file(folder.root, "original.jpg"), info)
+        val edited = PhotoFrame(file(folder.root, "edited.jpg"), info)
+        val branch = PhotoFrame(file(folder.root, "branch.jpg"), info)
+        val history = PhotoHistory(folder.root, original)
+        try {
+            history.append(edited)
+            history.append(original)
+            assertEquals(listOf(original, edited, original), history.frames)
+            history.move(1)
+            assertSame(edited, history.current)
+            history.move(2)
+            assertSame(original, history.current)
+            history.move(1)
+            history.append(branch)
+            assertEquals(listOf(original, edited, branch), history.frames)
+            assertTrue(original.source!!.isFile)
+            history.move(0)
+            history.append(original)
+            assertFalse(edited.source!!.exists())
+            assertFalse(branch.source!!.exists())
+            assertTrue(original.source.isFile)
+        } finally {
+            history.close()
+        }
+        assertFalse(original.source.exists())
+    }
+
+    @Test
     fun localImageStreamsPreserveBytesAndRestrictRequests() = runBlocking {
         val bytes = ByteArray(300_000) { it.toByte() }
         val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
@@ -80,7 +110,7 @@ class MediaFilesTest {
             val state =
                 LabState(
                     photo = PhotoState(history = frames, position = 1),
-                    audio = AudioDocument(audio, audio.name, null, emptyMap(), emptyList(), emptyList()),
+                    audio = AudioDocument(audio, audio.name, null, AudioMetadata(emptyMap(), emptyList()), emptyList()),
                     exportFile = export,
                 )
             firstFiles = state.workingFiles

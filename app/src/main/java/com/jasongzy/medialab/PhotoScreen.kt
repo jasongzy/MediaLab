@@ -80,6 +80,7 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
     }
     val info = photo.info
     val editor = checkNotNull(photo.editor)
+    var menu by remember(editor) { mutableStateOf(false) }
     var tool by editor::tool
     val previewInteraction = remember { MutableInteractionSource() }
     val showOriginal by previewInteraction.collectIsPressedAsState()
@@ -152,6 +153,19 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
                         painterResource(R.drawable.ic_visibility),
                         stringResource(R.string.hold_original),
                     )
+                }
+                Box {
+                    ToolButton(R.drawable.ic_more, R.string.more) { menu = true }
+                    DropdownMenu(menu, { menu = false }) {
+                        DropdownMenuItem(
+                            text = { Text(stringResource(R.string.restore_original)) },
+                            enabled = photo.frame !== photo.history.first(),
+                            onClick = {
+                                menu = false
+                                model.restoreOriginal()
+                            },
+                        )
+                    }
                 }
             }
             val preview: @Composable (Modifier) -> Unit = { area ->

@@ -5,7 +5,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.kyant.taglib.Picture
 
-internal class AudioEditorState {
+internal data class AudioMetadata(val tags: Map<String, List<String>>, val pictures: List<Picture>)
+
+internal class AudioEditorState(val original: AudioMetadata) {
+    val history = ToolHistory(original)
     var tag by mutableStateOf<TagDraft?>(null)
     var picture by mutableStateOf<PictureDraft?>(null)
     var coverRequest by mutableStateOf<CoverRequest?>(null)

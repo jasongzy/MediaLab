@@ -46,11 +46,11 @@ internal class PhotoHistory(
     val current: PhotoFrame
         get() = frames[position]
     val residentBytes: Long
-        get() = frames.sumOf { it.pixels?.allocationByteCount?.toLong() ?: 0 }
+        get() = frames.distinct().sumOf { it.pixels?.allocationByteCount?.toLong() ?: 0 }
 
     suspend fun reserve(bytes: Long, keep: PhotoFrame? = current) {
         require(bytes >= 0)
-        for (frame in frames) {
+        for (frame in frames.distinct()) {
             if (residentBytes + bytes <= memoryBudget) break
             if (frame !== keep) spill(frame)
         }
@@ -111,12 +111,12 @@ internal class PhotoHistory(
     }
 
     suspend fun append(frame: PhotoFrame) {
-        reserve(frame.pixels?.allocationByteCount?.toLong() ?: 0, keep = null)
+        if (frame !in frames) reserve(frame.pixels?.allocationByteCount?.toLong() ?: 0, keep = null)
         currentCoroutineContext().ensureActive()
         val discarded = frames.drop(position + 1)
         frames = frames.take(position + 1) + frame
         position = frames.lastIndex
-        discarded.forEach { it.release() }
+        discarded.distinct().filter { it !in frames }.forEach { it.release() }
     }
 
     fun move(position: Int) {
@@ -125,7 +125,7 @@ internal class PhotoHistory(
     }
 
     fun close() {
-        frames.forEach { it.release() }
+        frames.distinct().forEach { it.release() }
         frames = emptyList()
     }
 

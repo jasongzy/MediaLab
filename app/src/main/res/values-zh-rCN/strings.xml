@@ -13,6 +13,7 @@
     <string name="change_photo">打开图片</string>
     <string name="choose_audio">选择音频</string>
     <string name="change_audio">更换音频</string>
+    <string name="more">更多</string>
     <string name="image_empty">选择图像以编辑</string>
     <string name="audio_empty">选择音乐以编辑</string>
     <string name="crop">裁剪</string>
@@ -34,6 +35,10 @@
     <string name="unapplied_changes">尚未应用的修改</string>
     <string name="discard_unapplied_message">此操作会丢弃尚未应用的修改，是否继续？</string>
     <string name="discard_other_edits_message">应用后将丢弃其他工具中尚未应用的修改，是否继续？</string>
+    <string name="restore_original">恢复原图</string>
+    <string name="restore_original_audio">恢复原音频</string>
+    <string name="original_image_restored">已恢复原图</string>
+    <string name="original_audio_restored">已恢复原音频</string>
     <string name="unapplied_export">以下修改尚未应用，导出时不会包含：\n%1$s</string>
     <string name="undo">撤销</string>
     <string name="redo">重做</string>

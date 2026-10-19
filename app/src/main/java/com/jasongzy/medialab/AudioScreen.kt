@@ -58,6 +58,8 @@ internal fun AudioScreen(model: LabViewModel, state: LabState, active: Boolean) 
         return
     }
     val editor = audio.editor
+    val history = editor.history
+    var menu by remember(editor) { mutableStateOf(false) }
     var editTag by editor::tag
     var editPicture by editor::picture
     val coverPicker =
@@ -98,9 +100,28 @@ internal fun AudioScreen(model: LabViewModel, state: LabState, active: Boolean) 
                 Modifier.weight(1f),
             )
             TextButton(open) { Text(stringResource(R.string.change_audio)) }
-            TextButton(importNcm) { Text(stringResource(R.string.unlock)) }
-            ToolButton(R.drawable.ic_save, R.string.save_copy) {
-                model.saveAudio(audio.tags, audio.pictures)
+            ToolButton(R.drawable.ic_undo, R.string.undo, history.canUndo) { model.undoAudio(-1) }
+            ToolButton(R.drawable.ic_redo, R.string.redo, history.canRedo) { model.undoAudio(1) }
+            ToolButton(R.drawable.ic_save, R.string.save_copy, action = model::saveAudio)
+            Box {
+                ToolButton(R.drawable.ic_more, R.string.more) { menu = true }
+                DropdownMenu(menu, { menu = false }) {
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.restore_original_audio)) },
+                        enabled = history.value != editor.original,
+                        onClick = {
+                            menu = false
+                            model.restoreAudio()
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.unlock)) },
+                        onClick = {
+                            menu = false
+                            importNcm()
+                        },
+                    )
+                }
             }
         }
         AudioPlayer(audio.file, active, model.playbackPosition(audio.file)) {
