@@ -55,17 +55,21 @@ internal fun AudioScreen(model: LabViewModel, state: LabState, active: Boolean) 
         }
         return
     }
-    var editTag by remember(audio.file) { mutableStateOf<Pair<String, List<String>>?>(null) }
-    var editPicture by remember(audio.file) { mutableStateOf<Int?>(null) }
-    var replaceCover by remember(audio.file) { mutableStateOf<Int?>(null) }
+    val editor = audio.editor
+    var editTag by editor::tag
+    var editPicture by editor::picture
     val coverPicker =
         rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-            if (uri != null)
+            val request = editor.coverRequest
+            editor.coverRequest = null
+            if (uri != null && request != null)
                 model.cover(uri) { picture ->
                     val current = model.state.value.audio ?: return@cover
-                    val index = replaceCover
+                    if (current.editor !== editor) return@cover
+                    val index = request.index
+                    if (index != null && index !in current.pictures.indices) return@cover
                     val pictures = current.pictures.toMutableList()
-                    if (index != null && index in pictures.indices)
+                    if (index != null)
                         pictures[index] =
                             picture.copy(
                                 description = pictures[index].description,
@@ -126,7 +130,7 @@ internal fun AudioScreen(model: LabViewModel, state: LabState, active: Boolean) 
                         style = MaterialTheme.typography.titleMedium,
                     )
                     ToolButton(R.drawable.ic_add, R.string.add_tag) {
-                        editTag = "" to emptyList()
+                        editTag = TagDraft("", emptyList())
                     }
                 }
             }
@@ -141,7 +145,7 @@ internal fun AudioScreen(model: LabViewModel, state: LabState, active: Boolean) 
                         )
                     },
                     modifier =
-                        Modifier.clickable { editTag = key to audio.tags[key].orEmpty() },
+                        Modifier.clickable { editTag = TagDraft(key, audio.tags[key].orEmpty()) },
                 )
             }
             item {
@@ -156,7 +160,7 @@ internal fun AudioScreen(model: LabViewModel, state: LabState, active: Boolean) 
                         style = MaterialTheme.typography.titleMedium,
                     )
                     ToolButton(R.drawable.ic_add, R.string.add_cover) {
-                        replaceCover = null
+                        editor.coverRequest = CoverRequest()
                         coverPicker.launch(arrayOf("image/*"))
                     }
                 }
@@ -177,10 +181,10 @@ internal fun AudioScreen(model: LabViewModel, state: LabState, active: Boolean) 
                         Image(
                             it.asImageBitmap(),
                             stringResource(R.string.artwork),
-                            Modifier.size(80.dp).clickable { editPicture = index },
+                            Modifier.size(80.dp).clickable { editPicture = PictureDraft(index, picture) },
                         )
                     }
-                    Column(Modifier.weight(1f).clickable { editPicture = index }) {
+                    Column(Modifier.weight(1f).clickable { editPicture = PictureDraft(index, picture) }) {
                         Text(
                             pictureLabel(picture.pictureType),
                             style = MaterialTheme.typography.titleSmall,
@@ -241,9 +245,10 @@ internal fun AudioScreen(model: LabViewModel, state: LabState, active: Boolean) 
             }
         }
     }
-    editTag?.let { (original, values) ->
-        var key by remember(original) { mutableStateOf(original) }
-        var text by remember(original) { mutableStateOf(values.joinToString("\n")) }
+    editTag?.let { draft ->
+        val original = draft.original
+        var key by draft::key
+        var text by draft::text
         val normalized = key.trim().uppercase(Locale.ROOT)
         AlertDialog(
             onDismissRequest = { editTag = null },
@@ -311,16 +316,17 @@ internal fun AudioScreen(model: LabViewModel, state: LabState, active: Boolean) 
         )
     }
     editPicture
-        ?.takeIf { it in audio.pictures.indices }
-        ?.let { index ->
+        ?.takeIf { it.index in audio.pictures.indices }
+        ?.let { draft ->
+            val index = draft.index
             val picture = audio.pictures[index]
             val bitmap by
                 produceState<Bitmap?>(null, picture.data) {
                     value = withContext(Dispatchers.IO) { AudioFiles.thumbnail(picture.data, 1024) }
                 }
-            var description by remember(picture) { mutableStateOf(picture.description) }
-            var type by remember(picture) { mutableStateOf(picture.pictureType) }
-            var deleting by remember { mutableStateOf(false) }
+            var description by draft::description
+            var type by draft::type
+            var deleting by draft::deleting
             AlertDialog(
                 onDismissRequest = { editPicture = null },
                 title = {
@@ -364,7 +370,7 @@ internal fun AudioScreen(model: LabViewModel, state: LabState, active: Boolean) 
                                 type = types[it]
                             }
                             TextButton({
-                                replaceCover = index
+                                editor.coverRequest = CoverRequest(index)
                                 editPicture = null
                                 coverPicker.launch(arrayOf("image/*"))
                             }) {

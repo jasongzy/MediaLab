@@ -387,14 +387,30 @@ internal class PhotoRegression(
                 model.open(Uri.fromFile(input), ImportType.IMAGE)
             }
             idle(model)
-            checkPicking(model, reference)
+            val draft = checkNotNull(model.state.value.photo.editor)
             instrumentation.runOnMainSync {
+                draft.cropHistory.change(FrameSelection(Rect(0, 0, 16, 16)))
+                draft.resize.width = 32
+                draft.resize.height = 24
+                draft.resize.method = 0
+                draft.export = ExportOptions(format = ImageFormat.JPEG, quality = 75)
+                draft.cropHistory.undo()
+            }
+            checkPicking(model, reference)
+            check(model.state.value.photo.editor === draft)
+            check(draft.cropHistory.canRedo && draft.resize.width == 32 && draft.resize.method == 0)
+            instrumentation.runOnMainSync {
+                draft.cropHistory.redo()
+                check(draft.cropHistory.value.bounds == Rect(0, 0, 16, 16))
                 model.pick(3, 2)
                 model.pick(9, 7)
                 model.crop(Rect(0, 0, 16, 16), true)
             }
             idle(model)
             check(model.state.value.photo.picked == null)
+            val applied = checkNotNull(model.state.value.photo.editor)
+            check(applied !== draft && !applied.cropHistory.canUndo && !applied.cropHistory.canRedo)
+            check(applied.resize.width == 16 && applied.resize.height == 16 && applied.export == draft.export)
             checkCapture(checkNotNull(model.state.value.photo.frame?.source))
             instrumentation.runOnMainSync { model.undo(-1) }
             idle(model)

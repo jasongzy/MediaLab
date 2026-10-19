@@ -22,6 +22,7 @@ internal data class AudioDocument(
     val tags: Map<String, List<String>>,
     val pictures: List<Picture>,
     val technical: List<Pair<String, String>>,
+    val editor: AudioEditorState = AudioEditorState(),
 )
 
 internal object AudioFiles {

@@ -42,6 +42,7 @@ internal data class PhotoState(
     val colors: List<Int> = emptyList(),
     val picked: Int? = null,
     val backgroundElapsedMs: Long? = null,
+    val editor: PhotoEditorState? = info?.let { PhotoEditorState(it, preview?.hasAlpha() == true) },
 ) {
     val frame
         get() = history.getOrNull(position)
@@ -301,6 +302,7 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
                 preview,
                 old.original,
                 history.current.info,
+                editor = PhotoEditorState(history.current.info, preview.hasAlpha(), old.editor),
             )
         mutable.update {
             it.copy(

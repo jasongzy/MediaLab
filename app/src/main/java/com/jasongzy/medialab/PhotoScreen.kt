@@ -21,7 +21,6 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
@@ -51,20 +50,6 @@ import androidx.core.content.FileProvider
 import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
 
-private enum class PhotoTool(val label: Int, val icon: Int) {
-    CROP(R.string.crop, R.drawable.ic_crop),
-    EXPAND(R.string.expand_canvas, R.drawable.ic_expand),
-    BACKGROUND(R.string.remove_background, R.drawable.ic_photo),
-    COVER(R.string.cover, R.drawable.ic_brush),
-    RESIZE(R.string.resize, R.drawable.ic_resize),
-    COLORS(R.string.colors, R.drawable.ic_palette),
-    CLEAN(R.string.clean, R.drawable.ic_clean),
-    INFO(R.string.info, R.drawable.ic_info),
-    EXPORT(R.string.export, R.drawable.ic_save),
-}
-
-private data class FrameSelection(val bounds: Rect, val ratio: Float = 0f)
-
 @Composable
 internal fun PhotoScreen(model: LabViewModel, state: LabState) {
     val photo = state.photo
@@ -92,31 +77,30 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
         return
     }
     val info = photo.info
-    var tool by rememberSaveable { mutableStateOf(PhotoTool.CROP) }
+    val editor = checkNotNull(photo.editor)
+    var tool by editor::tool
     val previewInteraction = remember { MutableInteractionSource() }
     val showOriginal by previewInteraction.collectIsPressedAsState()
     val expanding = tool == PhotoTool.EXPAND
-    val cropHistory = remember(photo.frame) {
-        ToolHistory(FrameSelection(Rect(0, 0, info.width, info.height)))
-    }
-    val canvasHistory = remember(photo.frame) {
-        ToolHistory(FrameSelection(Rect(0, 0, info.width, info.height)))
-    }
+    val cropHistory = editor.cropHistory
+    val canvasHistory = editor.canvasHistory
     val frameHistory = if (expanding) canvasHistory else cropHistory
     val bounds = frameHistory.value.bounds
     val ratio = frameHistory.value.ratio
     fun setBounds(value: Rect) = frameHistory.change(frameHistory.value.copy(bounds = value))
-    var background by rememberSaveable { mutableIntStateOf(android.graphics.Color.WHITE) }
-    val coverHistory = remember(photo.frame) { ToolHistory(emptyList<Stroke>()) }
+    var background by editor::background
+    val coverHistory = editor.coverHistory
     val strokes = coverHistory.value
+    val resize = editor.resize
+    var cleanup by editor::cleanup
     val toolHistory = if (tool == PhotoTool.COVER) coverHistory else frameHistory
-    var fill by rememberSaveable { mutableStateOf(true) }
-    var fillShape by rememberSaveable { mutableStateOf(CoverShape.RECTANGLE) }
-    var brushWidth by rememberSaveable { mutableFloatStateOf(40f) }
-    var color by rememberSaveable { mutableIntStateOf(android.graphics.Color.WHITE) }
-    var dropper by remember { mutableStateOf(false) }
-    var pixelX by remember(photo.frame) { mutableIntStateOf(info.width / 2) }
-    var pixelY by remember(photo.frame) { mutableIntStateOf(info.height / 2) }
+    var fill by editor::fill
+    var fillShape by editor::fillShape
+    var brushWidth by editor::brushWidth
+    var color by editor::color
+    var dropper by editor::dropper
+    var pixelX by editor::pixelX
+    var pixelY by editor::pixelY
     var pixelAction by remember { mutableStateOf<(() -> Unit)?>(null) }
     val edit: (() -> Unit) -> Unit = { action ->
         if (info.wideColor || info.container?.gainmap != null) pixelAction = action else action()
@@ -221,7 +205,7 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
                 ) {
                     when (tool) {
                         PhotoTool.CROP, PhotoTool.EXPAND -> {
-                            var lossless by rememberSaveable { mutableStateOf(false) }
+                            var lossless by editor::lossless
                             val ratios =
                                 listOf(
                                     0f to stringResource(R.string.free_ratio),
@@ -479,7 +463,7 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
                             }
                         }
                         PhotoTool.RESIZE ->
-                            ResizePanel(model, info) { w, h, method ->
+                            ResizePanel(model, info, resize) { w, h, method ->
                                 edit { model.resize(w, h, method) }
                             }
                         PhotoTool.COLORS -> {
@@ -532,25 +516,20 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
                             }
                         }
                         PhotoTool.CLEAN -> {
-                            var options by remember {
-                                mutableStateOf(
-                                    ExportOptions(metadata = true, static = true, flatten = true)
-                                )
-                            }
-                            CleanupOptions(info, options) { options = it }
+                            CleanupOptions(info, cleanup) { cleanup = it }
                             Button(
                                 {
                                     val action = {
                                         model.clean(
-                                            options.static,
-                                            options.flatten,
-                                            options.metadata,
-                                            options.keepColor,
+                                            cleanup.static,
+                                            cleanup.flatten,
+                                            cleanup.metadata,
+                                            cleanup.keepColor,
                                         )
                                     }
                                     if (
-                                        !options.keepColor ||
-                                            (options.metadata && info.orientation != 1)
+                                        !cleanup.keepColor ||
+                                            (cleanup.metadata && info.orientation != 1)
                                     )
                                         edit(action)
                                     else action()
@@ -1053,25 +1032,29 @@ internal fun NumberField(
 }
 
 @Composable
-private fun ResizePanel(model: LabViewModel, info: PhotoInfo, apply: (Int, Int, Int) -> Unit) {
-    var width by remember(info) { mutableIntStateOf(info.width) }
-    var height by remember(info) { mutableIntStateOf(info.height) }
-    var lock by rememberSaveable { mutableStateOf(true) }
-    var method by rememberSaveable { mutableIntStateOf(2) }
+private fun ResizePanel(
+    model: LabViewModel,
+    info: PhotoInfo,
+    selection: ResizeSelection,
+    apply: (Int, Int, Int) -> Unit,
+) {
+    val width = selection.width
+    val height = selection.height
+    val method = selection.method
     var preview by remember(info) { mutableStateOf<android.graphics.Bitmap?>(null) }
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         NumberField(R.string.width, width, Modifier.weight(1f)) {
-            width = it
-            if (lock)
-                height = (it.toDouble() * info.height / info.width).roundToInt().coerceAtLeast(1)
+            selection.width = it
+            if (selection.lock)
+                selection.height = (it.toDouble() * info.height / info.width).roundToInt().coerceAtLeast(1)
         }
         NumberField(R.string.height, height, Modifier.weight(1f)) {
-            height = it
-            if (lock)
-                width = (it.toDouble() * info.width / info.height).roundToInt().coerceAtLeast(1)
+            selection.height = it
+            if (selection.lock)
+                selection.width = (it.toDouble() * info.width / info.height).roundToInt().coerceAtLeast(1)
         }
     }
-    Toggle(R.string.keep_ratio, lock) { lock = it }
+    Toggle(R.string.keep_ratio, selection.lock) { selection.lock = it }
     ChoiceChips(
         listOf(
             0 to stringResource(R.string.nearest),
@@ -1080,7 +1063,7 @@ private fun ResizePanel(model: LabViewModel, info: PhotoInfo, apply: (Int, Int, 
         ),
         method,
     ) {
-        method = it
+        selection.method = it
     }
     Row(
         Modifier.fillMaxWidth(),
@@ -1214,7 +1197,7 @@ private fun ColorSwatch(color: Int, modifier: Modifier = Modifier) {
 
 @Composable
 private fun ExportPanel(model: LabViewModel, state: LabState) {
-    var options by remember { mutableStateOf(ExportOptions()) }
+    var options by checkNotNull(state.photo.editor)::export
     var previewOptions by remember { mutableStateOf<ExportOptions?>(null) }
     var showPreview by remember { mutableStateOf(false) }
     LaunchedEffect(state.error) { if (state.error != null) showPreview = false }
