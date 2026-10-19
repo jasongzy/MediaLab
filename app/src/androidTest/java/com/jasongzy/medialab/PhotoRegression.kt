@@ -539,6 +539,7 @@ internal class PhotoRegression(
                 setAttribute(ExifInterface.TAG_MAKER_NOTE, "source camera data")
                 saveAttributes()
             }
+            val originalBytes = input.readBytes()
             val info = Photos.info(input)
             check(info.color == PhotoColor("sRGB", "YCbCr", false, false))
             for ((x, y) in listOf(0 to 0, 16 to 8, 63 to 47))
@@ -733,7 +734,7 @@ internal class PhotoRegression(
             check(model.state.value.photo.frame === original && model.state.value.photo.pending.isEmpty())
             check(model.state.value.photo.info!!.color == info.color)
             check(model.state.value.notice?.message == R.string.original_image_restored)
-            checkCapture(original.source!!)
+            check(original.source!!.readBytes().contentEquals(originalBytes))
             val restoredSize = model.state.value.photo.history.size
             instrumentation.runOnMainSync { model.restoreOriginal() }
             idle(model)
