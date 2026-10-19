@@ -31,13 +31,15 @@ internal enum class ImportType {
     AUDIO,
 }
 
-internal enum class DiscardAction(val title: Int, val message: Int, val confirm: Int = R.string.discard) {
+internal enum class Confirmation(val title: Int, val message: Int, val confirm: Int = R.string.discard) {
     IMAGE(R.string.replace_image, R.string.replace_message),
     AUDIO(R.string.replace_audio, R.string.replace_audio_message),
     UNDO(R.string.undo, R.string.discard_unapplied_message),
     REDO(R.string.redo, R.string.discard_unapplied_message),
     APPLY(R.string.apply, R.string.discard_other_edits_message, R.string.apply),
     RESTORE(R.string.restore_original, R.string.discard_unapplied_message, R.string.restore_original),
+    TRANSPARENT_INPUT(R.string.transparent_input, R.string.transparent_input_message, R.string.continue_action),
+    CONVERT_COLOR(R.string.convert_color, R.string.convert_color_message, R.string.convert_and_apply),
 }
 
 internal data class PhotoState(
@@ -66,7 +68,7 @@ internal data class LabState(
     val photo: PhotoState = PhotoState(),
     val batchPage: Boolean = false,
     val audio: AudioDocument? = null,
-    val confirmation: DiscardAction? = null,
+    val confirmation: Confirmation? = null,
     val busy: Boolean = false,
     val refreshingMedia: Boolean = false,
     val stage: Int = R.string.loading_photo,
@@ -98,7 +100,7 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
     private var playbackPosition: Pair<File, Long>? = null
     private var history: PhotoHistory? = null
     private var resizePreview: ResizePreview? = null
-    private var discardAnswer: CompletableDeferred<Boolean>? = null
+    private var confirmationAnswer: CompletableDeferred<Boolean>? = null
 
     private data class ResizePreview(
         val source: PhotoFrame,
@@ -212,8 +214,8 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
         job?.cancel()
     }
 
-    fun confirmDiscard(discard: Boolean) {
-        discardAnswer?.complete(discard)
+    fun answerConfirmation(accepted: Boolean) {
+        confirmationAnswer?.complete(accepted)
     }
 
     private suspend fun canReplace(type: ImportType): Boolean {
@@ -222,25 +224,25 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
             if (type == ImportType.IMAGE)
                 current.photo.history.size > 1 || current.photo.pending.isNotEmpty()
             else current.audioDirty || current.audio?.editor?.hasDraft == true
-        return !edited || canDiscard(
-            if (type == ImportType.IMAGE) DiscardAction.IMAGE else DiscardAction.AUDIO
+        return !edited || confirm(
+            if (type == ImportType.IMAGE) Confirmation.IMAGE else Confirmation.AUDIO
         )
     }
 
-    private suspend fun canDiscard(action: DiscardAction): Boolean {
+    private suspend fun confirm(action: Confirmation): Boolean {
         val answer = CompletableDeferred<Boolean>()
-        discardAnswer = answer
+        confirmationAnswer = answer
         mutable.update { it.copy(confirmation = action) }
         return try {
             answer.await()
         } finally {
-            discardAnswer = null
+            confirmationAnswer = null
             mutable.update { it.copy(confirmation = null) }
         }
     }
 
     private suspend fun canApply(tool: PhotoTool): Boolean =
-        state.value.photo.pending.none { it != tool } || canDiscard(DiscardAction.APPLY)
+        state.value.photo.pending.none { it != tool } || confirm(Confirmation.APPLY)
 
     fun open(uri: Uri, type: ImportType?) =
         work(
@@ -365,8 +367,8 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
             val history = checkNotNull(history)
             val position = (history.position + direction).coerceIn(history.frames.indices)
             if (position == history.position) return@work
-            if (state.value.photo.pending.isNotEmpty() && !canDiscard(
-                    if (direction < 0) DiscardAction.UNDO else DiscardAction.REDO
+            if (state.value.photo.pending.isNotEmpty() && !confirm(
+                    if (direction < 0) Confirmation.UNDO else Confirmation.REDO
                 )) return@work
             val frame = history.frames[position]
             discardResize()
@@ -383,7 +385,7 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
             val history = checkNotNull(history)
             val original = history.frames.first()
             if (history.current === original) return@work
-            if (state.value.photo.pending.isNotEmpty() && !canDiscard(DiscardAction.RESTORE)) return@work
+            if (state.value.photo.pending.isNotEmpty() && !confirm(Confirmation.RESTORE)) return@work
             val preview = checkNotNull(state.value.photo.original)
             history.append(original)
             discardResize()
@@ -523,10 +525,15 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
 
     fun removeBackground(background: Int, model: BackgroundModel) =
         work(R.string.preparing_image) {
-            if (!canApply(PhotoTool.BACKGROUND)) return@work
-            mutable.update { it.copy(photo = it.photo.copy(backgroundElapsedMs = null)) }
-            val started = SystemClock.elapsedRealtime()
+            var started = 0L
             bitmapEdit { bitmap ->
+                if (Photos.hasFullyTransparentPixels(bitmap) && !confirm(Confirmation.TRANSPARENT_INPUT))
+                    throw CancellationException()
+                if (checkNotNull(state.value.photo.info).color.losses().isNotEmpty() &&
+                    !confirm(Confirmation.CONVERT_COLOR)) throw CancellationException()
+                if (!canApply(PhotoTool.BACKGROUND)) throw CancellationException()
+                mutable.update { it.copy(photo = it.photo.copy(backgroundElapsedMs = null)) }
+                started = SystemClock.elapsedRealtime()
                 Photos.removeBackground(context, bitmap, background, model) { stage ->
                     mutable.update { it.copy(stage = stage) }
                 }

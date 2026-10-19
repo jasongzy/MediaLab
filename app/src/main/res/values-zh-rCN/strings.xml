@@ -103,6 +103,9 @@
     <string name="convert_color">转换图像以继续编辑？</string>
     <string name="convert_color_message">此操作会转换图像，以下特性将会丢失：\n%1$s</string>
     <string name="convert_and_apply">转换并应用</string>
+    <string name="transparent_input">继续去背景？</string>
+    <string name="transparent_input_message">送入网络推理时，图片中完全透明的区域会被视为黑色，这可能影响效果。是否继续？</string>
+    <string name="continue_action">继续</string>
     <string name="loading_photo">正在打开图片…</string>
     <string name="preparing_image">正在处理图片…</string>
     <string name="loading_audio">正在读取音频…</string>

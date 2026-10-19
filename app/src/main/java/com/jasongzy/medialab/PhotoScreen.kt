@@ -403,7 +403,7 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
                                         )
                                     }
                                 }
-                                Button({ edit { model.removeBackground(cutoutBackground, editor.backgroundModel) } }) {
+                                Button({ model.removeBackground(cutoutBackground, editor.backgroundModel) }) {
                                     Text(stringResource(R.string.remove_background))
                                 }
                             }
@@ -670,7 +670,7 @@ private fun PhotoDetail(label: String, value: String) {
 }
 
 @Composable
-private fun colorLosses(losses: List<Int>): String =
+internal fun colorLosses(losses: List<Int>): String =
     losses.map { stringResource(it) }.joinToString("\n") { "• $it" }
 
 @Composable

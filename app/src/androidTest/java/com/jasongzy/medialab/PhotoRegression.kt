@@ -109,6 +109,11 @@ internal class PhotoRegression(
                     Photos.cover(expanded, listOf(Stroke(listOf(2f to 1f, 3f to 2f), Color.TRANSPARENT, 1f, CoverShape.RECTANGLE)))
                     check(expanded.getColor(2, 1).alpha() == 0f)
                     checkColor(expanded, 4, 2)
+                    val faint = if (config == Bitmap.Config.RGBA_F16) 1f / 1024 else 1f / 255
+                    expanded.eraseColor(Color.pack(1f, 0f, 0f, faint, space))
+                    check(!Photos.hasFullyTransparentPixels(expanded))
+                    expanded.setPixel(expanded.width - 1, expanded.height - 1, Color.TRANSPARENT)
+                    check(Photos.hasFullyTransparentPixels(expanded))
                 } finally { expanded.recycle() }
                 for (background in listOf(Color.TRANSPARENT, 0xff2468ac.toInt())) {
                     val cutout = checkNotNull(source.copy(config, true))
@@ -130,6 +135,9 @@ internal class PhotoRegression(
                 try {
                     Photos.applyMask(opaque, mask, Color.WHITE)
                     check(!opaque.hasAlpha() && opaque.getPixel(0, 0) == Color.WHITE)
+                    check(!Photos.hasFullyTransparentPixels(opaque))
+                    opaque.setHasAlpha(true)
+                    check(!Photos.hasFullyTransparentPixels(opaque))
                 } finally { opaque.recycle() }
                 val info = Photos.rasterInfo(source, capture)
                 check(info.color.losses().isEmpty())
@@ -358,9 +366,9 @@ internal class PhotoRegression(
         check(model.state.value.error == null) { model.state.value.error.orEmpty() }
     }
 
-    private suspend fun answer(model: LabViewModel, action: DiscardAction, discard: Boolean) {
+    private suspend fun answer(model: LabViewModel, action: Confirmation, discard: Boolean) {
         withTimeout(30_000) { model.state.first { it.confirmation == action } }
-        instrumentation.runOnMainSync { model.confirmDiscard(discard) }
+        instrumentation.runOnMainSync { model.answerConfirmation(discard) }
         idle(model)
         check(model.state.value.confirmation == null)
     }
@@ -412,7 +420,7 @@ internal class PhotoRegression(
                 draft.cropHistory.change(FrameSelection(Rect(2, 2, 20, 20)))
                 model.open(Uri.fromFile(image), ImportType.IMAGE)
             }
-            answer(model, DiscardAction.IMAGE, false)
+            answer(model, Confirmation.IMAGE, false)
             check(model.state.value.photo.editor === draft && model.state.value.photo.history.size == 1)
             instrumentation.runOnMainSync { model.crop(Rect(2, 2, 20, 20), false) }
             idle(model)
@@ -423,7 +431,7 @@ internal class PhotoRegression(
             val files = work.listFiles()!!.toSet()
             for (type in listOf(ImportType.IMAGE, null)) {
                 instrumentation.runOnMainSync { model.open(Uri.fromFile(image), type) }
-                answer(model, DiscardAction.IMAGE, false)
+                answer(model, Confirmation.IMAGE, false)
                 check(model.state.value.photo === photo && work.listFiles()!!.toSet() == files)
             }
             instrumentation.runOnMainSync {
@@ -436,7 +444,7 @@ internal class PhotoRegression(
                 model.state.value.audio!!.editor.tag = tag
                 model.open(Uri.fromFile(audio), ImportType.AUDIO)
             }
-            answer(model, DiscardAction.AUDIO, false)
+            answer(model, Confirmation.AUDIO, false)
             check(model.state.value.audio!!.editor.tag === tag && !model.state.value.audioDirty)
             instrumentation.runOnMainSync {
                 model.editAudio(mapOf("TITLE" to listOf("Unsaved")), emptyList())
@@ -459,7 +467,7 @@ internal class PhotoRegression(
             val before = work.listFiles()!!.toSet()
             for (type in listOf(ImportType.AUDIO, null)) {
                 instrumentation.runOnMainSync { model.open(Uri.fromFile(audio), type) }
-                answer(model, DiscardAction.AUDIO, false)
+                answer(model, Confirmation.AUDIO, false)
                 check(model.state.value.audio === editedAudio && model.state.value.audioDirty)
                 check(work.listFiles()!!.toSet() == before)
             }
@@ -470,17 +478,17 @@ internal class PhotoRegression(
             check(model.state.value.notice?.message == R.string.select_audio_only)
             check(model.state.value.audio === editedAudio && work.listFiles()!!.toSet() == before)
             instrumentation.runOnMainSync { model.open(Uri.fromFile(audio), null) }
-            withTimeout(30_000) { model.state.first { it.confirmation == DiscardAction.AUDIO } }
+            withTimeout(30_000) { model.state.first { it.confirmation == Confirmation.AUDIO } }
             instrumentation.runOnMainSync { model.cancel() }
             idle(model)
             check(model.state.value.confirmation == null && model.state.value.audio === editedAudio)
             check(work.listFiles()!!.toSet() == before)
             instrumentation.runOnMainSync { model.open(Uri.fromFile(audio), null) }
-            answer(model, DiscardAction.AUDIO, true)
+            answer(model, Confirmation.AUDIO, true)
             check(!model.state.value.audioDirty && model.state.value.audio != null)
             check(!editedAudio.file.exists() && model.state.value.photo === photo)
             instrumentation.runOnMainSync { model.open(Uri.fromFile(image), null) }
-            answer(model, DiscardAction.IMAGE, true)
+            answer(model, Confirmation.IMAGE, true)
             check(model.state.value.photo.history.size == 1)
             check(photo.history.flatMap { it.files }.none { it.exists() })
             check(model.state.value.workingFiles.all { it.isFile })
@@ -572,13 +580,15 @@ internal class PhotoRegression(
                 { model.crop(Rect(0, 0, 16, 16), true) },
                 { model.removeBackground(Color.TRANSPARENT, BackgroundModel.RMBG14) },
             )) {
+                val resident = model.state.value.photo.frame!!.pixels
                 instrumentation.runOnMainSync(apply)
-                answer(model, DiscardAction.APPLY, false)
+                answer(model, Confirmation.APPLY, false)
                 check(model.state.value.photo.editor === draft && model.state.value.photo.position == 0)
+                check(model.state.value.photo.frame!!.pixels === resident)
                 check(draft.cropHistory.value.bounds == Rect(0, 0, 16, 16) && draft.resize.width == 32)
             }
             instrumentation.runOnMainSync { model.crop(Rect(0, 0, 16, 16), true) }
-            answer(model, DiscardAction.APPLY, true)
+            answer(model, Confirmation.APPLY, true)
             check(model.state.value.photo.picked == null)
             val applied = checkNotNull(model.state.value.photo.editor)
             check(applied !== draft && !applied.cropHistory.canUndo && !applied.cropHistory.canRedo)
@@ -589,7 +599,7 @@ internal class PhotoRegression(
                 val before = model.state.value.photo
                 val editor = checkNotNull(before.editor)
                 val strokes = listOf(Stroke(listOf(0f to 0f, 4f to 4f), Color.WHITE, 1f, CoverShape.RECTANGLE))
-                val action = if (direction < 0) DiscardAction.UNDO else DiscardAction.REDO
+                val action = if (direction < 0) Confirmation.UNDO else Confirmation.REDO
                 instrumentation.runOnMainSync {
                     editor.coverHistory.change(strokes)
                     model.undo(-direction)
@@ -627,6 +637,11 @@ internal class PhotoRegression(
             idle(model)
             val edited = checkNotNull(model.state.value.photo.frame)
             check(edited.source == null && edited.pixels!!.sameAs(reference))
+            instrumentation.runOnMainSync {
+                model.removeBackground(Color.WHITE, BackgroundModel.RMBG20)
+            }
+            answer(model, Confirmation.TRANSPARENT_INPUT, false)
+            check(model.state.value.photo.frame === edited && edited.pixels!!.sameAs(reference))
             val work = model.state.value.photo.history.first().source!!.parentFile!!
             val files = work.listFiles()!!.toSet()
             var preview: Bitmap? = null
@@ -711,10 +726,10 @@ internal class PhotoRegression(
                 beforeRestore.editor!!.resize.width++
                 model.restoreOriginal()
             }
-            answer(model, DiscardAction.RESTORE, false)
+            answer(model, Confirmation.RESTORE, false)
             check(model.state.value.photo === beforeRestore && beforeRestore.pending == listOf(PhotoTool.RESIZE))
             instrumentation.runOnMainSync { model.restoreOriginal() }
-            answer(model, DiscardAction.RESTORE, true)
+            answer(model, Confirmation.RESTORE, true)
             check(model.state.value.photo.frame === original && model.state.value.photo.pending.isEmpty())
             check(model.state.value.photo.info!!.color == info.color)
             check(model.state.value.notice?.message == R.string.original_image_restored)

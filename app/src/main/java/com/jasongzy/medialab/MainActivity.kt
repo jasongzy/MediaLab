@@ -212,16 +212,22 @@ private fun LabApp(model: LabViewModel, state: LabState, exit: () -> Unit) {
     }
     state.confirmation?.let { action ->
         AlertDialog(
-            onDismissRequest = { model.confirmDiscard(false) },
+            onDismissRequest = { model.answerConfirmation(false) },
             title = { Text(stringResource(action.title)) },
-            text = { Text(stringResource(action.message)) },
+            text = {
+                Text(
+                    if (action == Confirmation.CONVERT_COLOR)
+                        stringResource(action.message, colorLosses(checkNotNull(state.photo.info).color.losses()))
+                    else stringResource(action.message)
+                )
+            },
             confirmButton = {
-                TextButton({ model.confirmDiscard(true) }) {
+                TextButton({ model.answerConfirmation(true) }) {
                     Text(stringResource(action.confirm))
                 }
             },
             dismissButton = {
-                TextButton({ model.confirmDiscard(false) }) {
+                TextButton({ model.answerConfirmation(false) }) {
                     Text(stringResource(R.string.cancel))
                 }
             },

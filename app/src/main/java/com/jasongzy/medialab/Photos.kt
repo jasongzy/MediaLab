@@ -425,6 +425,20 @@ internal object Photos {
         return representativeColors(samples)
     }
 
+    suspend fun hasFullyTransparentPixels(bitmap: Bitmap): Boolean {
+        if (!bitmap.hasAlpha()) return false
+        val coroutine = currentCoroutineContext()
+        val row = FloatArray(bitmap.width * 4)
+        for (y in 0 until bitmap.height) {
+            coroutine.ensureActive()
+            BitmapPixels.readRow(bitmap, y, row)
+            for (x in 0 until bitmap.width) {
+                if (row[x * 4 + 3] == 0f) return true
+            }
+        }
+        return false
+    }
+
     suspend fun removeBackground(
         context: Context,
         bitmap: Bitmap,
