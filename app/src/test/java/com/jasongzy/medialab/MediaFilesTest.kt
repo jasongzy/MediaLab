@@ -5,6 +5,8 @@ import java.io.ByteArrayOutputStream
 import java.io.File
 import java.net.InetSocketAddress
 import java.util.concurrent.atomic.AtomicInteger
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
 import org.junit.Rule
@@ -59,56 +61,75 @@ class MediaFilesTest {
     }
 
     @Test
-    fun clearingCachePreservesWorkspaceAndPersistentFiles() = runBlocking {
+    fun clearingCachePreservesActiveWorkspacesAndPersistentFiles() = runBlocking {
         val cache = folder.newFolder("cache")
         val model = file(folder.root, "files/models/model/rmbg14.tflite")
         val settings = file(folder.root, "shared_prefs/settings.xml")
-        val history = listOf(file(cache, "work/original.jpg"), file(cache, "work/edited.png"))
-        val info = PhotoInfo(1, 1, 1, 1, 1, "image/png", 5, false, null, emptyList())
-        val frames = history.map { PhotoFrame(it, info) }
-        val snapshot = file(cache, "work/history.pixels")
-        frames.last().snapshot = snapshot
-        val audio = file(cache, "work/tagged.mp3")
-        val export = file(cache, "work/export.webp")
-        val state =
-            LabState(
-                photo = PhotoState(history = frames, position = 1),
-                audio =
-                    AudioDocument(
-                        audio,
-                        audio.name,
-                        null,
-                        emptyMap(),
-                        emptyList(),
-                        emptyList(),
-                    ),
-                exportFile = export,
-            )
-        val stale =
-            listOf(
-                file(cache, "work/source.mp3"),
-                file(cache, "work/unused.png"),
-                file(cache, "exports/shared.png"),
-                file(cache, "work/model.part"),
+        val saved = file(folder.root, "Pictures/saved.png")
+        val abandoned = WorkspaceCache(cache) { emptySet() }.use { file(it.work, "unfinished.part") }
+        var firstFiles = emptySet<File>()
+        WorkspaceCache(cache) { firstFiles }.use { first ->
+            val history = listOf(file(first.work, "original.jpg"), file(first.work, "edited.png"))
+            val info = PhotoInfo(1, 1, 1, 1, 1, "image/png", 5, false, null, emptyList())
+            val frames = history.map { PhotoFrame(it, info) }
+            val snapshot = file(first.work, "history.pixels")
+            frames.last().snapshot = snapshot
+            val audio = file(first.work, "tagged.mp3")
+            val export = file(first.work, "export.webp")
+            val shared = file(first.exports, "shared.png")
+            val state =
+                LabState(
+                    photo = PhotoState(history = frames, position = 1),
+                    audio = AudioDocument(audio, audio.name, null, emptyMap(), emptyList(), emptyList()),
+                    exportFile = export,
+                )
+            firstFiles = state.workingFiles
+            val stale = listOf(
+                file(first.work, "unused.png"),
+                file(cache, "exports/stale.png"),
                 file(cache, "ncm/decoded.flac"),
             )
-        val saved = file(folder.root, "Pictures/saved.png")
-
-        MediaFiles.clearCache(cache, state.workingFiles)
-
-        for (kept in
-            history +
-                listOf(
-                    snapshot,
-                    audio,
-                    export,
-                    saved,
-                    model,
-                    settings,
-                )) assertEquals(kept.name, "media", kept.readText())
-        for (removed in stale) assertFalse(removed.path, removed.exists())
-        assertFalse(File(cache, "exports").exists())
-        MediaFiles.clearCache(cache, state.workingFiles)
+            lateinit var secondWork: File
+            lateinit var secondExports: File
+            var secondFiles = emptySet<File>()
+            WorkspaceCache(cache) { secondFiles }.use { second ->
+                secondWork = second.work
+                secondExports = second.exports
+                secondFiles = setOf(
+                    file(second.work, "original.jpg"),
+                    file(second.work, "history.pixels"),
+                    file(second.work, "audio.mp3"),
+                )
+                val otherStale = listOf(
+                    file(second.work, "unused.png"),
+                    file(second.exports, "shared.png"),
+                )
+                val importing = file(second.work, "importing.part")
+                second.clearStale()
+                assertFalse(abandoned.exists())
+                assertTrue(state.workingFiles.all { it.isFile })
+                second.access.lock()
+                val clearing = async(start = CoroutineStart.UNDISPATCHED) { first.clearAll() }
+                try {
+                    assertFalse(clearing.isCompleted)
+                    assertTrue(importing.isFile)
+                    secondFiles += importing
+                } finally {
+                    second.access.unlock()
+                }
+                clearing.await()
+                for (kept in firstFiles + secondFiles + listOf(saved, model, settings))
+                    assertEquals(kept.path, "media", kept.readText())
+                assertTrue((stale + otherStale + shared).none { it.exists() })
+                first.clearStale()
+                assertTrue(secondFiles.all { it.isFile })
+            }
+            first.clearStale()
+            assertFalse(secondWork.exists())
+            first.clearAll()
+            assertFalse(secondExports.exists())
+            assertTrue(state.workingFiles.all { it.isFile })
+        }
         MediaFiles.clearCache(File(folder.root, "missing"), emptySet())
         assertTrue(saved.exists())
     }

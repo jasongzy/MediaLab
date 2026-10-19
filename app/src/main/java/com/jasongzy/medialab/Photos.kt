@@ -550,7 +550,7 @@ internal object Photos {
     }
 
     suspend fun export(
-        context: Context,
+        directory: File,
         source: File,
         info: PhotoInfo,
         options: ExportOptions,
@@ -565,7 +565,7 @@ internal object Photos {
         val format = if (options.format == ImageFormat.ORIGINAL) ImageFormat.PNG else options.format
         val target =
             MediaFiles.temporary(
-                context,
+                directory,
                 if (original)
                     when (info.mime) {
                         "image/jpeg" -> "jpg"
@@ -611,9 +611,9 @@ internal object Photos {
         }
     }
 
-    suspend fun export(context: Context, bitmap: Bitmap, info: PhotoInfo, options: ExportOptions): File {
+    suspend fun export(directory: File, bitmap: Bitmap, info: PhotoInfo, options: ExportOptions): File {
         val format = if (options.format == ImageFormat.ORIGINAL) ImageFormat.PNG else options.format
-        val target = MediaFiles.temporary(context, format.extension)
+        val target = MediaFiles.temporary(directory, format.extension)
         try {
             encode(bitmap, target, options, info.metadata)
             currentCoroutineContext().ensureActive()

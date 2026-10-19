@@ -16,6 +16,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.job
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 internal enum class ConflictPolicy(val label: Int) {
     SKIP(R.string.batch_skip),
@@ -83,6 +85,7 @@ internal object NcmBatch {
 
     private val mutable = MutableStateFlow(BatchState())
     val state = mutable.asStateFlow()
+    val cacheAccess = Mutex()
     private var action: (suspend (Context) -> Unit)? = null
     private var job: Job? = null
     private val sharedUris = mutableSetOf<Uri>()
@@ -546,10 +549,12 @@ internal object NcmBatch {
     suspend fun execute(context: Context) {
         job = currentCoroutineContext().job
         try {
-            if (state.value.cancelling) return
-            val directory = File(context.cacheDir, "ncm")
-            directory.listFiles()?.forEach { it.delete() }
-            action?.invoke(context)
+            cacheAccess.withLock {
+                if (state.value.cancelling) return
+                val directory = File(context.cacheDir, "ncm")
+                directory.listFiles()?.forEach { it.delete() }
+                action?.invoke(context)
+            }
         } catch (_: CancellationException) {} catch (error: Exception) {
             mutable.update { it.copy(error = friendly(context, error)) }
         } finally {

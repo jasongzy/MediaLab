@@ -279,7 +279,7 @@ internal class PhotoRegression(
             instrumentation.runOnMainSync { model.crop(Rect(2, 2, 20, 20), false) }
             idle(model)
             val photo = model.state.value.photo
-            val work = File(app.cacheDir, "work")
+            val work = photo.history.first().source!!.parentFile!!
             val files = work.listFiles()!!.toSet()
             for (type in listOf(ImportType.IMAGE, null)) {
                 instrumentation.runOnMainSync { model.open(Uri.fromFile(image), type) }
@@ -378,7 +378,7 @@ internal class PhotoRegression(
                 }
             for (clear in listOf(false, true)) {
                 val converted = Photos.export(
-                    app, input, Photos.info(input), ExportOptions(format = ImageFormat.PNG, metadata = clear),
+                    app.cacheDir, input, Photos.info(input), ExportOptions(format = ImageFormat.PNG, metadata = clear),
                 )
                 try { checkCapture(converted, !clear) } finally { converted.delete() }
             }
@@ -433,7 +433,8 @@ internal class PhotoRegression(
             idle(model)
             val edited = checkNotNull(model.state.value.photo.frame)
             check(edited.source == null && edited.pixels!!.sameAs(reference))
-            val files = File(app.cacheDir, "work").listFiles()!!.toSet()
+            val work = model.state.value.photo.history.first().source!!.parentFile!!
+            val files = work.listFiles()!!.toSet()
             var preview: Bitmap? = null
             instrumentation.runOnMainSync { model.previewResize(32, 24, 2) { preview = it } }
             idle(model)
@@ -445,7 +446,7 @@ internal class PhotoRegression(
             idle(model)
             val resized = checkNotNull(model.state.value.photo.frame)
             check(model.state.value.photo.preview === expectedPreview)
-            check(File(app.cacheDir, "work").listFiles()!!.toSet() == files)
+            check(work.listFiles()!!.toSet() == files)
             val expected = Photos.resize(reference, 32, 24, 2)
             try {
                 check(resized.pixels!!.sameAs(expected))

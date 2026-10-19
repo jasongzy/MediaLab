@@ -199,7 +199,7 @@ internal class MediaStoreRegression(private val app: Context, private val fixtur
                 }
             check(AudioFiles.pictureMime(data) == mime)
             val picture = Picture(data, "中文封面 café e\u0301 🧪 𠮷", "Back Cover", mime)
-            val edited = AudioFiles.save(app, document, tags, listOf(picture))
+            val edited = AudioFiles.save(app.cacheDir, document, tags, listOf(picture))
             try {
                 val read = AudioFiles.read(edited, source.name)
                 val cover = read.pictures.single()
@@ -214,7 +214,7 @@ internal class MediaStoreRegression(private val app: Context, private val fixtur
                 if (format == Bitmap.CompressFormat.PNG) {
                     val failure = runCatching {
                         AudioFiles.save(
-                            app,
+                            app.cacheDir,
                             document,
                             tags,
                             listOf(picture.copy(pictureType = "invalid cover type")),
@@ -249,7 +249,7 @@ internal class MediaStoreRegression(private val app: Context, private val fixtur
         for (description in listOf(imported.pictures.single().description, "", "新的中文说明 🎵 𠮷")) {
             val edited =
                 AudioFiles.save(
-                    app,
+                    app.cacheDir,
                     imported,
                     tags + ("TITLE" to listOf("更新标题 🎵")),
                     imported.pictures.map { it.copy(description = description) },

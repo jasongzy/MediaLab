@@ -1,6 +1,5 @@
 package com.jasongzy.medialab
 
-import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.media.MediaExtractor
@@ -98,12 +97,12 @@ internal object AudioFiles {
     }
 
     suspend fun save(
-        context: Context,
+        directory: File,
         document: AudioDocument,
         tags: Map<String, List<String>>,
         pictures: List<Picture>,
     ): File {
-        val target = MediaFiles.temporary(context, document.file.extension)
+        val target = MediaFiles.temporary(directory, document.file.extension)
         try {
             document.file.inputStream().use { input ->
                 target.outputStream().use { MediaFiles.copy(input, it) }

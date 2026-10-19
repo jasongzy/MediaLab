@@ -23,7 +23,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
@@ -74,6 +73,7 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
     private val context = application
     private val mutable = MutableStateFlow(LabState())
     val state = mutable.asStateFlow()
+    private val workspace = WorkspaceCache(application.cacheDir) { state.value.workingFiles }
     private var job: Job? = null
     private var pickJob: Job? = null
     private var pendingPick: Pair<Int, Int>? = null
@@ -84,7 +84,6 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
     private var history: PhotoHistory? = null
     private var resizePreview: ResizePreview? = null
     private var replacement: CompletableDeferred<Boolean>? = null
-    private val imageAccess = Mutex()
 
     private data class ResizePreview(
         val source: PhotoFrame,
@@ -96,18 +95,19 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
     )
 
     init {
+        viewModelScope.coroutineContext[Job]!!.invokeOnCompletion { workspace.close() }
         mutable.update {
             it.copy(mode = ColorMode.fromStored(settings.getString("colorMode", null)))
         }
         work(R.string.preparing_image) {
-            File(context.cacheDir, "work")
-                .listFiles()
-                ?.filter { it.isFile }
-                ?.forEach { it.delete() }
+            workspace.clearStale()
         }
     }
 
-    private fun work(stage: Int, action: suspend () -> Unit) {
+    private fun work(stage: Int, action: suspend () -> Unit) =
+        task(stage) { workspace.access.withLock { action() } }
+
+    private fun task(stage: Int, action: suspend () -> Unit) {
         if (state.value.busy) return
         mutable.update {
             it.copy(busy = true, stage = stage, error = null)
@@ -115,7 +115,7 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
         job = viewModelScope.launch {
             try {
                 pickJob?.cancelAndJoin()
-                withContext(Dispatchers.IO) { imageAccess.withLock { action() } }
+                withContext(Dispatchers.IO) { action() }
             } catch (_: CancellationException) {} catch (error: UnsupportedMediaException) {
                 mutable.update { it.copy(notice = error.messageRes) }
             } catch (error: Exception) {
@@ -157,11 +157,13 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
     }
 
     fun clearCache() =
-        work(R.string.clearing_cache) {
+        task(R.string.clearing_cache) {
             if (NcmBatch.state.value.busy)
                 throw UnsupportedMediaException(R.string.batch_cache_busy)
-            discardResize()
-            MediaFiles.clearCache(context.cacheDir, state.value.workingFiles)
+            NcmBatch.cacheAccess.withLock {
+                discardResize()
+                workspace.clearAll()
+            }
             mutable.update { it.copy(notice = R.string.cache_cleared) }
         }
 
@@ -228,7 +230,7 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
                 showBatch(true)
                 return@work
             }
-            val (file, name) = MediaFiles.import(context, uri)
+            val (file, name) = MediaFiles.import(context, uri, workspace.work)
             try {
                 val bounds =
                     android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
@@ -249,7 +251,7 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
                     val info = Photos.info(file)
                     val preview = Photos.preview(file)
                     val next =
-                        PhotoHistory(File(context.cacheDir, "work"), PhotoFrame(file, info))
+                        PhotoHistory(workspace.work, PhotoFrame(file, info))
                     val photo = PhotoState(name, next.frames, 0, preview, preview, info)
                     currentCoroutineContext().ensureActive()
                     val old = history
@@ -376,7 +378,7 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
                 ) {
                     context.getString(R.string.jpeg_crop_requirement)
                 }
-                val target = MediaFiles.temporary(context, "jpg")
+                val target = MediaFiles.temporary(workspace.work, "jpg")
                 try {
                     JpegNative.crop(
                         checkNotNull(photo.frame?.source).path,
@@ -511,7 +513,7 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
                     pendingPick = null
                     val color =
                         withContext(Dispatchers.IO) {
-                            imageAccess.withLock {
+                            workspace.access.withLock {
                                 if (state.value.photo.frame !== frame || state.value.busy) null
                                 else if (frame.pixels != null || frame.source == null)
                                     checkNotNull(history)
@@ -552,7 +554,7 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
                     flatten = flatten,
                     keepColor = keepColor,
                 )
-            val target = Photos.export(context, frame.source, frame.info, options)
+            val target = Photos.export(workspace.work, frame.source, frame.info, options)
             try {
                 push(target)
             } catch (error: Throwable) {
@@ -572,13 +574,13 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
             return state.value.exportFile!!
         discardResize()
         val file =
-            if (frame.source != null) Photos.export(context, frame.source, frame.info, options)
+            if (frame.source != null) Photos.export(workspace.work, frame.source, frame.info, options)
             else {
                 val history = checkNotNull(history)
                 val bitmap = history.bitmap(frame)
                 if (options.format == ImageFormat.JPEG && bitmap.hasAlpha())
                     history.reserve(bitmap.width.toLong() * bitmap.height * 4)
-                Photos.export(context, bitmap, frame.info, options)
+                Photos.export(workspace.work, bitmap, frame.info, options)
             }
         val preview =
             try {
@@ -616,7 +618,7 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
     fun shareImage(options: ExportOptions, ready: (File) -> Unit) =
         work(R.string.preparing_image) {
             val file = prepare(options)
-            val directory = File(context.cacheDir, "exports").apply { mkdirs() }
+            val directory = workspace.exports.apply { mkdirs() }
             val target =
                 File(directory, MediaFiles.outputName(state.value.photo.name, file.extension))
             file.inputStream().use { input ->
@@ -634,7 +636,7 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
     fun saveAudio(tags: Map<String, List<String>>, pictures: List<Picture>) =
         work(R.string.saving) {
             val document = state.value.audio!!
-            val file = AudioFiles.save(context, document, tags, pictures)
+            val file = AudioFiles.save(workspace.work, document, tags, pictures)
             try {
                 MediaFiles.save(
                     context,
@@ -659,7 +661,7 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
 
     fun cover(uri: Uri, ready: (Picture) -> Unit) =
         work(R.string.loading_photo) {
-            val (file, _) = MediaFiles.import(context, uri)
+            val (file, _) = MediaFiles.import(context, uri, workspace.work)
             try {
                 val info = Photos.info(file)
                 val bitmap = Photos.decode(file, info)
@@ -686,7 +688,7 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
             val mime = AudioFiles.pictureMime(picture.data)
             val file =
                 MediaFiles.temporary(
-                    context,
+                    workspace.work,
                     checkNotNull(
                         android.webkit.MimeTypeMap.getSingleton().getExtensionFromMimeType(mime)
                     ),

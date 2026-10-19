@@ -16,20 +16,28 @@ import java.io.OutputStream
 import java.net.HttpURLConnection
 import java.net.Proxy
 import java.net.URI
+import java.nio.file.DirectoryNotEmptyException
+import java.nio.file.FileVisitResult
 import java.nio.file.Files
 import java.nio.file.LinkOption
 import java.nio.file.NoSuchFileException
+import java.nio.file.Path
+import java.nio.file.SimpleFileVisitor
 import java.nio.file.attribute.BasicFileAttributes
 import java.util.UUID
 import kotlin.coroutines.resume
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 
 internal class UnsupportedMediaException(val messageRes: Int) : Exception()
 
 internal object MediaFiles {
+    private val cacheCleanup = Mutex()
+
     suspend fun refreshMediaIndex(context: Context): Boolean {
         val storage = Environment.getExternalStorageState()
         if (storage != Environment.MEDIA_MOUNTED && storage != Environment.MEDIA_MOUNTED_READ_ONLY)
@@ -45,23 +53,39 @@ internal object MediaFiles {
         }
     }
 
-    suspend fun clearCache(directory: File, retained: Set<File>) {
+    suspend fun clearCache(
+        directory: File,
+        retained: Set<File>,
+        keepDirectory: (File) -> Boolean = { false },
+    ): Unit = cacheCleanup.withLock {
         val root = directory.toPath().toAbsolutePath().normalize()
-        if (!Files.isDirectory(root, LinkOption.NOFOLLOW_LINKS)) return
+        if (!Files.isDirectory(root, LinkOption.NOFOLLOW_LINKS)) return@withLock
         val keep = retained.map { it.toPath().toAbsolutePath().normalize() }.toSet()
         val coroutine = currentCoroutineContext()
-        Files.walk(root).use { paths ->
-            paths.sorted(Comparator.reverseOrder()).forEach { path ->
+        Files.walkFileTree(root, object : SimpleFileVisitor<Path>() {
+            override fun preVisitDirectory(path: Path, attrs: BasicFileAttributes): FileVisitResult {
                 coroutine.ensureActive()
-                if (path == root || path in keep) return@forEach
-                if (
-                    Files.isDirectory(path, LinkOption.NOFOLLOW_LINKS) &&
-                        Files.newDirectoryStream(path).use { it.iterator().hasNext() }
-                )
-                    return@forEach
-                Files.deleteIfExists(path)
+                return if (keepDirectory(path.toFile())) FileVisitResult.SKIP_SUBTREE
+                else FileVisitResult.CONTINUE
             }
-        }
+
+            override fun visitFile(path: Path, attrs: BasicFileAttributes): FileVisitResult {
+                coroutine.ensureActive()
+                if (path !in keep) Files.deleteIfExists(path)
+                return FileVisitResult.CONTINUE
+            }
+
+            override fun postVisitDirectory(path: Path, error: IOException?): FileVisitResult {
+                if (error != null) throw error
+                coroutine.ensureActive()
+                if (path != root) {
+                    try {
+                        Files.deleteIfExists(path)
+                    } catch (_: DirectoryNotEmptyException) {}
+                }
+                return FileVisitResult.CONTINUE
+            }
+        })
     }
 
     fun name(context: Context, uri: Uri): String {
@@ -77,8 +101,8 @@ internal object MediaFiles {
             ?.takeIf { it.isNotBlank() } ?: "media"
     }
 
-    fun temporary(context: Context, extension: String): File =
-        File(context.cacheDir, "work/${UUID.randomUUID()}.$extension").also {
+    fun temporary(directory: File, extension: String): File =
+        File(directory, "${UUID.randomUUID()}.$extension").also {
             it.parentFile!!.mkdirs()
         }
 
@@ -98,9 +122,9 @@ internal object MediaFiles {
         }
     }
 
-    suspend fun import(context: Context, uri: Uri): Pair<File, String> {
+    suspend fun import(context: Context, uri: Uri, directory: File): Pair<File, String> {
         val name = name(context, uri)
-        val file = temporary(context, name.substringAfterLast('.', "bin").lowercase().take(10))
+        val file = temporary(directory, name.substringAfterLast('.', "bin").lowercase().take(10))
         try {
             file.outputStream().buffered().use { output ->
                 if (uri.scheme == "http") copyLocalImage(uri.toString(), output)
