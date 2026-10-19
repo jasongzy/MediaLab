@@ -11,6 +11,10 @@ internal data class ImageViewport(val scale: Float = 1f, val offset: Offset = Of
         const val MIN_OUTSIDE_SCALE = 0.000001f
         const val MAX_SCALE = 64f
 
+        fun minimumScale(canvas: Size, topInset: Float): Float =
+            if (canvas.isEmpty()) MIN_SCALE
+            else (1f - 2f * topInset / canvas.height).coerceIn(MIN_OUTSIDE_SCALE, MIN_SCALE)
+
         fun fit(canvas: Size, image: Size, bounds: Rect): ImageViewport {
             if (canvas.isEmpty() || image.isEmpty() || bounds.isEmpty) return ImageViewport()
             val base = minOf(canvas.width / image.width, canvas.height / image.height)
@@ -36,9 +40,14 @@ internal data class ImageViewport(val scale: Float = 1f, val offset: Offset = Of
         return Offset(snap(point.x, image.width), snap(point.y, image.height))
     }
 
-    fun constrained(canvas: Size, image: Size, outside: Boolean = false): ImageViewport {
+    fun constrained(
+        canvas: Size,
+        image: Size,
+        outside: Boolean = false,
+        minScale: Float = if (outside) MIN_OUTSIDE_SCALE else MIN_SCALE,
+    ): ImageViewport {
         if (canvas.isEmpty() || image.isEmpty()) return ImageViewport()
-        val zoom = scale.coerceIn(if (outside) MIN_OUTSIDE_SCALE else MIN_SCALE, MAX_SCALE)
+        val zoom = scale.coerceIn(minScale, MAX_SCALE)
         if (outside) return ImageViewport(zoom, offset)
         val fit = minOf(canvas.width / image.width, canvas.height / image.height)
         val limitX = ((image.width * fit * zoom - canvas.width) / 2).coerceAtLeast(0f)
@@ -56,15 +65,15 @@ internal data class ImageViewport(val scale: Float = 1f, val offset: Offset = Of
         canvas: Size,
         image: Size,
         outside: Boolean = false,
+        minScale: Float = if (outside) MIN_OUTSIDE_SCALE else MIN_SCALE,
     ): ImageViewport {
-        val current = constrained(canvas, image, outside)
-        val nextScale = (current.scale * zoom)
-            .coerceIn(if (outside) MIN_OUTSIDE_SCALE else MIN_SCALE, MAX_SCALE)
+        val current = constrained(canvas, image, outside, minScale)
+        val nextScale = (current.scale * zoom).coerceIn(minScale, MAX_SCALE)
         val anchor = focus - Offset(canvas.width / 2, canvas.height / 2)
         return ImageViewport(
                 nextScale,
                 (current.offset - anchor) * (nextScale / current.scale) + anchor + pan,
             )
-            .constrained(canvas, image, outside)
+            .constrained(canvas, image, outside, minScale)
     }
 }

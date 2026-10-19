@@ -139,20 +139,22 @@ class EditorInteractionTest {
     }
 
     @Test
-    fun zoomOutCentersImageAndLeavesRoomForSelectionsBeyondItsEdges() {
+    fun zoomOutCentersImageAndLeavesRoomForToolbarAndSelections() {
         val canvas = Size(400f, 300f)
         val image = Size(800f, 600f)
+        val toolbarInset = 56f
+        val minScale = ImageViewport.minimumScale(canvas, toolbarInset)
         var view = ImageViewport(4f, Offset(600f, -450f))
-        view = view.transformed(0.5f, Offset.Zero, canvas.center, canvas, image)
+        view = view.transformed(0.5f, Offset.Zero, canvas.center, canvas, image, minScale = minScale)
         assertEquals(ImageViewport(2f, Offset(200f, -150f)), view)
         assertEquals(Offset(200f, 450f), view.imagePoint(canvas.center, canvas, image))
-        view = view.transformed(0.5f, Offset.Zero, canvas.center, canvas, image)
+        view = view.transformed(0.5f, Offset.Zero, canvas.center, canvas, image, minScale = minScale)
         assertEquals(1f, view.scale, 0f)
         assertEquals(0f, view.offset.x, 0.001f)
         assertEquals(0f, view.offset.y, 0.001f)
-        view = view.transformed(0.5f, Offset.Zero, canvas.center, canvas, image)
-        assertEquals(ImageViewport(0.8f), view)
-        val limited = view.transformed(0.5f, Offset(100f, -50f), Offset.Zero, canvas, image)
+        view = view.transformed(0.5f, Offset.Zero, canvas.center, canvas, image, minScale = minScale)
+        assertEquals(ImageViewport(minScale), view)
+        val limited = view.transformed(0.5f, Offset(100f, -50f), Offset.Zero, canvas, image, minScale = minScale)
         assertEquals(view.scale, limited.scale, 0f)
         assertEquals(0f, limited.offset.getDistance(), 0.001f)
         assertEquals(Offset(400f, 300f), view.imagePoint(canvas.center, canvas, image))
@@ -160,5 +162,11 @@ class EditorInteractionTest {
         val after = view.imagePoint(Offset(380f, 285f), canvas, image)
         assertTrue(before.x < 0f && before.y < 0f)
         assertTrue(after.x > image.width && after.y > image.height)
+        for (area in listOf(canvas, Size(300f, 160f), Size(300f, 800f))) {
+            val minimum = ImageViewport.minimumScale(area, toolbarInset)
+            val fit = minOf(area.width / image.width, area.height / image.height)
+            val top = (area.height - image.height * fit * minimum) / 2
+            assertTrue(top >= toolbarInset - 0.001f)
+        }
     }
 }

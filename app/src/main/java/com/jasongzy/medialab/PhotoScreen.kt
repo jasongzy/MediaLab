@@ -41,6 +41,7 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
@@ -746,15 +747,19 @@ private fun PhotoCanvas(
     val frameColor = if (expanding) MaterialTheme.colorScheme.primary.toArgb() else android.graphics.Color.WHITE
     val imageBorderColor = MaterialTheme.colorScheme.outline.toArgb()
     val initialScale = if (expanding) 0.6f else 0.9f
-    val minScale = if (expanding) ImageViewport.MIN_OUTSIDE_SCALE else ImageViewport.MIN_SCALE
     var viewport by remember(photo.frame, expanding) { mutableStateOf(ImageViewport(initialScale)) }
     var canvasSize by remember { mutableStateOf(Size.Zero) }
+    var toolbarHeight by remember { mutableIntStateOf(0) }
+    val toolbarInset = toolbarHeight + with(LocalDensity.current) { 8.dp.toPx() }
+    val minScale = if (expanding) ImageViewport.MIN_OUTSIDE_SCALE
+        else ImageViewport.minimumScale(canvasSize, toolbarInset)
     fun fitted() = ImageViewport.fit(
         canvasSize, imageSize,
         FloatRect(bounds.left.toFloat(), bounds.top.toFloat(), bounds.right.toFloat(), bounds.bottom.toFloat()),
     )
-    LaunchedEffect(photo.frame, expanding, ratio, canvasSize) {
-        if (expanding) viewport = fitted()
+    LaunchedEffect(photo.frame, expanding, ratio, canvasSize, minScale) {
+        if (!canvasSize.isEmpty()) viewport = if (expanding) fitted()
+            else viewport.constrained(canvasSize, imageSize, minScale = minScale)
     }
     var selection by
         remember(photo.frame, tool, shape, dropper, showOriginal) {
@@ -769,7 +774,6 @@ private fun PhotoCanvas(
             .clipToBounds()
             .onSizeChanged {
                 canvasSize = Size(it.width.toFloat(), it.height.toFloat())
-                viewport = viewport.constrained(canvasSize, imageSize, outside = expanding)
             }
             .background(MaterialTheme.colorScheme.surfaceContainer)
     ) {
@@ -788,6 +792,7 @@ private fun PhotoCanvas(
                     dropper,
                     cutout,
                     softEdges,
+                    minScale,
                 ) {
                     if (showOriginal) return@pointerInput
                     awaitEachGesture {
@@ -866,6 +871,7 @@ private fun PhotoCanvas(
                                             canvas,
                                             imageSize,
                                             outside = expanding,
+                                            minScale = minScale,
                                         )
                                 } else if (!transformed) {
                                     val position = event.changes.first().position
@@ -922,6 +928,7 @@ private fun PhotoCanvas(
                                                     canvas,
                                                     imageSize,
                                                     outside = expanding,
+                                                    minScale = minScale,
                                                 )
                                     }
                                 }
@@ -1072,8 +1079,9 @@ private fun PhotoCanvas(
         }
         Row(
             Modifier.align(Alignment.TopEnd)
+                .onSizeChanged { toolbarHeight = it.height }
                 .background(
-                    MaterialTheme.colorScheme.surface.copy(alpha = 0.88f),
+                    MaterialTheme.colorScheme.surface.copy(alpha = 0.65f),
                     MaterialTheme.shapes.large,
                 )
         ) {
@@ -1090,6 +1098,7 @@ private fun PhotoCanvas(
                         canvasSize,
                         imageSize,
                         outside = expanding,
+                        minScale = minScale,
                     )
             }
             ToolButton(
@@ -1098,7 +1107,10 @@ private fun PhotoCanvas(
                 !showOriginal && viewport.scale < ImageViewport.MAX_SCALE,
             ) {
                 viewport =
-                    viewport.transformed(2f, Offset.Zero, canvasSize.center, canvasSize, imageSize, outside = expanding)
+                    viewport.transformed(
+                        2f, Offset.Zero, canvasSize.center, canvasSize, imageSize,
+                        outside = expanding, minScale = minScale,
+                    )
             }
             val initialView = if (expanding) fitted() else ImageViewport(initialScale)
             ToolButton(R.drawable.ic_reset, R.string.reset_view, !showOriginal && viewport != initialView) {
