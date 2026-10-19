@@ -109,12 +109,14 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
     var background by editor::background
     var cutoutBackground by editor::cutoutBackground
     val coverHistory = editor.coverHistory
-    val strokes = coverHistory.value
+    val cutout = editor.cutout.takeIf { tool == PhotoTool.BACKGROUND }
+    val brushHistory = cutout?.history ?: coverHistory
+    val strokes = brushHistory.value
     val resize = editor.resize
     var cleanup by editor::cleanup
     val pending = photo.pending
     val pendingDescription = stringResource(R.string.unapplied_changes)
-    val toolHistory = if (tool == PhotoTool.COVER) coverHistory else frameHistory
+    val toolHistory = if (tool == PhotoTool.COVER || cutout != null) brushHistory else frameHistory
     var fill by editor::fill
     var fillShape by editor::fillShape
     var brushWidth by editor::brushWidth
@@ -207,12 +209,16 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
                     ratio,
                     { frameHistory.preview(frameHistory.value.copy(bounds = it)) },
                     strokes,
-                    coverHistory::preview,
+                    brushHistory::preview,
                     { commit -> if (commit) toolHistory.commit() else toolHistory.cancel() },
                     toolHistory.revision,
-                    if (expanding) background else color,
+                    when {
+                        expanding -> background
+                        cutout != null -> if (cutout.keep) android.graphics.Color.WHITE else android.graphics.Color.TRANSPARENT
+                        else -> color
+                    },
                     brushWidth,
-                    if (fill) fillShape else CoverShape.BRUSH,
+                    if (fill && cutout == null) fillShape else CoverShape.BRUSH,
                     dropper,
                     pixelX,
                     pixelY,
@@ -360,54 +366,7 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
                                 }
                             }
                         }
-                        PhotoTool.BACKGROUND -> {
-                            SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                                BackgroundModel.entries.forEachIndexed { index, item ->
-                                    SegmentedButton(
-                                        selected = editor.backgroundModel == item,
-                                        onClick = { editor.backgroundModel = item },
-                                        shape = SegmentedButtonDefaults.itemShape(index, BackgroundModel.entries.size),
-                                    ) { Text(stringResource(item.label)) }
-                                }
-                            }
-                            Text(
-                                stringResource(R.string.background_description),
-                                style = MaterialTheme.typography.bodySmall,
-                            )
-                            if (editor.backgroundModel == BackgroundModel.RMBG20) Text(
-                                stringResource(R.string.model_rmbg20_hint),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                            ColorField(cutoutBackground, allowTransparent = true, pick = { dropper = !dropper }) {
-                                cutoutBackground = it
-                                dropper = false
-                            }
-                            if (dropper) Text(
-                                stringResource(R.string.tap_color),
-                                style = MaterialTheme.typography.bodySmall,
-                            )
-                            Row(
-                                Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Box(Modifier.weight(1f)) {
-                                    photo.backgroundElapsedMs?.let { elapsed ->
-                                        Text(
-                                            stringResource(R.string.background_elapsed, elapsed / 1000.0),
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                        )
-                                    }
-                                }
-                                Button({ model.removeBackground(cutoutBackground, editor.backgroundModel) }) {
-                                    Text(stringResource(R.string.remove_background))
-                                }
-                            }
-                        }
+                        PhotoTool.BACKGROUND -> BackgroundPanel(model, photo)
                         PhotoTool.COVER -> {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
@@ -453,18 +412,7 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
                                     stringResource(R.string.tap_color),
                                     style = MaterialTheme.typography.bodySmall,
                                 )
-                            if (!fill) {
-                                Text(
-                                    "${stringResource(R.string.brush_size)} · ${brushWidth.roundToInt()} px",
-                                    style = MaterialTheme.typography.labelMedium,
-                                )
-                                ValueSlider(
-                                    brushWidth,
-                                    1f..maxOf(100f, minOf(info.width, info.height) / 3f),
-                                ) {
-                                    brushWidth = it
-                                }
-                            }
+                            if (!fill) BrushSize(brushWidth, info) { brushWidth = it }
                             FlowRow(
                                 Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
@@ -674,6 +622,99 @@ internal fun colorLosses(losses: List<Int>): String =
     losses.map { stringResource(it) }.joinToString("\n") { "• $it" }
 
 @Composable
+private fun BackgroundPanel(model: LabViewModel, photo: PhotoState) {
+    val editor = checkNotNull(photo.editor)
+    val draft = editor.cutout
+    SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+        BackgroundModel.entries.forEachIndexed { index, item ->
+            SegmentedButton(
+                selected = editor.backgroundModel == item,
+                onClick = { editor.backgroundModel = item },
+                shape = SegmentedButtonDefaults.itemShape(index, BackgroundModel.entries.size),
+            ) { Text(stringResource(item.label)) }
+        }
+    }
+    Text(stringResource(R.string.background_description), style = MaterialTheme.typography.bodySmall)
+    if (editor.backgroundModel == BackgroundModel.RMBG20) Text(
+        stringResource(R.string.model_rmbg20_hint),
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    ColorField(editor.cutoutBackground, allowTransparent = true, pick = { editor.dropper = !editor.dropper }) {
+        editor.cutoutBackground = it
+        editor.dropper = false
+    }
+    if (editor.dropper) Text(stringResource(R.string.tap_color), style = MaterialTheme.typography.bodySmall)
+    if (draft != null) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilterChip(!draft.showMask, { draft.showMask = false }, label = { Text(stringResource(R.string.mask_result)) })
+            FilterChip(draft.showMask, { draft.showMask = true }, label = { Text(stringResource(R.string.mask)) })
+            Spacer(Modifier.weight(1f))
+            HistoryButtons(draft.history)
+        }
+        if (draft.showMask) Text(
+            stringResource(R.string.mask_hint),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilterChip(
+                draft.keep, { draft.keep = true; editor.dropper = false },
+                label = { Text(stringResource(R.string.mask_keep)) },
+            )
+            FilterChip(
+                !draft.keep, { draft.keep = false; editor.dropper = false },
+                label = { Text(stringResource(R.string.mask_remove)) },
+            )
+            Spacer(Modifier.weight(1f))
+            TextButton({ draft.history.change(emptyList()) }, enabled = draft.history.value.isNotEmpty()) {
+                Text(stringResource(R.string.reset_mask))
+            }
+        }
+        BrushSize(editor.brushWidth, checkNotNull(photo.info)) { editor.brushWidth = it }
+        Toggle(R.string.soft_edges, draft.softEdges) { draft.softEdges = it }
+    }
+    Row(
+        Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(Modifier.weight(1f)) {
+            photo.backgroundElapsedMs?.let { elapsed ->
+                val time = stringResource(R.string.background_elapsed, elapsed / 1000.0)
+                Text(
+                    if (draft == null) time else "${stringResource(draft.model.label)} · $time",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+        if (draft == null) Button({ model.removeBackground(editor.backgroundModel) }) {
+            Text(stringResource(R.string.remove_background))
+        } else TextButton({ model.removeBackground(editor.backgroundModel) }) {
+            Text(stringResource(R.string.reinfer))
+        }
+    }
+    if (draft != null) Row(
+        Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+    ) {
+        TextButton(model::discardBackground) { Text(stringResource(R.string.discard)) }
+        Button(model::applyBackground) { Text(stringResource(R.string.apply)) }
+    }
+}
+
+@Composable
+private fun BrushSize(width: Float, info: PhotoInfo, change: (Float) -> Unit) {
+    Text(
+        "${stringResource(R.string.brush_size)} · ${width.roundToInt()} px",
+        style = MaterialTheme.typography.labelMedium,
+    )
+    ValueSlider(width, 1f..maxOf(100f, minOf(info.width, info.height) / 3f), change)
+}
+
+@Composable
 private fun PhotoCanvas(
     photo: PhotoState,
     modifier: Modifier,
@@ -696,6 +737,9 @@ private fun PhotoCanvas(
     val previewInteraction = remember { MutableInteractionSource() }
     val showOriginal by previewInteraction.collectIsPressedAsState()
     val info = photo.info!!
+    val cutout = photo.editor?.cutout.takeIf { tool == PhotoTool.BACKGROUND }
+    val softEdges = cutout?.softEdges == true
+    val painting = (tool == PhotoTool.COVER || cutout != null) && !dropper
     val imageSize = Size(info.width.toFloat(), info.height.toFloat())
     val expanding = tool == PhotoTool.EXPAND
     val framing = tool == PhotoTool.CROP || expanding
@@ -716,6 +760,7 @@ private fun PhotoCanvas(
         remember(photo.frame, tool, shape, dropper, showOriginal) {
             mutableStateOf<Stroke?>(null)
         }
+    var brushPoint by remember(photo.frame, tool, dropper, showOriginal) { mutableStateOf<Offset?>(null) }
     val currentStrokes by rememberUpdatedState(strokes)
     val currentBounds by rememberUpdatedState(bounds)
     val description = stringResource(R.string.photo_description)
@@ -741,29 +786,31 @@ private fun PhotoCanvas(
                     width,
                     shape,
                     dropper,
+                    cutout,
+                    softEdges,
                 ) {
                     if (showOriginal) return@pointerInput
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
                         val canvas = Size(size.width.toFloat(), size.height.toFloat())
                         fun point(position: Offset): Offset {
-                            val covering = tool == PhotoTool.COVER && !dropper
                             val at =
                                 viewport.imagePoint(
                                     position,
                                     canvas,
                                     imageSize,
                                     edgeSnap =
-                                        if (covering && shape != CoverShape.BRUSH) 1.dp.toPx()
+                                        if (painting && shape != CoverShape.BRUSH) 1.dp.toPx()
                                         else 0f,
                                 )
-                            if (covering) return at
+                            if (painting) return at
                             return Offset(
                                 at.x.coerceIn(0f, imageSize.width),
                                 at.y.coerceIn(0f, imageSize.height),
                             )
                         }
                         val start = point(down.position)
+                        if (painting && shape == CoverShape.BRUSH) brushPoint = start
                         val picking = tool == PhotoTool.COLORS || dropper
                         if (picking) pick(start.x.toInt(), start.y.toInt())
                         val originalBounds = Rect(currentBounds)
@@ -808,7 +855,8 @@ private fun PhotoCanvas(
                                 if (pointers >= 2) {
                                     transformed = true
                                     selection = null
-                                    if (tool == PhotoTool.COVER) setStrokes(before)
+                                    brushPoint = null
+                                    if (painting) setStrokes(before)
                                     if (framing) setCrop(originalBounds)
                                     viewport =
                                         viewport.transformed(
@@ -824,7 +872,8 @@ private fun PhotoCanvas(
                                     val at = point(position)
                                     when {
                                         picking -> pick(at.x.toInt(), at.y.toInt())
-                                        tool == PhotoTool.COVER -> {
+                                        painting -> {
+                                            if (shape == CoverShape.BRUSH) brushPoint = at
                                             if (
                                                 shape == CoverShape.RECTANGLE ||
                                                     shape == CoverShape.ELLIPSE
@@ -832,7 +881,7 @@ private fun PhotoCanvas(
                                                 points = listOf(points.first(), at.x to at.y)
                                             else if (points.last() != (at.x to at.y))
                                                 points = points + (at.x to at.y)
-                                            val stroke = Stroke(points, color, width, shape)
+                                            val stroke = Stroke(points, color, width, shape, softEdges)
                                             if (stroke.fill) {
                                                 selection = stroke.takeIf { pointers > 0 }
                                                 if (pointers == 0 && stroke.isDrawable)
@@ -881,7 +930,8 @@ private fun PhotoCanvas(
                             } while (event.changes.any { it.pressed })
                         } finally {
                             selection = null
-                            if (!picking && (framing || tool == PhotoTool.COVER))
+                            brushPoint = null
+                            if (!picking && (framing || painting))
                                 finishEdit(completed && !transformed)
                         }
                     }
@@ -926,14 +976,18 @@ private fun PhotoCanvas(
                 canvas.drawColor(color)
                 canvas.restore()
             }
-            val coverStrokes = if (tool == PhotoTool.COVER && original == null) strokes else emptyList()
-            val imageLayer =
-                if (coverStrokes.any { it.clearsPixels }) canvas.saveLayer(destination, null)
-                else canvas.save()
-            canvas.clipRect(destination)
-            canvas.drawBitmap(preview, null, destination, paint)
-            Photos.cover(canvas, coverStrokes)
-            canvas.restoreToCount(imageLayer)
+            if (cutout != null && original == null) {
+                Photos.drawCutout(canvas, cutout, destination, checkNotNull(photo.editor).cutoutBackground)
+            } else {
+                val coverStrokes = if (tool == PhotoTool.COVER && original == null) strokes else emptyList()
+                val imageLayer =
+                    if (coverStrokes.any { it.clearsPixels }) canvas.saveLayer(destination, null)
+                    else canvas.save()
+                canvas.clipRect(destination)
+                canvas.drawBitmap(preview, null, destination, paint)
+                Photos.cover(canvas, coverStrokes)
+                canvas.restoreToCount(imageLayer)
+            }
             paint.style = android.graphics.Paint.Style.STROKE
             paint.strokeWidth = 1.dp.toPx() / fit
             paint.color = imageBorderColor
@@ -943,6 +997,14 @@ private fun PhotoCanvas(
             if (original != null) {
                 canvas.restore()
                 return@Canvas
+            }
+            brushPoint?.let { point ->
+                paint.color = android.graphics.Color.BLACK
+                paint.strokeWidth = 3.dp.toPx() / fit
+                canvas.drawCircle(point.x, point.y, width / 2, paint)
+                paint.color = android.graphics.Color.WHITE
+                paint.strokeWidth = 1.dp.toPx() / fit
+                canvas.drawCircle(point.x, point.y, width / 2, paint)
             }
             selection
                 ?.takeIf { it.points.size > 1 }

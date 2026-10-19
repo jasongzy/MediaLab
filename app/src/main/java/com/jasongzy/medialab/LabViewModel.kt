@@ -38,8 +38,10 @@ internal enum class Confirmation(val title: Int, val message: Int, val confirm: 
     REDO(R.string.redo, R.string.discard_unapplied_message),
     APPLY(R.string.apply, R.string.discard_other_edits_message, R.string.apply),
     RESTORE(R.string.restore_original, R.string.discard_unapplied_message, R.string.restore_original),
+    REINFER(R.string.reinfer, R.string.replace_mask_message, R.string.reinfer),
+    DISCARD_MASK(R.string.discard_mask, R.string.discard_mask_message),
     TRANSPARENT_INPUT(R.string.transparent_input, R.string.transparent_input_message, R.string.continue_action),
-    CONVERT_COLOR(R.string.convert_color, R.string.convert_color_message, R.string.convert_and_apply),
+    CONVERT_COLOR(R.string.convert_color, R.string.convert_color_message, R.string.continue_action),
 }
 
 internal data class PhotoState(
@@ -523,23 +525,52 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
             }
         }
 
-    fun removeBackground(background: Int, model: BackgroundModel) =
+    fun removeBackground(model: BackgroundModel) =
         work(R.string.preparing_image) {
-            var started = 0L
-            bitmapEdit { bitmap ->
-                if (Photos.hasFullyTransparentPixels(bitmap) && !confirm(Confirmation.TRANSPARENT_INPUT))
-                    throw CancellationException()
-                if (checkNotNull(state.value.photo.info).color.losses().isNotEmpty() &&
-                    !confirm(Confirmation.CONVERT_COLOR)) throw CancellationException()
-                if (!canApply(PhotoTool.BACKGROUND)) throw CancellationException()
-                mutable.update { it.copy(photo = it.photo.copy(backgroundElapsedMs = null)) }
-                started = SystemClock.elapsedRealtime()
-                Photos.removeBackground(context, bitmap, background, model) { stage ->
-                    mutable.update { it.copy(stage = stage) }
-                }
+            val photo = state.value.photo
+            val editor = checkNotNull(photo.editor)
+            if (editor.cutout?.history?.value?.isNotEmpty() == true && !confirm(Confirmation.REINFER))
+                return@work
+            discardResize()
+            val bitmap = checkNotNull(history).bitmap()
+            if (Photos.hasFullyTransparentPixels(bitmap) && !confirm(Confirmation.TRANSPARENT_INPUT))
+                return@work
+            val converts = checkNotNull(photo.info).color.losses().isNotEmpty()
+            if (converts && !confirm(Confirmation.CONVERT_COLOR)) return@work
+            val started = SystemClock.elapsedRealtime()
+            val mask = Photos.inferMask(context, bitmap, model) { stage ->
+                mutable.update { it.copy(stage = stage) }
             }
+            val preview = if (converts) Photos.preview(bitmap) else checkNotNull(photo.preview)
+            val maskPreview = Photos.maskPreview(mask, preview.width, preview.height, model, bitmap.width, bitmap.height)
+            currentCoroutineContext().ensureActive()
             val elapsed = SystemClock.elapsedRealtime() - started
-            mutable.update { it.copy(photo = it.photo.copy(backgroundElapsedMs = elapsed)) }
+            withContext(Dispatchers.Main) {
+                editor.cutout = CutoutDraft(mask, model, preview, maskPreview)
+                editor.dropper = false
+                mutable.update { it.copy(photo = it.photo.copy(backgroundElapsedMs = elapsed)) }
+            }
+        }
+
+    fun applyBackground() =
+        work(R.string.finishing_image) {
+            val photo = state.value.photo
+            val editor = checkNotNull(photo.editor)
+            val draft = editor.cutout ?: return@work
+            if (!canApply(PhotoTool.BACKGROUND)) return@work
+            bitmapEdit { bitmap ->
+                Photos.applyMask(bitmap, draft.mask, editor.cutoutBackground, draft.model, draft.history.value)
+            }
+            mutable.update { it.copy(photo = it.photo.copy(backgroundElapsedMs = photo.backgroundElapsedMs)) }
+        }
+
+    fun discardBackground() =
+        work(R.string.preparing_image) {
+            val editor = checkNotNull(state.value.photo.editor)
+            val draft = editor.cutout ?: return@work
+            if (draft.history.value.isNotEmpty() && !confirm(Confirmation.DISCARD_MASK)) return@work
+            withContext(Dispatchers.Main) { editor.cutout = null }
+            mutable.update { it.copy(photo = it.photo.copy(backgroundElapsedMs = null)) }
         }
 
     fun palette() =

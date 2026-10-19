@@ -119,17 +119,19 @@ internal object ImageMath {
         height: Int,
         checkCancelled: () -> Unit = {},
         model: BackgroundModel = BackgroundModel.RMBG14,
+        normalizationWidth: Int = width,
+        normalizationHeight: Int = height,
         writeRow: (Int, IntArray) -> Unit,
     ) {
         require(mask.size == SIZE * SIZE && mask.all { it.isFinite() }) { "Invalid model output" }
-        require(width > 0 && height > 0)
+        require(width > 0 && height > 0 && normalizationWidth > 0 && normalizationHeight > 0)
         if (model == BackgroundModel.RMBG20) {
             resizeAlpha(mask, width, height, checkCancelled, writeRow)
             return
         }
         val xScale = SIZE.toFloat() / width
         val yScale = SIZE.toFloat() / height
-        fun sample(x: Int, y: Int): Float {
+        fun sample(x: Int, y: Int, xScale: Float, yScale: Float): Float {
             val sx = max(0f, (x + 0.5f) * xScale - 0.5f)
             val sy = max(0f, (y + 0.5f) * yScale - 0.5f)
             val x0 = sx.toInt().coerceAtMost(SIZE - 1)
@@ -143,10 +145,12 @@ internal object ImageMath {
         }
         var low = Float.POSITIVE_INFINITY
         var high = Float.NEGATIVE_INFINITY
-        for (y in 0 until height) {
+        val normalizationXScale = SIZE.toFloat() / normalizationWidth
+        val normalizationYScale = SIZE.toFloat() / normalizationHeight
+        for (y in 0 until normalizationHeight) {
             checkCancelled()
-            for (x in 0 until width) {
-                val value = sample(x, y)
+            for (x in 0 until normalizationWidth) {
+                val value = sample(x, y, normalizationXScale, normalizationYScale)
                 low = min(low, value)
                 high = max(high, value)
             }
@@ -157,7 +161,7 @@ internal object ImageMath {
             checkCancelled()
             for (x in row.indices) {
                 row[x] =
-                    if (range > 0) ((sample(x, y) - low) / range * 255).toInt().coerceIn(0, 255)
+                    if (range > 0) ((sample(x, y, xScale, yScale) - low) / range * 255).toInt().coerceIn(0, 255)
                     else 0
             }
             writeRow(y, row)

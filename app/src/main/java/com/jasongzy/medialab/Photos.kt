@@ -13,13 +13,18 @@ import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.Rect
+import android.graphics.RectF
 import android.os.Build
+import androidx.core.graphics.createBitmap
+import androidx.core.graphics.withClip
+import androidx.core.graphics.withTranslation
 import androidx.exifinterface.media.ExifInterface
 import java.io.File
 import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.floor
 import kotlin.math.max
+import kotlin.math.roundToInt
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 
@@ -65,6 +70,7 @@ internal data class Stroke(
     val color: Int,
     val width: Float,
     val shape: CoverShape,
+    val softEdges: Boolean = false,
 ) {
     val fill: Boolean
         get() = shape != CoverShape.BRUSH
@@ -439,14 +445,12 @@ internal object Photos {
         return false
     }
 
-    suspend fun removeBackground(
+    suspend fun inferMask(
         context: Context,
         bitmap: Bitmap,
-        background: Int,
         model: BackgroundModel,
         progress: (Int) -> Unit,
-    ) {
-        require(background ushr 24 == 0 || background ushr 24 == 255)
+    ): FloatArray {
         val coroutine = currentCoroutineContext()
         val pixels = IntArray(ImageMath.SIZE * ImageMath.SIZE)
         ImageMath.resize(
@@ -463,7 +467,49 @@ internal object Photos {
         val mask =
             BackgroundEngine(context).infer(model, ImageMath.normalize(pixels, model), progress)
         progress(R.string.finishing_image)
-        applyMask(bitmap, mask, background, model)
+        return mask
+    }
+
+    suspend fun maskPreview(
+        mask: FloatArray,
+        width: Int,
+        height: Int,
+        model: BackgroundModel,
+        sourceWidth: Int = width,
+        sourceHeight: Int = height,
+    ): Bitmap {
+        val preview = createBitmap(width, height)
+        val coroutine = currentCoroutineContext()
+        try {
+            ImageMath.alpha(
+                mask, width, height, { coroutine.ensureActive() }, model, sourceWidth, sourceHeight,
+            ) { y, row ->
+                for (x in row.indices) row[x] = (row[x] shl 24) or 0x00ffffff
+                preview.setPixels(row, 0, width, 0, y, width, 1)
+            }
+            return preview
+        } catch (error: Throwable) {
+            preview.recycle()
+            throw error
+        }
+    }
+
+    fun drawCutout(canvas: Canvas, draft: CutoutDraft, bounds: RectF, background: Int) {
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+        canvas.withClip(bounds) {
+            if (draft.showMask) drawBitmap(draft.sourcePreview, null, bounds, paint)
+            else drawColor(background)
+            val imageLayer = saveLayer(bounds, null)
+            if (draft.showMask) drawColor(0x66e53935)
+            else drawBitmap(draft.sourcePreview, null, bounds, paint)
+            paint.blendMode = if (draft.showMask) BlendMode.DST_OUT else BlendMode.DST_IN
+            val maskLayer = saveLayer(bounds, paint)
+            paint.blendMode = null
+            drawBitmap(draft.maskPreview, null, bounds, paint)
+            cover(this, draft.history.value)
+            restoreToCount(maskLayer)
+            restoreToCount(imageLayer)
+        }
     }
 
     suspend fun applyMask(
@@ -471,6 +517,7 @@ internal object Photos {
         mask: FloatArray,
         background: Int,
         model: BackgroundModel = BackgroundModel.RMBG14,
+        strokes: List<Stroke> = emptyList(),
     ) {
         require(background ushr 24 == 0 || background ushr 24 == 255)
         val coroutine = currentCoroutineContext()
@@ -478,22 +525,45 @@ internal object Photos {
         bitmap.setHasAlpha(bitmap.hasAlpha() || background ushr 24 == 0)
         val fill = Color.valueOf(background).convert(bitmap.colorSpace!!).components
         val row = FloatArray(bitmap.width * 4)
-        ImageMath.alpha(
-            mask,
-            bitmap.width,
-            bitmap.height,
-            { coroutine.ensureActive() },
-            model,
-        ) { y, alpha ->
-            BitmapPixels.readRow(bitmap, y, row)
-            for (x in alpha.indices) {
-                val coverage = alpha[x] / 255f
-                val a = (if (opaque) 1f else row[x * 4 + 3]) * coverage
-                for (c in 0..2)
-                    row[x * 4 + c] = row[x * 4 + c] * coverage + fill[c] * fill[3] * (1f - a)
-                row[x * 4 + 3] = a + fill[3] * (1f - a)
+        // Opaque black/white strokes encode removal/retention; tile alpha records brush coverage.
+        val edits = strokes.map { it.copy(color = if (it.clearsPixels) Color.BLACK else Color.WHITE) }
+        val tile = if (edits.isEmpty()) null else createBitmap(
+            bitmap.width, minOf(bitmap.height, 128, maxOf(1, 256 * 1024 / bitmap.width)),
+        )
+        try {
+            val canvas = tile?.let(::Canvas)
+            val brush = if (tile == null) null else IntArray(bitmap.width)
+            ImageMath.alpha(
+                mask,
+                bitmap.width,
+                bitmap.height,
+                { coroutine.ensureActive() },
+                model,
+            ) { y, alpha ->
+                if (tile != null && canvas != null && brush != null) {
+                    if (y % tile.height == 0) {
+                        tile.eraseColor(Color.TRANSPARENT)
+                        canvas.withTranslation(0f, -y.toFloat()) { cover(this, edits) }
+                    }
+                    tile.getPixels(brush, 0, bitmap.width, 0, y % tile.height, bitmap.width, 1)
+                }
+                BitmapPixels.readRow(bitmap, y, row)
+                for (x in alpha.indices) {
+                    var coverage = alpha[x] / 255f
+                    if (brush != null) {
+                        val stroke = brush[x]
+                        val strength = (stroke ushr 24) / 255f
+                        coverage = coverage * (1f - strength) + Color.red(stroke) / 255f * strength
+                    }
+                    val a = (if (opaque) 1f else row[x * 4 + 3]) * coverage
+                    for (c in 0..2)
+                        row[x * 4 + c] = row[x * 4 + c] * coverage + fill[c] * fill[3] * (1f - a)
+                    row[x * 4 + 3] = a + fill[3] * (1f - a)
+                }
+                BitmapPixels.writeRow(bitmap, y, row)
             }
-            BitmapPixels.writeRow(bitmap, y, row)
+        } finally {
+            tile?.recycle()
         }
     }
 
@@ -507,21 +577,28 @@ internal object Photos {
             if (!stroke.isDrawable) continue
             val paint =
                 Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                    color = stroke.color
-                    blendMode = if (stroke.clearsPixels) BlendMode.CLEAR else BlendMode.SRC_OVER
-                    strokeWidth = stroke.width
+                    color = if (stroke.clearsPixels) Color.WHITE else stroke.color
+                    blendMode = if (stroke.clearsPixels) BlendMode.DST_OUT else BlendMode.SRC_OVER
                     strokeCap = Paint.Cap.ROUND
                     strokeJoin = Paint.Join.ROUND
                     style = if (stroke.fill) Paint.Style.FILL else Paint.Style.STROKE
                 }
-            if (stroke.points.size == 1)
-                canvas.drawCircle(
+            val path = if (stroke.points.size > 1) stroke.path() else null
+            val steps = if (stroke.softEdges && !stroke.fill) 32 else 1
+            val opacity = paint.alpha
+            for (step in steps downTo 1) {
+                val width = if (steps == 1) stroke.width else stroke.width * (0.5f + 0.5f * step / steps)
+                // Nested strokes form a linear fade while preserving a fully opaque brush core.
+                paint.alpha = (opacity.toFloat() / step).roundToInt()
+                paint.strokeWidth = width
+                if (path != null) canvas.drawPath(path, paint)
+                else canvas.drawCircle(
                     stroke.points[0].first,
                     stroke.points[0].second,
-                    stroke.width / 2,
+                    width / 2,
                     paint.apply { style = Paint.Style.FILL },
                 )
-            else canvas.drawPath(stroke.path(), paint)
+            }
         }
     }
 

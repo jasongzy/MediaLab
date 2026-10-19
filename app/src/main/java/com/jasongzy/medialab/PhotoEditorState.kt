@@ -1,5 +1,6 @@
 package com.jasongzy.medialab
 
+import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.Rect
 import androidx.compose.runtime.getValue
@@ -22,6 +23,18 @@ internal enum class PhotoTool(val label: Int, val icon: Int) {
 
 internal data class FrameSelection(val bounds: Rect, val ratio: Float = 0f)
 
+internal class CutoutDraft(
+    val mask: FloatArray,
+    val model: BackgroundModel,
+    val sourcePreview: Bitmap,
+    val maskPreview: Bitmap,
+) {
+    val history = ToolHistory(emptyList<Stroke>())
+    var showMask by mutableStateOf(false)
+    var keep by mutableStateOf(true)
+    var softEdges by mutableStateOf(false)
+}
+
 internal class ResizeSelection(width: Int, height: Int) {
     var width by mutableIntStateOf(width)
     var height by mutableIntStateOf(height)
@@ -38,6 +51,7 @@ internal class PhotoEditorState(info: PhotoInfo, hasAlpha: Boolean, previous: Ph
     var background by mutableIntStateOf(if (hasAlpha) Color.TRANSPARENT else Color.WHITE)
     var cutoutBackground: Int by mutableIntStateOf(previous?.cutoutBackground ?: Color.TRANSPARENT)
     var backgroundModel: BackgroundModel by mutableStateOf(previous?.backgroundModel ?: BackgroundModel.RMBG14)
+    var cutout by mutableStateOf<CutoutDraft?>(null)
     var cleanup by mutableStateOf(defaultCleanup)
     var fill: Boolean by mutableStateOf(previous?.fill ?: true)
     var fillShape: CoverShape by mutableStateOf(previous?.fillShape ?: CoverShape.RECTANGLE)
@@ -53,6 +67,7 @@ internal class PhotoEditorState(info: PhotoInfo, hasAlpha: Boolean, previous: Ph
         val fullBounds = Rect(0, 0, info.width, info.height)
         if (cropHistory.value.bounds != fullBounds) add(PhotoTool.CROP)
         if (canvasHistory.value.bounds != fullBounds) add(PhotoTool.EXPAND)
+        if (cutout != null) add(PhotoTool.BACKGROUND)
         if (coverHistory.value.isNotEmpty()) add(PhotoTool.COVER)
         if (resize.width != info.width || resize.height != info.height) add(PhotoTool.RESIZE)
         if (hasPendingCleanup(info, cleanup, hasSource)) add(PhotoTool.CLEAN)

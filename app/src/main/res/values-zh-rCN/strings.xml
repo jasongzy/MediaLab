@@ -70,6 +70,7 @@
     <string name="ellipse">椭圆</string>
     <string name="lasso">任意圈选</string>
     <string name="brush_size">笔刷粗细</string>
+    <string name="soft_edges">柔化边缘</string>
     <string name="color_code">HEX 颜色</string>
     <string name="pick_from_image">从图像取色</string>
     <string name="black">黑色</string>
@@ -144,6 +145,16 @@
     <string name="lyrics">歌词</string>
     <string name="comment">备注</string>
     <string name="remove_background">去背景</string>
+    <string name="reinfer">重新推理</string>
+    <string name="mask">蒙版</string>
+    <string name="mask_result">结果</string>
+    <string name="mask_keep">保留</string>
+    <string name="mask_remove">去除</string>
+    <string name="mask_hint">红色标记将被去除的区域。</string>
+    <string name="reset_mask">重置蒙版</string>
+    <string name="discard_mask">放弃蒙版？</string>
+    <string name="discard_mask_message">当前蒙版和手工修整将被丢弃。</string>
+    <string name="replace_mask_message">重新推理将替换当前蒙版和手工修整，是否继续？</string>
     <string name="background_description">⚡ 基于神经网络本地推理</string>
     <string name="model_rmbg20_hint">效果可能更好，但耗时和内存占用更高，且首次使用可能需要数分钟以准备模型</string>
     <string name="model_gpu_unavailable">此设备暂不支持模型 2.0，请使用 1.4。</string>

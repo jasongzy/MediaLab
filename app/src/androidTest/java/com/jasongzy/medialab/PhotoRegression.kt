@@ -3,10 +3,12 @@ package com.jasongzy.medialab
 import android.app.Application
 import android.app.Instrumentation
 import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.ColorSpace
 import android.graphics.Gainmap
 import android.graphics.Rect
+import android.graphics.RectF
 import android.net.Uri
 import android.os.Build
 import androidx.compose.ui.geometry.Offset
@@ -74,6 +76,63 @@ internal class PhotoRegression(
                 setPixels(row, 0, width, 0, y, width, 1)
             }
         }
+
+    suspend fun maskEditing() {
+        val space = ColorSpace.get(ColorSpace.Named.DISPLAY_P3)
+        val source = Bitmap.createBitmap(16, 260, Bitmap.Config.RGBA_F16, true, space).apply {
+            eraseColor(Color.pack(0.9f, 0.1f, 0.2f, 0.6f, space))
+            setPixel(0, 127, Color.TRANSPARENT)
+        }
+        val mask = FloatArray(ImageMath.SIZE * ImageMath.SIZE) { 0.35f }
+        val preview = Photos.maskPreview(mask, source.width, source.height, BackgroundModel.RMBG20)
+        val draft = CutoutDraft(mask, BackgroundModel.RMBG20, source, preview)
+        val rendered = Bitmap.createBitmap(source.width, source.height, source.config!!, true, space)
+        val output = checkNotNull(source.copy(source.config!!, true))
+        val original = pixels(source)
+        try {
+            val keep = Stroke(listOf(-8f to 128f, 24f to 128f), Color.WHITE, 8f, CoverShape.BRUSH)
+            val remove = Stroke(listOf(8.5f to 128.5f), Color.TRANSPARENT, 3f, CoverShape.BRUSH)
+            val softKeep = keep.copy(width = 24f, softEdges = true)
+            val softRemove = remove.copy(width = 12f, softEdges = true)
+            draft.history.change(listOf(softKeep, keep))
+            draft.history.change(draft.history.value + listOf(softRemove, remove))
+            draft.history.undo()
+            check(draft.history.value == listOf(softKeep, keep))
+            draft.history.redo()
+            Photos.applyMask(output, mask, Color.TRANSPARENT, draft.model, draft.history.value)
+            check(output.getColor(0, 127).alpha() == 0f)
+            check(output.getColor(8, 128).alpha() == 0f)
+            for (y in listOf(127, 128)) for (x in listOf(1, 15)) {
+                val expected = source.getColor(x, y).components
+                val actual = output.getColor(x, y).components
+                check(actual.indices.all { abs(actual[it] - expected[it]) < 0.002f })
+            }
+            check(abs(output.getColor(1, 64).alpha() - 0.6f * 89f / 255f) < 0.002f)
+            val kept = listOf(115, 117, 119, 121, 123).map { output.getColor(1, it).alpha() }
+            check(kept.zipWithNext().all { (a, b) -> a < b })
+            val removed = listOf(11, 12, 13, 15).map { output.getColor(it, 128).alpha() }
+            check(removed.zipWithNext().all { (a, b) -> a < b })
+            Photos.drawCutout(Canvas(rendered), draft, RectF(0f, 0f, 16f, 260f), Color.TRANSPARENT)
+            val expected = FloatArray(source.width * 4)
+            val actual = FloatArray(source.width * 4)
+            for (y in 0 until source.height) {
+                BitmapPixels.readRow(output, y, expected)
+                BitmapPixels.readRow(rendered, y, actual)
+                check(actual.indices.all { abs(actual[it] - expected[it]) < 0.01f }) { "Mask preview mismatch at $y" }
+            }
+            draft.showMask = true
+            rendered.eraseColor(Color.TRANSPARENT)
+            Photos.drawCutout(Canvas(rendered), draft, RectF(0f, 0f, 16f, 260f), Color.WHITE)
+            check(rendered.getPixel(1, 127) == source.getPixel(1, 127))
+            check(rendered.getPixel(8, 128) != source.getPixel(8, 128))
+            check(pixels(source).contentEquals(original))
+        } finally {
+            source.recycle()
+            preview.recycle()
+            rendered.recycle()
+            output.recycle()
+        }
+    }
 
     suspend fun colorEditing() {
         val capture = listOf(ExifInterface.TAG_SOFTWARE to "Color fixture")
@@ -558,8 +617,12 @@ internal class PhotoRegression(
             }
             idle(model)
             val draft = checkNotNull(model.state.value.photo.editor)
+            val mask = FloatArray(ImageMath.SIZE * ImageMath.SIZE) { 0.5f }
+            val maskPreview = Photos.maskPreview(mask, reference.width, reference.height, BackgroundModel.RMBG20)
+            val cutout = CutoutDraft(mask, BackgroundModel.RMBG20, model.state.value.photo.preview!!, maskPreview)
             instrumentation.runOnMainSync {
                 check(draft.backgroundModel == BackgroundModel.RMBG14)
+                draft.cutout = cutout
                 draft.backgroundModel = BackgroundModel.RMBG20
                 draft.cropHistory.change(FrameSelection(Rect(0, 0, 16, 16)))
                 draft.resize.width = 32
@@ -579,7 +642,7 @@ internal class PhotoRegression(
             }
             for (apply in listOf<() -> Unit>(
                 { model.crop(Rect(0, 0, 16, 16), true) },
-                { model.removeBackground(Color.TRANSPARENT, BackgroundModel.RMBG14) },
+                { model.applyBackground() },
             )) {
                 val resident = model.state.value.photo.frame!!.pixels
                 instrumentation.runOnMainSync(apply)
@@ -588,6 +651,12 @@ internal class PhotoRegression(
                 check(model.state.value.photo.frame!!.pixels === resident)
                 check(draft.cropHistory.value.bounds == Rect(0, 0, 16, 16) && draft.resize.width == 32)
             }
+            instrumentation.runOnMainSync {
+                cutout.history.change(listOf(Stroke(listOf(1f to 1f), Color.WHITE, 2f, CoverShape.BRUSH)))
+                model.removeBackground(BackgroundModel.RMBG20)
+            }
+            answer(model, Confirmation.REINFER, false)
+            check(draft.cutout === cutout && cutout.history.value.isNotEmpty())
             instrumentation.runOnMainSync { model.crop(Rect(0, 0, 16, 16), true) }
             answer(model, Confirmation.APPLY, true)
             check(model.state.value.photo.picked == null)
@@ -639,7 +708,7 @@ internal class PhotoRegression(
             val edited = checkNotNull(model.state.value.photo.frame)
             check(edited.source == null && edited.pixels!!.sameAs(reference))
             instrumentation.runOnMainSync {
-                model.removeBackground(Color.WHITE, BackgroundModel.RMBG20)
+                model.removeBackground(BackgroundModel.RMBG20)
             }
             answer(model, Confirmation.TRANSPARENT_INPUT, false)
             check(model.state.value.photo.frame === edited && edited.pixels!!.sameAs(reference))
@@ -745,6 +814,22 @@ internal class PhotoRegression(
             instrumentation.runOnMainSync { model.undo(1) }
             idle(model)
             check(model.state.value.photo.frame === original)
+            val editor = checkNotNull(model.state.value.photo.editor)
+            instrumentation.runOnMainSync {
+                editor.cutout = cutout
+                model.applyBackground()
+            }
+            idle(model)
+            val cut = checkNotNull(model.state.value.photo.frame)
+            check(model.state.value.photo.history.size == restoredSize + 1)
+            check(model.state.value.photo.pending.isEmpty())
+            check(cut.info.metadata.containsAll(capture))
+            instrumentation.runOnMainSync { model.undo(-1) }
+            idle(model)
+            check(model.state.value.photo.frame === original)
+            instrumentation.runOnMainSync { model.undo(1) }
+            idle(model)
+            check(model.state.value.photo.frame === cut)
         } finally {
             reference.recycle()
             instrumentation.runOnMainSync { store.clear() }

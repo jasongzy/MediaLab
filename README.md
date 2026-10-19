@@ -14,6 +14,7 @@ A native Android media toolbox
 
 - Edit one image across multiple tools, with undo/redo and a shared export step
 - Remove backgrounds locally with RMBG 1.4 (LiteRT with compatible Qualcomm NPUs and GPU/CPU fallback) or RMBG 2.0 (MNN OpenCL GPU)
+- Refine background removal masks with hard or soft keep/remove brushes before applying
 - Crop to any size or aspect ratio, including block-aligned lossless JPEG cropping
 - Expand the canvas freely or to a preset aspect ratio, filling new areas with a solid color or transparency
 - Cover or erase areas with rectangles, ellipses, freehand selections, and brushes

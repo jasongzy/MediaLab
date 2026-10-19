@@ -36,6 +36,7 @@ class RegressionTests : Instrumentation() {
                     "lassoEdges" to { photos.lassoEdges() },
                     "history" to { photos.history() },
                     "colorEditing" to { photos.colorEditing() },
+                    "maskEditing" to { photos.maskEditing() },
                     "expansion" to { photos.expansion() },
                     "photoWorkflow" to { photos.workflow() },
                     "imports" to { photos.imports() },

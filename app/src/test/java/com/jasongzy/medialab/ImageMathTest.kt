@@ -39,6 +39,10 @@ class ImageMathTest {
                 assertArrayEquals(IntArray(3) { (opacity * 255).toInt() }, row)
             }
         }
+        for (i in mask.indices) mask[i] = (i / size).toFloat()
+        ImageMath.alpha(mask, 3, 1, normalizationWidth = 12, normalizationHeight = 4) { _, row ->
+            assertArrayEquals(intArrayOf(127, 127, 127), row)
+        }
         mask[0] = Float.NaN
         assertThrows(IllegalArgumentException::class.java) {
             ImageMath.alpha(mask, 3, 2) { _, _ -> fail() }

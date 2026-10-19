@@ -70,6 +70,7 @@
     <string name="ellipse">Ellipse</string>
     <string name="lasso">Lasso</string>
     <string name="brush_size">Brush size</string>
+    <string name="soft_edges">Soft edges</string>
     <string name="color_code">HEX color</string>
     <string name="pick_from_image">Pick from image</string>
     <string name="black">Black</string>
@@ -144,6 +145,16 @@
     <string name="lyrics">Lyrics</string>
     <string name="comment">Comment</string>
     <string name="remove_background">Remove background</string>
+    <string name="reinfer">Run again</string>
+    <string name="mask">Mask</string>
+    <string name="mask_result">Result</string>
+    <string name="mask_keep">Keep</string>
+    <string name="mask_remove">Remove</string>
+    <string name="mask_hint">Red marks the areas to remove.</string>
+    <string name="reset_mask">Reset mask</string>
+    <string name="discard_mask">Discard mask?</string>
+    <string name="discard_mask_message">The current mask and brush edits will be discarded.</string>
+    <string name="replace_mask_message">Running again will replace the current mask and brush edits. Continue?</string>
     <string name="background_description">⚡ On-device neural network inference</string>
     <string name="model_rmbg14" translatable="false">RMBG 1.4</string>
     <string name="model_rmbg20" translatable="false">RMBG 2.0</string>
