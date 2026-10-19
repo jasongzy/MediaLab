@@ -23,7 +23,9 @@
     <string name="top_padding">Top padding</string>
     <string name="center_image">Center image</string>
     <string name="cover">Cover</string>
+    <string name="clear_cover">Clear overlays</string>
     <string name="resize">Resize</string>
+    <string name="reset_resize">Reset size</string>
     <string name="colors">Colors</string>
     <string name="info">Info</string>
     <string name="clean">Clean up</string>

@@ -23,7 +23,9 @@
     <string name="top_padding">顶部留白</string>
     <string name="center_image">原图居中</string>
     <string name="cover">遮盖</string>
+    <string name="clear_cover">清空遮盖</string>
     <string name="resize">缩放</string>
+    <string name="reset_resize">重置缩放</string>
     <string name="colors">取色</string>
     <string name="info">信息</string>
     <string name="clean">清理</string>

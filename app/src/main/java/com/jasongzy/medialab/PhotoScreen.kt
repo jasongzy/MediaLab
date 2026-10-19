@@ -347,16 +347,18 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
                                 horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
                                 verticalArrangement = Arrangement.spacedBy(4.dp),
                             ) {
-                                if (expanding) TextButton({
+                                TextButton({
                                     setBounds(Rect(bounds).apply {
                                         offsetTo((info.width - width()) / 2, (info.height - height()) / 2)
                                     })
                                 }) {
                                     Text(stringResource(R.string.center_image))
                                 }
-                                TextButton({
-                                    frameHistory.change(FrameSelection(Rect(0, 0, info.width, info.height)))
-                                }) {
+                                val initialFrame = FrameSelection(Rect(0, 0, info.width, info.height))
+                                TextButton(
+                                    { frameHistory.change(initialFrame) },
+                                    enabled = frameHistory.value != initialFrame,
+                                ) {
                                     Text(stringResource(if (expanding) R.string.reset_canvas else R.string.reset_crop))
                                 }
                                 Button(
@@ -454,12 +456,23 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
                                     brushWidth = it
                                 }
                             }
-                            Button(
-                                { edit { model.cover(strokes) } },
-                                Modifier.align(Alignment.End),
-                                enabled = strokes.isNotEmpty(),
+                            FlowRow(
+                                Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+                                verticalArrangement = Arrangement.spacedBy(4.dp),
                             ) {
-                                Text(stringResource(R.string.apply))
+                                TextButton(
+                                    { coverHistory.change(emptyList()) },
+                                    enabled = strokes.isNotEmpty(),
+                                ) {
+                                    Text(stringResource(R.string.clear_cover))
+                                }
+                                Button(
+                                    { edit { model.cover(strokes) } },
+                                    enabled = strokes.isNotEmpty(),
+                                ) {
+                                    Text(stringResource(R.string.apply))
+                                }
                             }
                         }
                         PhotoTool.RESIZE ->
@@ -975,8 +988,9 @@ private fun PhotoCanvas(
                 viewport =
                     viewport.transformed(2f, Offset.Zero, canvasSize.center, canvasSize, imageSize, outside = expanding)
             }
-            ToolButton(R.drawable.ic_reset, R.string.reset_view, !showOriginal) {
-                viewport = if (expanding) fitted() else ImageViewport(initialScale)
+            val initialView = if (expanding) fitted() else ImageViewport(initialScale)
+            ToolButton(R.drawable.ic_reset, R.string.reset_view, !showOriginal && viewport != initialView) {
+                viewport = initialView
             }
         }
     }
@@ -1024,6 +1038,7 @@ internal fun NumberField(
     value: Int,
     modifier: Modifier,
     range: IntRange = 1..100000,
+    onDraftChanged: (Boolean) -> Unit = {},
     change: (Int) -> Unit,
 ) {
     var text by remember(value) { mutableStateOf(value.toString()) }
@@ -1032,6 +1047,7 @@ internal fun NumberField(
         { input ->
             if (input.all(Char::isDigit) && input.length <= 7) {
                 text = input
+                onDraftChanged(input != value.toString())
                 input.toIntOrNull()?.takeIf { it in range }?.let(change)
             }
         },
@@ -1054,16 +1070,21 @@ private fun ResizePanel(
     val height = selection.height
     val method = selection.method
     var preview by remember(info) { mutableStateOf<android.graphics.Bitmap?>(null) }
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        NumberField(R.string.width, width, Modifier.weight(1f)) {
-            selection.width = it
-            if (selection.lock)
-                selection.height = (it.toDouble() * info.height / info.width).roundToInt().coerceAtLeast(1)
-        }
-        NumberField(R.string.height, height, Modifier.weight(1f)) {
-            selection.height = it
-            if (selection.lock)
-                selection.width = (it.toDouble() * info.width / info.height).roundToInt().coerceAtLeast(1)
+    var inputRevision by remember(selection) { mutableIntStateOf(0) }
+    var widthHasDraft by remember(selection, width, inputRevision) { mutableStateOf(false) }
+    var heightHasDraft by remember(selection, height, inputRevision) { mutableStateOf(false) }
+    key(selection, inputRevision) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            NumberField(R.string.width, width, Modifier.weight(1f), onDraftChanged = { widthHasDraft = it }) {
+                selection.width = it
+                if (selection.lock)
+                    selection.height = (it.toDouble() * info.height / info.width).roundToInt().coerceAtLeast(1)
+            }
+            NumberField(R.string.height, height, Modifier.weight(1f), onDraftChanged = { heightHasDraft = it }) {
+                selection.height = it
+                if (selection.lock)
+                    selection.width = (it.toDouble() * info.width / info.height).roundToInt().coerceAtLeast(1)
+            }
         }
     }
     Toggle(R.string.keep_ratio, selection.lock) { selection.lock = it }
@@ -1077,10 +1098,22 @@ private fun ResizePanel(
     ) {
         selection.method = it
     }
-    Row(
+    FlowRow(
         Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
+        TextButton(
+            {
+                selection.width = info.width
+                selection.height = info.height
+                // Also reset incomplete text that has not changed the numeric values.
+                inputRevision++
+            },
+            enabled = width != info.width || height != info.height || widthHasDraft || heightHasDraft,
+        ) {
+            Text(stringResource(R.string.reset_resize))
+        }
         TextButton({ model.previewResize(width, height, method) { preview = it } }) {
             Text(stringResource(R.string.preview))
         }
