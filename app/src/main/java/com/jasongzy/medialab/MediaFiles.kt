@@ -191,8 +191,8 @@ internal object MediaFiles {
                     ?: "application/octet-stream"
         }
 
-    fun outputName(name: String, extension: String): String =
-        name.substringBeforeLast('.').trim().ifBlank { "media" } + "_edited.$extension"
+    fun outputName(name: String, extension: String, suffix: String = "edited"): String =
+        name.substringBeforeLast('.').trim().ifBlank { "media" } + "_$suffix.$extension"
 
     fun existsOnDisk(path: String): Boolean =
         try {
@@ -281,7 +281,7 @@ internal object MediaFiles {
         return files
     }
 
-    suspend fun save(context: Context, file: File, name: String, image: Boolean): Uri {
+    suspend fun save(context: Context, file: File, name: String, image: Boolean): String {
         val resolver = context.contentResolver
         val collection =
             if (image) MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
@@ -310,7 +310,7 @@ internal object MediaFiles {
             values.clear()
             values.put(MediaStore.MediaColumns.IS_PENDING, 0)
             check(resolver.update(uri, values, null, null) == 1) { "Cannot publish output" }
-            return uri
+            return relativePath + name(context, uri)
         } catch (error: Exception) {
             runCatching { resolver.delete(uri, null, null) }.onFailure(error::addSuppressed)
             throw error

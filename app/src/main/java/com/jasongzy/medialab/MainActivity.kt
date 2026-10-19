@@ -118,8 +118,9 @@ private fun LabApp(model: LabViewModel, state: LabState, exit: () -> Unit) {
     val context = LocalContext.current
     val clipboard = LocalClipboard.current
     val scope = rememberCoroutineScope()
-    LaunchedEffect(state.notice) {
-        state.notice?.let {
+    val notice = state.notice?.let { stringResource(it.message, it.argument.orEmpty()) }
+    LaunchedEffect(notice) {
+        notice?.let {
             Toast.makeText(context, it, Toast.LENGTH_SHORT).show()
             model.clearNotice()
         }

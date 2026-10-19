@@ -43,8 +43,7 @@
     <string name="save_copy">保存副本</string>
     <string name="share">分享</string>
     <string name="preview">预览</string>
-    <string name="image_saved">已保存到 Pictures/MediaLab</string>
-    <string name="audio_saved">已保存到 Music/MediaLab</string>
+    <string name="file_saved">已保存到 %1$s</string>
     <string name="width">宽度</string>
     <string name="height">高度</string>
     <string name="drag_to_adjust">左右拖动以调整数值</string>

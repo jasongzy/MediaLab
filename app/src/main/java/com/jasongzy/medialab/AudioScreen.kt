@@ -6,6 +6,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -347,7 +348,12 @@ internal fun AudioScreen(model: LabViewModel, state: LabState, active: Boolean) 
                                     Image(
                                         it.asImageBitmap(),
                                         stringResource(R.string.artwork),
-                                        Modifier.fillMaxSize(),
+                                        Modifier.fillMaxSize().combinedClickable(
+                                            enabled = !state.busy,
+                                            onLongClickLabel = stringResource(R.string.export_cover),
+                                            onLongClick = { model.saveCover(picture) },
+                                            onClick = {},
+                                        ),
                                         contentScale = ContentScale.Fit,
                                     )
                                 }

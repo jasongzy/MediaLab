@@ -307,7 +307,7 @@ internal class PhotoRegression(
                 model.open(Uri.fromFile(image), ImportType.AUDIO)
             }
             idle(model)
-            check(model.state.value.notice == R.string.select_audio_only)
+            check(model.state.value.notice?.message == R.string.select_audio_only)
             check(model.state.value.audio === editedAudio && work.listFiles()!!.toSet() == before)
             instrumentation.runOnMainSync { model.open(Uri.fromFile(audio), null) }
             withTimeout(30_000) { model.state.first { it.replacing == ImportType.AUDIO } }

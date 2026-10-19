@@ -47,6 +47,8 @@ internal data class PhotoState(
         get() = history.getOrNull(position)
 }
 
+internal data class Notice(val message: Int, val argument: String? = null)
+
 internal data class LabState(
     val tab: Int = 0,
     val photo: PhotoState = PhotoState(),
@@ -58,7 +60,7 @@ internal data class LabState(
     val refreshingMedia: Boolean = false,
     val stage: Int = R.string.loading_photo,
     val error: String? = null,
-    val notice: Int? = null,
+    val notice: Notice? = null,
     val exportFile: File? = null,
     val exportPreview: Bitmap? = null,
     val mode: ColorMode = ColorMode.SYSTEM,
@@ -117,7 +119,7 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
                 pickJob?.cancelAndJoin()
                 withContext(Dispatchers.IO) { action() }
             } catch (_: CancellationException) {} catch (error: UnsupportedMediaException) {
-                mutable.update { it.copy(notice = error.messageRes) }
+                mutable.update { it.copy(notice = Notice(error.messageRes)) }
             } catch (error: Exception) {
                 mutable.update { it.copy(error = error.stackTraceToString()) }
             } catch (error: OutOfMemoryError) {
@@ -164,7 +166,7 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
                 discardResize()
                 workspace.clearAll()
             }
-            mutable.update { it.copy(notice = R.string.cache_cleared) }
+            mutable.update { it.copy(notice = Notice(R.string.cache_cleared)) }
         }
 
     fun refreshMediaIndex() {
@@ -175,16 +177,17 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
                 val success = withContext(Dispatchers.IO) { MediaFiles.refreshMediaIndex(context) }
                 mutable.update {
                     it.copy(
-                        notice =
+                        notice = Notice(
                             if (success) R.string.media_index_refreshed
                             else R.string.media_index_failed
+                        )
                     )
                 }
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {
                 if (BuildConfig.DEBUG) Log.e("MediaIndex", "Media scan failed", error)
-                mutable.update { it.copy(notice = R.string.media_index_failed) }
+                mutable.update { it.copy(notice = Notice(R.string.media_index_failed)) }
             } finally {
                 mutable.update { it.copy(refreshingMedia = false) }
             }
@@ -311,7 +314,7 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
                 photo = photo,
                 exportFile = null,
                 exportPreview = null,
-                notice = if (applied) R.string.changes_applied else null,
+                notice = if (applied) Notice(R.string.changes_applied) else null,
             )
         }
         oldExport?.delete()
@@ -543,7 +546,7 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
             val frame = checkNotNull(photo.frame)
             if (frame.source == null) {
                 if (metadata && frame.info.metadata.isNotEmpty()) bitmapEdit(clearMetadata = true)
-                else mutable.update { it.copy(notice = R.string.changes_applied) }
+                else mutable.update { it.copy(notice = Notice(R.string.changes_applied)) }
                 return@work
             }
             discardResize()
@@ -606,13 +609,13 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
     fun saveImage(options: ExportOptions) =
         work(R.string.saving) {
             val file = prepare(options)
-            MediaFiles.save(
+            val path = MediaFiles.save(
                 context,
                 file,
                 MediaFiles.outputName(state.value.photo.name, file.extension),
                 true,
             )
-            mutable.update { it.copy(notice = R.string.image_saved) }
+            mutable.update { it.copy(notice = Notice(R.string.file_saved, path)) }
         }
 
     fun shareImage(options: ExportOptions, ready: (File) -> Unit) =
@@ -638,7 +641,7 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
             val document = state.value.audio!!
             val file = AudioFiles.save(workspace.work, document, tags, pictures)
             try {
-                MediaFiles.save(
+                val path = MediaFiles.save(
                     context,
                     file,
                     MediaFiles.outputName(document.name, file.extension),
@@ -649,7 +652,7 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
                     it.copy(
                         audio = audio,
                         audioDirty = false,
-                        notice = R.string.audio_saved,
+                        notice = Notice(R.string.file_saved, path),
                     )
                 }
                 document.file.delete()
@@ -695,8 +698,9 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
                 )
             try {
                 file.writeBytes(picture.data)
-                MediaFiles.save(context, file, "cover.${file.extension}", true)
-                mutable.update { it.copy(notice = R.string.image_saved) }
+                val name = MediaFiles.outputName(state.value.audio!!.name, file.extension, "cover")
+                val path = MediaFiles.save(context, file, name, true)
+                mutable.update { it.copy(notice = Notice(R.string.file_saved, path)) }
             } finally {
                 file.delete()
             }

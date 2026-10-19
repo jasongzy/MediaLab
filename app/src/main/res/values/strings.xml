@@ -43,8 +43,7 @@
     <string name="save_copy">Save copy</string>
     <string name="share">Share</string>
     <string name="preview">Preview</string>
-    <string name="image_saved">Saved to Pictures/MediaLab</string>
-    <string name="audio_saved">Saved to Music/MediaLab</string>
+    <string name="file_saved">Saved to %1$s</string>
     <string name="width">Width</string>
     <string name="height">Height</string>
     <string name="drag_to_adjust">Drag left or right to adjust</string>

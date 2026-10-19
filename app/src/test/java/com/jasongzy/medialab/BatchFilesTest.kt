@@ -11,6 +11,7 @@ class BatchFilesTest {
 
     @Test
     fun namesPreserveExtensionsAndRejectPathSegments() {
+        assertEquals("歌曲.01_cover.jpg", MediaFiles.outputName("歌曲.01.flac", "jpg", "cover"))
         assertEquals(
             "song.flac",
             BatchFiles.uniqueName("song.flac", listOf("song 2.flac", "song.mp3")),
