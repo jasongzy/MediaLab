@@ -4,7 +4,7 @@
 
 <h1 align="center">Media Lab</h1>
 
-[中文文档](README.zh-CN.md)
+English | [简体中文](README.zh-CN.md)
 
 A native Android media toolbox
 
@@ -46,4 +46,6 @@ The APK includes neural network models. First use prepares the selected model on
 
 - [RMBG 1.4](https://huggingface.co/briaai/RMBG-1.4)
 - [RMBG 2.0](https://huggingface.co/briaai/RMBG-2.0)
+- [LiteRT](https://github.com/google-ai-edge/LiteRT)
+- [MNN](https://github.com/alibaba/MNN)
 - [DeNcm](https://github.com/Pacoshao/DeNcm)

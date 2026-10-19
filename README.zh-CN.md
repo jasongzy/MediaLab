@@ -4,7 +4,7 @@
 
 <h1 align="center">Media Lab</h1>
 
-[English Doc](README.md)
+[English](README.md) | 简体中文
 
 一款原生 Android 媒体工具箱
 
@@ -46,4 +46,6 @@ APK 内置神经网络模型，首次使用时会在设备端完成准备工作�
 
 - [RMBG 1.4](https://huggingface.co/briaai/RMBG-1.4)
 - [RMBG 2.0](https://huggingface.co/briaai/RMBG-2.0)
+- [LiteRT](https://github.com/google-ai-edge/LiteRT)
+- [MNN](https://github.com/alibaba/MNN)
 - [DeNcm](https://github.com/Pacoshao/DeNcm)
