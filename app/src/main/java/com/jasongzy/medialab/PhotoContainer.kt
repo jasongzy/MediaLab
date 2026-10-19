@@ -32,7 +32,33 @@ internal data class JpegLayout(
     val height: Int,
     val blockX: Int,
     val blockY: Int,
-)
+) {
+    val colorModel: String?
+        get() {
+            val frame = parts.firstOrNull { it.marker in listOf(0xc0, 0xc1, 0xc2) }?.payload ?: return null
+            val count = frame[5].toInt() and 255
+            val adobe = parts.firstOrNull {
+                it.marker == 0xee && it.payload.size >= 12 &&
+                    it.payload.copyOfRange(0, 5).toString(Charsets.US_ASCII) == "Adobe"
+            }?.payload?.get(11)?.toInt()
+            return when (count) {
+                1 -> "Gray"
+                3 -> when {
+                    parts.any { it.marker == 0xe0 && it.payload.size >= 5 &&
+                        it.payload.copyOfRange(0, 5).toString(Charsets.US_ASCII) == "JFIF\u0000" } -> "YCbCr"
+                    adobe == 0 -> "RGB"
+                    adobe == 1 -> "YCbCr"
+                    else -> null
+                }
+                4 -> when (adobe) {
+                    0 -> "CMYK"
+                    2 -> "YCCK"
+                    else -> null
+                }
+                else -> null
+            }
+        }
+}
 
 internal data class PhotoContainer(
     val jpeg: JpegLayout,

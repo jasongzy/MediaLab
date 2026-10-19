@@ -12,6 +12,7 @@ import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.Rect
+import android.os.Build
 import androidx.exifinterface.media.ExifInterface
 import java.io.File
 import kotlin.math.abs
@@ -22,6 +23,19 @@ import kotlin.math.roundToInt
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 
+internal data class PhotoColor(
+    val space: String? = null,
+    val model: String? = null,
+    val wide: Boolean? = null,
+    val hdr: Boolean? = null,
+) {
+    val losses: List<Int>
+        get() = listOfNotNull(
+            R.string.wide_gamut.takeIf { wide == true },
+            R.string.hdr.takeIf { hdr == true },
+        )
+}
+
 internal data class PhotoInfo(
     val width: Int,
     val height: Int,
@@ -30,7 +44,7 @@ internal data class PhotoInfo(
     val orientation: Int,
     val mime: String,
     val bytes: Long?,
-    val wideColor: Boolean,
+    val color: PhotoColor,
     val container: PhotoContainer?,
     val metadata: List<Pair<String, String>>,
 )
@@ -106,7 +120,11 @@ internal data class ExportOptions(
     val flatten: Boolean = false,
     val keepColor: Boolean = true,
     val background: Int = -1,
-)
+) {
+    fun preservesSource(info: PhotoInfo): Boolean =
+        format == ImageFormat.ORIGINAL && keepColor &&
+            (!metadata || (info.mime in listOf("image/jpeg", "image/png", "image/webp") && info.orientation == 1))
+}
 
 internal object JpegNative {
     init {
@@ -117,7 +135,7 @@ internal object JpegNative {
 }
 
 internal object Photos {
-    fun info(file: File): PhotoInfo {
+    fun info(file: File, preview: Bitmap? = null): PhotoInfo {
         val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeFile(file.path, options)
         require(options.outWidth > 0 && options.outHeight > 0) { "Unsupported image format" }
@@ -137,16 +155,22 @@ internal object Photos {
                 }
                 .distinctBy { it.first }
                 .sortedBy { it.first }
+        val container = Containers.inspect(file)
+        val mime = options.outMimeType ?: "image/*"
         return PhotoInfo(
             if (swapped) options.outHeight else options.outWidth,
             if (swapped) options.outWidth else options.outHeight,
             options.outWidth,
             options.outHeight,
             orientation,
-            options.outMimeType ?: "image/*",
+            mime,
             file.length(),
-            options.outColorSpace?.isWideGamut == true,
-            Containers.inspect(file),
+            colorInfo(
+                options.outColorSpace ?: preview?.colorSpace,
+                container?.jpeg?.colorModel ?: RasterMetadata.colorModel(file, mime),
+                container?.gainmap != null || (Build.VERSION.SDK_INT >= 34 && preview?.hasGainmap() == true),
+            ),
+            container,
             metadata,
         )
     }
@@ -181,10 +205,24 @@ internal object Photos {
         1,
         "image/png",
         null,
-        bitmap.colorSpace?.isWideGamut == true,
+        colorInfo(bitmap.colorSpace, bitmap.colorSpace?.model?.name, Build.VERSION.SDK_INT >= 34 && bitmap.hasGainmap()),
         null,
         PhotoMetadata.retained(metadata),
     )
+
+    private fun colorInfo(space: ColorSpace?, model: String?, gainmap: Boolean): PhotoColor {
+        val hdrSpace = if (Build.VERSION.SDK_INT >= 34) when (space) {
+            ColorSpace.get(ColorSpace.Named.BT2020_HLG) -> "BT.2020 HLG"
+            ColorSpace.get(ColorSpace.Named.BT2020_PQ) -> "BT.2020 PQ"
+            else -> null
+        } else null
+        return PhotoColor(
+            hdrSpace ?: if (space?.isSrgb == true) "sRGB" else space?.name,
+            model,
+            space?.isWideGamut,
+            if (gainmap || hdrSpace != null) true else space?.let { false },
+        )
+    }
 
     private fun budget(width: Int, height: Int, copies: Int = 2) {
         require(
@@ -556,12 +594,7 @@ internal object Photos {
         options: ExportOptions,
     ): File {
         val coroutine = currentCoroutineContext()
-        val original =
-            options.format == ImageFormat.ORIGINAL &&
-                options.keepColor &&
-                (!options.metadata ||
-                    (info.mime in listOf("image/jpeg", "image/png", "image/webp") &&
-                        info.orientation == 1))
+        val original = options.preservesSource(info)
         val format = if (options.format == ImageFormat.ORIGINAL) ImageFormat.PNG else options.format
         val target =
             MediaFiles.temporary(

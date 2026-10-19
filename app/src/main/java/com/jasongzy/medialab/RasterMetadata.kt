@@ -4,6 +4,37 @@ import java.io.File
 import java.io.RandomAccessFile
 
 internal object RasterMetadata {
+    fun colorModel(file: File, mime: String): String? {
+        if (mime !in listOf("image/png", "image/webp")) return null
+        RandomAccessFile(file, "r").use { input ->
+            if (mime == "image/png") {
+                if (input.length() < 29 || input.readLong() != 0x89504e470d0a1a0auL.toLong() ||
+                    input.readInt() != 13 || input.readInt() != 0x49484452) return null
+                input.seek(25)
+                return when (input.readUnsignedByte()) {
+                    0, 4 -> "Gray"
+                    2, 3, 6 -> "RGB"
+                    else -> null
+                }
+            }
+            if (input.length() < 12 || input.readInt() != 0x52494646) return null
+            val end = 8 + (Integer.reverseBytes(input.readInt()).toLong() and 0xffffffffL)
+            if (input.readInt() != 0x57454250 || end > input.length()) return null
+            while (input.filePointer + 8 <= end) {
+                val type = input.readInt()
+                val length = Integer.reverseBytes(input.readInt()).toLong() and 0xffffffffL
+                val padded = length + length % 2
+                if (length == 0L || padded > end - input.filePointer) return null
+                when (type) {
+                    0x56503820 -> return "YCbCr"
+                    0x5650384c -> return "RGB"
+                }
+                input.seek(input.filePointer + padded)
+            }
+            return null
+        }
+    }
+
     fun clean(source: File, target: File, mime: String, check: () -> Unit) {
         RandomAccessFile(source, "r").use { input ->
             RandomAccessFile(target, "rw").use { output ->

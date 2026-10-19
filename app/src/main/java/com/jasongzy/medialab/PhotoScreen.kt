@@ -107,7 +107,7 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
     var pixelY by editor::pixelY
     var pixelAction by remember { mutableStateOf<(() -> Unit)?>(null) }
     val edit: (() -> Unit) -> Unit = { action ->
-        if (info.wideColor || info.container?.gainmap != null) pixelAction = action else action()
+        if (info.color.losses.isNotEmpty()) pixelAction = action else action()
     }
     LaunchedEffect(photo.picked, dropper, expanding) {
         if (dropper && photo.picked != null) {
@@ -472,10 +472,7 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
                                             cleanup.keepColor,
                                         )
                                     }
-                                    if (
-                                        !cleanup.keepColor ||
-                                            (cleanup.metadata && info.orientation != 1)
-                                    )
+                                    if (!cleanup.preservesSource(info))
                                         edit(action)
                                     else action()
                                 },
@@ -503,22 +500,37 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
                                         Text(stringResource(R.string.motion_photo))
                                     if (info.container?.edit != null)
                                         Text(stringResource(R.string.editable_photo))
-                                    if (info.container?.gainmap != null)
-                                        Text(stringResource(R.string.hdr))
-                                    info.metadata.forEach { (key, value) ->
-                                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                            Text(
-                                                key,
-                                                style = MaterialTheme.typography.labelMedium,
-                                                fontWeight = FontWeight.Bold,
-                                                color = MaterialTheme.colorScheme.primary,
-                                            )
-                                            Text(
-                                                value.take(8192),
-                                                style = MaterialTheme.typography.bodyMedium,
-                                            )
-                                        }
+                                    PhotoDetail(
+                                        stringResource(R.string.color_space),
+                                        info.color.space ?: stringResource(R.string.unknown),
+                                    )
+                                    PhotoDetail(
+                                        stringResource(R.string.wide_gamut),
+                                        stringResource(when (info.color.wide) {
+                                            true -> R.string.yes
+                                            false -> R.string.no
+                                            null -> R.string.unknown
+                                        }),
+                                    )
+                                    info.color.model?.let { model ->
+                                        PhotoDetail(
+                                            stringResource(R.string.color_model),
+                                            if (model == "Gray") stringResource(R.string.grayscale) else model,
+                                        )
                                     }
+                                    PhotoDetail(
+                                        stringResource(R.string.dynamic_range),
+                                        stringResource(when (info.color.hdr) {
+                                            true -> R.string.hdr
+                                            false -> R.string.sdr
+                                            null -> R.string.unknown
+                                        }),
+                                    )
+                                    info.metadata.filterNot { (key, _) ->
+                                        (key == "ColorSpace" && info.color.space != null) ||
+                                            (key == "PhotometricInterpretation" && info.color.model != null)
+                                    }
+                                        .forEach { (key, value) -> PhotoDetail(key, value.take(8192)) }
                                 }
                             }
                         PhotoTool.EXPORT -> {
@@ -551,7 +563,7 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
         AlertDialog(
             onDismissRequest = { pixelAction = null },
             title = { Text(stringResource(R.string.convert_color)) },
-            text = { Text(stringResource(R.string.convert_color_message)) },
+            text = { Text(stringResource(R.string.convert_color_message, colorLosses(info.color))) },
             confirmButton = {
                 TextButton({
                     val action = pixelAction
@@ -566,6 +578,23 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
             },
         )
 }
+
+@Composable
+private fun PhotoDetail(label: String, value: String) {
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(
+            label,
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.primary,
+        )
+        Text(value, style = MaterialTheme.typography.bodyMedium)
+    }
+}
+
+@Composable
+private fun colorLosses(color: PhotoColor): String =
+    color.losses.map { stringResource(it) }.joinToString("\n") { "• $it" }
 
 @Composable
 private fun PhotoCanvas(
@@ -1196,6 +1225,7 @@ private fun ColorSwatch(color: Int, modifier: Modifier = Modifier) {
 
 @Composable
 private fun ExportPanel(model: LabViewModel, state: LabState) {
+    val info = checkNotNull(state.photo.info)
     var options by checkNotNull(state.photo.editor)::export
     var previewOptions by remember { mutableStateOf<ExportOptions?>(null) }
     var showPreview by remember { mutableStateOf(false) }
@@ -1226,10 +1256,10 @@ private fun ExportPanel(model: LabViewModel, state: LabState) {
         )
     }
     if (
-        (state.photo.info?.wideColor == true || state.photo.info?.container?.gainmap != null) &&
-            (options.format != ImageFormat.ORIGINAL || !options.keepColor)
+        info.color.losses.isNotEmpty() &&
+            (state.photo.frame?.source == null || !options.preservesSource(info))
     )
-        Text(stringResource(R.string.pixel_export_note), style = MaterialTheme.typography.bodySmall)
+        Text(stringResource(R.string.pixel_export_note, colorLosses(info.color)), style = MaterialTheme.typography.bodySmall)
     Row(
         Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),

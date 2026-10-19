@@ -15,6 +15,32 @@ class MediaCoreTest {
     @get:Rule val folder = TemporaryFolder()
 
     @Test
+    fun colorModelsRequireRecognizedFileMarkers() {
+        val jpeg = Containers.inspect(compoundPhoto())!!.jpeg
+        assertEquals("YCbCr", jpeg.colorModel)
+        val unmarked = jpeg.copy(parts = jpeg.parts.filter { it.marker != 0xe0 && it.marker != 0xee })
+        assertNull(unmarked.colorModel)
+        for ((transform, model) in listOf(0 to "RGB", 1 to "YCbCr")) {
+            val adobe = "Adobe".toByteArray() + ByteArray(6) + byteArrayOf(transform.toByte())
+            assertEquals(model, unmarked.copy(parts = unmarked.parts + JpegPart(0xee, ByteRange(0, 0), adobe)).colorModel)
+        }
+        for ((type, model) in listOf(BufferedImage.TYPE_INT_RGB to "RGB", BufferedImage.TYPE_BYTE_GRAY to "Gray")) {
+            val file = folder.newFile()
+            ImageIO.write(BufferedImage(2, 2, type), "png", file)
+            assertEquals(model, RasterMetadata.colorModel(file, "image/png"))
+        }
+        for ((type, model) in listOf("VP8 " to "YCbCr", "VP8L" to "RGB")) {
+            val file = folder.newFile()
+            val bytes = "RIFF".toByteArray() + byteArrayOf(14, 0, 0, 0) +
+                "WEBP$type".toByteArray() + byteArrayOf(2, 0, 0, 0, 0, 0)
+            file.writeBytes(bytes)
+            assertEquals(model, RasterMetadata.colorModel(file, "image/webp"))
+            file.writeBytes(bytes.copyOf(bytes.size - 1))
+            assertNull(RasterMetadata.colorModel(file, "image/webp"))
+        }
+    }
+
+    @Test
     fun compoundPhotoKeepsCurrentPixelsAndGainmap() {
         val source = compoundPhoto()
         val before = Containers.inspect(source)!!

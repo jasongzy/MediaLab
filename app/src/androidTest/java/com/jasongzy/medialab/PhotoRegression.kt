@@ -393,6 +393,7 @@ internal class PhotoRegression(
                 saveAttributes()
             }
             val info = Photos.info(input)
+            check(info.color == PhotoColor("sRGB", "YCbCr", false, false))
             for ((x, y) in listOf(0 to 0, 16 to 8, 63 to 47))
                 check(Photos.pixel(input, info, x, y) == reference.getPixel(x, y)) {
                     "JPEG pixel at $x, $y"

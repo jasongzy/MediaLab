@@ -272,8 +272,8 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
                 }
                 if (!canReplace(if (isImage) ImportType.IMAGE else ImportType.AUDIO)) return@work
                 if (isImage) {
-                    val info = Photos.info(file)
                     val preview = Photos.preview(file)
+                    val info = Photos.info(file, preview)
                     val next =
                         PhotoHistory(workspace.work, PhotoFrame(file, info))
                     val photo = PhotoState(name, next.frames, 0, preview, preview, info, sourceUri = uri)
@@ -343,8 +343,8 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
     }
 
     private suspend fun push(file: File) {
-        val frame = PhotoFrame(file, Photos.info(file))
         val preview = Photos.preview(file)
+        val frame = PhotoFrame(file, Photos.info(file, preview))
         checkNotNull(history).append(frame)
         discardResize()
         publish(preview)

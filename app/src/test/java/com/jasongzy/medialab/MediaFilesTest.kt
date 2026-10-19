@@ -70,7 +70,7 @@ class MediaFilesTest {
         var firstFiles = emptySet<File>()
         WorkspaceCache(cache) { firstFiles }.use { first ->
             val history = listOf(file(first.work, "original.jpg"), file(first.work, "edited.png"))
-            val info = PhotoInfo(1, 1, 1, 1, 1, "image/png", 5, false, null, emptyList())
+            val info = PhotoInfo(1, 1, 1, 1, 1, "image/png", 5, PhotoColor(), null, emptyList())
             val frames = history.map { PhotoFrame(it, info) }
             val snapshot = file(first.work, "history.pixels")
             frames.last().snapshot = snapshot

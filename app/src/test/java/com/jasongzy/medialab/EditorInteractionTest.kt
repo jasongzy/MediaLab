@@ -9,8 +9,22 @@ import org.junit.Test
 
 class EditorInteractionTest {
     @Test
+    fun colorWarningsFollowCurrentFeaturesAndActualExportPath() {
+        assertTrue(PhotoColor(wide = false, hdr = false).losses.isEmpty())
+        assertEquals(listOf(R.string.wide_gamut), PhotoColor(wide = true, hdr = false).losses)
+        assertEquals(listOf(R.string.hdr), PhotoColor(wide = false, hdr = true).losses)
+        assertEquals(listOf(R.string.wide_gamut, R.string.hdr), PhotoColor(wide = true, hdr = true).losses)
+        val info = PhotoInfo(1, 1, 1, 1, 1, "image/jpeg", 5, PhotoColor(), null, emptyList())
+        val clean = ExportOptions(metadata = true)
+        assertTrue(clean.preservesSource(info))
+        assertFalse(clean.preservesSource(info.copy(orientation = 6)))
+        assertFalse(clean.preservesSource(info.copy(mime = "image/heif")))
+        assertFalse(ExportOptions(format = ImageFormat.PNG).preservesSource(info))
+    }
+
+    @Test
     fun cleanupOnlyWarnsForChangedOptionsWithAnApplicableAction() {
-        val info = PhotoInfo(1, 1, 1, 1, 1, "image/png", null, false, null, emptyList())
+        val info = PhotoInfo(1, 1, 1, 1, 1, "image/png", null, PhotoColor(), null, emptyList())
         val defaults = ExportOptions(metadata = true, static = true, flatten = true)
         assertFalse(hasPendingCleanup(info, defaults, hasSource = true))
         assertFalse(hasPendingCleanup(info, defaults.copy(metadata = false), hasSource = true))
