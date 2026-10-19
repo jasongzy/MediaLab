@@ -11,6 +11,10 @@ import java.io.File
 import java.security.MessageDigest
 import java.util.UUID
 import kotlin.math.abs
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 
 internal object ModelStorageRegression {
     suspend fun run(context: Context) {
@@ -24,7 +28,11 @@ internal object ModelStorageRegression {
             }
         try {
             val engine = BackgroundEngine(isolated)
-            val model = engine.prepare()
+            val models = coroutineScope {
+                List(2) { async(Dispatchers.IO) { BackgroundEngine(isolated).prepare() } }.awaitAll()
+            }
+            val model = models.first()
+            check(models.all { it == model } && !File(model.parentFile, "model.part").exists())
             val inode = Os.stat(model.path).st_ino
             check(engine.prepare() == model && Os.stat(model.path).st_ino == inode)
             val input = ImageMath.normalize(IntArray(ImageMath.SIZE * ImageMath.SIZE) { i ->

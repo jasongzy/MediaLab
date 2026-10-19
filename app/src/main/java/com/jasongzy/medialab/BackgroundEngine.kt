@@ -10,10 +10,12 @@ import java.io.File
 import java.security.MessageDigest
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import org.json.JSONObject
 
 internal class BackgroundEngine(private val context: Context) {
-    suspend fun prepare(): File {
+    suspend fun prepare(): File = preparation.withLock {
         val manifest = context.assets.open("models/model.json").bufferedReader().use {
             JSONObject(it.readText())
         }
@@ -22,7 +24,7 @@ internal class BackgroundEngine(private val context: Context) {
             check(isDirectory || mkdirs()) { "Cannot create model directory" }
         }
         val target = File(directory, "rmbg14.tflite")
-        if (target.length() == manifest.getLong("bytes")) return target
+        if (target.length() == manifest.getLong("bytes")) return@withLock target
         val temporary = File(directory, "model.part")
         try {
             val digest = MessageDigest.getInstance("SHA-256")
@@ -43,7 +45,7 @@ internal class BackgroundEngine(private val context: Context) {
                 "Model checksum mismatch"
             }
             check(temporary.renameTo(target)) { "Cannot install model" }
-            return target
+            target
         } finally {
             temporary.delete()
         }
@@ -110,5 +112,9 @@ internal class BackgroundEngine(private val context: Context) {
         } catch (error: LinkageError) {
             throw IllegalStateException("Cannot load LiteRT", error)
         }
+    }
+
+    private companion object {
+        val preparation = Mutex()
     }
 }
