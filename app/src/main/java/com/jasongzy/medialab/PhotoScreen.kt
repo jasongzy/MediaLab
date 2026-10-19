@@ -16,7 +16,6 @@ import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
@@ -44,7 +43,6 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntRect
@@ -239,7 +237,9 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
                                 }
                                 HistoryButtons(frameHistory)
                             }
-                            FrameFields(frameHistory, info, expanding)
+                            key(frameHistory) {
+                                FrameFields(frameHistory, info, expanding)
+                            }
                             if (expanding) {
                                 ColorField(background, allowTransparent = true, pick = { dropper = !dropper }) {
                                     background = it
@@ -935,6 +935,12 @@ private fun FrameFields(history: ToolHistory<FrameSelection>, info: PhotoInfo, e
     val selection = history.value
     val bounds = selection.bounds
     val ratio = selection.ratio
+    var dragging by remember { mutableStateOf(false) }
+    val startDrag = { dragging = true }
+    val finishDrag: (Boolean) -> Unit = { commit ->
+        dragging = false
+        if (commit) history.commit() else history.cancel()
+    }
     val frame = IntRect(bounds.left, bounds.top, bounds.right, bounds.bottom)
     val image = IntSize(info.width, info.height)
     val minimum = if (expand) expandedSize(image.width, image.height, ratio) else IntSize(1, 1)
@@ -944,21 +950,23 @@ private fun FrameFields(history: ToolHistory<FrameSelection>, info: PhotoInfo, e
     ) else croppedSize(image.width, image.height, ratio)
     fun update(next: IntRect) {
         val value = selection.copy(bounds = Rect(next.left, next.top, next.right, next.bottom))
-        history.change(value)
+        if (dragging) history.preview(value) else history.change(value)
     }
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         NumberField(
             R.string.width, frame.width, Modifier.weight(1f), minimum.width..maximum.width,
+            onDragStarted = startDrag, onDragFinished = finishDrag,
         ) { width ->
-            val height = if (ratio > 0) (width / ratio).roundToInt().coerceIn(
+            val height = if (ratio > 0 && width != frame.width) (width / ratio).roundToInt().coerceIn(
                 minimum.height, if (expand) Int.MAX_VALUE else image.height,
             ) else frame.height
             update(resizedBounds(frame, image, IntSize(width, height), expand))
         }
         NumberField(
             R.string.height, frame.height, Modifier.weight(1f), minimum.height..maximum.height,
+            onDragStarted = startDrag, onDragFinished = finishDrag,
         ) { height ->
-            val width = if (ratio > 0) (height * ratio).roundToInt().coerceIn(
+            val width = if (ratio > 0 && height != frame.height) (height * ratio).roundToInt().coerceIn(
                 minimum.width, if (expand) Int.MAX_VALUE else image.width,
             ) else frame.width
             update(resizedBounds(frame, image, IntSize(width, height), expand))
@@ -970,6 +978,7 @@ private fun FrameFields(history: ToolHistory<FrameSelection>, info: PhotoInfo, e
             if (expand) -frame.left else frame.left,
             Modifier.weight(1f),
             0..if (expand) maximum.width - image.width else image.width - 1,
+            onDragStarted = startDrag, onDragFinished = finishDrag,
         ) { left ->
             update(positionedBounds(frame, image, if (expand) -left else left, frame.top, ratio, expand))
         }
@@ -978,37 +987,11 @@ private fun FrameFields(history: ToolHistory<FrameSelection>, info: PhotoInfo, e
             if (expand) -frame.top else frame.top,
             Modifier.weight(1f),
             0..if (expand) maximum.height - image.height else image.height - 1,
+            onDragStarted = startDrag, onDragFinished = finishDrag,
         ) { top ->
             update(positionedBounds(frame, image, frame.left, if (expand) -top else top, ratio, expand))
         }
     }
-}
-
-@Composable
-internal fun NumberField(
-    label: Int,
-    value: Int,
-    modifier: Modifier,
-    range: IntRange = 1..100000,
-    onDraftChanged: (Boolean) -> Unit = {},
-    change: (Int) -> Unit,
-) {
-    var text by remember(value) { mutableStateOf(value.toString()) }
-    OutlinedTextField(
-        text,
-        { input ->
-            if (input.all(Char::isDigit) && input.length <= 7) {
-                text = input
-                onDraftChanged(input != value.toString())
-                input.toIntOrNull()?.takeIf { it in range }?.let(change)
-            }
-        },
-        modifier,
-        label = { Text(stringResource(label)) },
-        singleLine = true,
-        isError = text.toIntOrNull() !in range,
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-    )
 }
 
 @Composable
@@ -1030,12 +1013,14 @@ private fun ResizePanel(
             NumberField(R.string.width, width, Modifier.weight(1f), onDraftChanged = { widthHasDraft = it }) {
                 selection.width = it
                 if (selection.lock)
-                    selection.height = (it.toDouble() * info.height / info.width).roundToInt().coerceAtLeast(1)
+                    selection.height = if (it == width) height
+                        else (it.toDouble() * info.height / info.width).roundToInt().coerceAtLeast(1)
             }
             NumberField(R.string.height, height, Modifier.weight(1f), onDraftChanged = { heightHasDraft = it }) {
                 selection.height = it
                 if (selection.lock)
-                    selection.width = (it.toDouble() * info.width / info.height).roundToInt().coerceAtLeast(1)
+                    selection.width = if (it == height) width
+                        else (it.toDouble() * info.width / info.height).roundToInt().coerceAtLeast(1)
             }
         }
     }

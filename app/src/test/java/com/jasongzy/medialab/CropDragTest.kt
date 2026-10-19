@@ -13,6 +13,48 @@ class CropDragTest {
     private val original = Rect(200f, 200f, 600f, 400f)
 
     @Test
+    fun numericDragsRestoreLinkedDimensionsAndCommitOnce() {
+        val image = IntSize(1000, 800)
+        val initial = IntRect(600, 500, 1000, 800)
+        val history = ToolHistory(initial)
+        fun drag(): NumberDrag {
+            val start = history.value
+            return NumberDrag(start.left, 0..999, {
+                history.preview(positionedBounds(start, image, it, start.top, 0f, false))
+            }, { commit -> if (commit) history.commit() else history.cancel() })
+        }
+        val returning = drag()
+        returning.move(0.25f)
+        assertEquals(initial, history.value)
+        returning.move(0.5f)
+        assertEquals(601, history.value.left)
+        returning.move(199.25f)
+        assertEquals(IntRect(800, 500, 1000, 800), history.value)
+        returning.move(-200f)
+        returning.finish(true)
+        assertEquals(initial, history.value)
+        assertFalse(history.canUndo)
+
+        val accepted = drag()
+        accepted.move(1000f)
+        assertEquals(999, history.value.left)
+        accepted.move(-1f)
+        assertEquals(998, history.value.left)
+        assertEquals(0, history.revision)
+        accepted.finish(true)
+        assertEquals(1, history.revision)
+        history.undo()
+        assertEquals(initial, history.value)
+        val cancelled = drag()
+        cancelled.move(100f)
+        cancelled.finish(false)
+        assertEquals(initial, history.value)
+        assertTrue(history.canRedo)
+        history.redo()
+        assertEquals(IntRect(998, 500, 1000, 800), history.value)
+    }
+
+    @Test
     fun resizingPreservesRequestedDimensionsAndSnapsTheOrigin() {
         val image = IntSize(1000, 800)
         val crop = IntRect(600, 500, 1000, 800)

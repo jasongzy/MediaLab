@@ -47,6 +47,8 @@
     <string name="audio_saved">Saved to Music/MediaLab</string>
     <string name="width">Width</string>
     <string name="height">Height</string>
+    <string name="drag_to_adjust">Drag left or right to adjust</string>
+    <string name="adjust_value">Adjust %1$s</string>
     <string name="left">Left offset</string>
     <string name="top">Top offset</string>
     <string name="free_ratio">Free</string>

@@ -47,6 +47,8 @@
     <string name="audio_saved">已保存到 Music/MediaLab</string>
     <string name="width">宽度</string>
     <string name="height">高度</string>
+    <string name="drag_to_adjust">左右拖动以调整数值</string>
+    <string name="adjust_value">调整%1$s</string>
     <string name="left">左侧偏移</string>
     <string name="top">顶部偏移</string>
     <string name="free_ratio">自由</string>
