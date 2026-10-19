@@ -54,11 +54,10 @@ internal class PhotoHistory(
         require(bytes >= 0)
         for (frame in frames.distinct()) {
             if (residentBytes + bytes <= memoryBudget) break
-            if (frame !== keep) spill(frame)
+            if (frame !== keep) detach(frame)?.recycle()
         }
-        require(residentBytes + bytes < Runtime.getRuntime().maxMemory() * 0.7) {
-            "Image operation exceeds the memory budget"
-        }
+        if (residentBytes + bytes >= Runtime.getRuntime().maxMemory() * 0.7)
+            throw OutOfMemoryError("Image operation exceeds the memory budget")
     }
 
     suspend fun bitmap(frame: PhotoFrame = current): Bitmap {
@@ -105,6 +104,12 @@ internal class PhotoHistory(
             return Photos.decode(frame.source, frame.info, crop)
         }
         val source = bitmap()
+        if (width == source.width && height == source.height && source.isMutable &&
+            source.allocationByteCount.toLong() * 2 > memoryBudget
+        ) {
+            reserve(0)
+            return checkNotNull(detach(frame))
+        }
         reserve(source.allocationByteCount.toLong() * width * height / source.width / source.height)
         val result =
             if (crop == null) source
@@ -131,8 +136,8 @@ internal class PhotoHistory(
         frames = emptyList()
     }
 
-    private suspend fun spill(frame: PhotoFrame) {
-        val bitmap = frame.pixels ?: return
+    private suspend fun detach(frame: PhotoFrame): Bitmap? {
+        val bitmap = frame.pixels ?: return null
         if (frame.source == null && frame.snapshot == null) {
             directory.mkdirs()
             val file = File(directory, "${UUID.randomUUID()}.pixels")
@@ -151,7 +156,8 @@ internal class PhotoHistory(
                 throw error
             }
         }
-        bitmap.recycle()
+        currentCoroutineContext().ensureActive()
         frame.pixels = null
+        return bitmap
     }
 }

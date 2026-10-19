@@ -236,13 +236,9 @@ internal object Photos {
     }
 
     private fun budget(width: Int, height: Int, copies: Int = 2) {
-        require(
-            width > 0 &&
-                height > 0 &&
-                width.toLong() * height * 4 * copies < Runtime.getRuntime().maxMemory() * 0.6
-        ) {
-            "Image operation exceeds the memory budget: $width × $height"
-        }
+        require(width > 0 && height > 0)
+        if (width.toLong() * height * 4 * copies >= Runtime.getRuntime().maxMemory() * 0.6)
+            throw OutOfMemoryError("Image operation exceeds the memory budget: $width × $height")
     }
 
     fun decode(file: File, info: PhotoInfo, crop: Rect? = null): Bitmap {
@@ -543,53 +539,54 @@ internal object Photos {
         if (method == 0) return Bitmap.createScaledBitmap(bitmap, width, height, false)
         val space = bitmap.colorSpace!!
         val output = Bitmap.createBitmap(width, height, bitmap.config!!, bitmap.hasAlpha(), space)
-        output.density = bitmap.density
-        val radius = if (method == 2) 2 else 1
-        val sx = bitmap.width.toDouble() / width
-        val sy = bitmap.height.toDouble() / height
-        val fx = max(1.0, sx)
-        val fy = max(1.0, sy)
-        val cache = linkedMapOf<Int, FloatArray>()
-        val source = FloatArray(bitmap.width * 4)
-        val row = FloatArray(width * 4)
-        val channels = DoubleArray(4)
         try {
+            output.density = bitmap.density
+            val radius = if (method == 2) 2 else 1
+            val sx = bitmap.width.toDouble() / width
+            val sy = bitmap.height.toDouble() / height
+            val fx = max(1.0, sx)
+            val fy = max(1.0, sy)
+            val cache = linkedMapOf<Int, FloatArray>()
+            val source = FloatArray(bitmap.width * 4)
+            val row = FloatArray(width * 4)
+            val channels = DoubleArray(width * 4)
             for (y in 0 until height) {
                 currentCoroutineContext().ensureActive()
+                channels.fill(0.0)
                 val center = (y + 0.5) * sy - 0.5
                 val start = maxOf(0, ceil(center - radius * fy).toInt())
                 val end = minOf(bitmap.height - 1, floor(center + radius * fy).toInt())
                 cache.keys.filter { it < start }.forEach { cache.remove(it) }
-                for (iy in start..end) if (iy !in cache) {
+                var weight = 0.0
+                for (iy in start..end) {
                     currentCoroutineContext().ensureActive()
-                    BitmapPixels.readRow(bitmap, iy, source)
-                    val horizontal = FloatArray(width * 4)
-                    for (x in 0 until width) {
-                        val cx = (x + 0.5) * sx - 0.5
-                        val lo = maxOf(0, ceil(cx - radius * fx).toInt())
-                        val hi = minOf(bitmap.width - 1, floor(cx + radius * fx).toInt())
-                        var weight = 0.0
-                        for (ix in lo..hi) {
-                            val w = kernel((ix - cx) / fx, method)
-                            weight += w
-                            for (c in 0..3) horizontal[x * 4 + c] += (source[ix * 4 + c] * w).toFloat()
+                    val horizontal = cache[iy] ?: FloatArray(width * 4).also { horizontal ->
+                        BitmapPixels.readRow(bitmap, iy, source)
+                        for (x in 0 until width) {
+                            val cx = (x + 0.5) * sx - 0.5
+                            val lo = maxOf(0, ceil(cx - radius * fx).toInt())
+                            val hi = minOf(bitmap.width - 1, floor(cx + radius * fx).toInt())
+                            var sum = 0.0
+                            for (ix in lo..hi) {
+                                val w = kernel((ix - cx) / fx, method)
+                                sum += w
+                                for (c in 0..3) horizontal[x * 4 + c] += (source[ix * 4 + c] * w).toFloat()
+                            }
+                            for (c in 0..3) horizontal[x * 4 + c] =
+                                (horizontal[x * 4 + c] / sum).toFloat()
                         }
-                        for (c in 0..3) horizontal[x * 4 + c] =
-                            (horizontal[x * 4 + c] / weight).toFloat()
+                        cache[iy] = horizontal
+                        while (cache.size.toLong() * width * 16 > Runtime.getRuntime().maxMemory() / 32) {
+                            cache.remove(cache.keys.first())
+                        }
                     }
-                    cache[iy] = horizontal
+                    val w = kernel((iy - center) / fy, method)
+                    weight += w
+                    for (i in channels.indices) channels[i] += horizontal[i] * w
                 }
                 for (x in 0 until width) {
-                    channels.fill(0.0)
-                    var weight = 0.0
-                    for (iy in start..end) {
-                        val w = kernel((iy - center) / fy, method)
-                        weight += w
-                        val horizontal = cache.getValue(iy)
-                        for (c in 0..3) channels[c] += horizontal[x * 4 + c] * w
-                    }
-                    val alpha = (channels[3] / weight).coerceIn(0.0, 1.0).toFloat()
-                    for (c in 0..2) row[x * 4 + c] = (channels[c] / weight).toFloat()
+                    val alpha = (channels[x * 4 + 3] / weight).coerceIn(0.0, 1.0).toFloat()
+                    for (c in 0..2) row[x * 4 + c] = (channels[x * 4 + c] / weight).toFloat()
                         .coerceIn(space.getMinValue(c) * alpha, space.getMaxValue(c) * alpha)
                     row[x * 4 + 3] = alpha
                 }
@@ -663,7 +660,7 @@ internal object Photos {
             }
             coroutine.ensureActive()
             return target
-        } catch (error: Exception) {
+        } catch (error: Throwable) {
             target.delete()
             throw error
         }

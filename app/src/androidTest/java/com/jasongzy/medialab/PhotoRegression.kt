@@ -96,7 +96,7 @@ internal class PhotoRegression(
             }
             try {
                 for (method in 0..2) {
-                    val scaled = Photos.resize(source, 5, 3, method)
+                    val scaled = Photos.resize(source, if (method == 2) 64 else 5, if (method == 2) 1 else 3, method)
                     try {
                         check(scaled.colorSpace == space && scaled.config == config)
                         checkColor(scaled)
@@ -288,6 +288,11 @@ internal class PhotoRegression(
                 checkNotNull(bitmap.copy(config, true)).apply { eraseColor(Color.WHITE) }
             val second = PhotoFrame(null, Photos.rasterInfo(secondBitmap), secondBitmap)
             try {
+                val abandoned = history.copy(Rect(0, 0, bitmap.width, bitmap.height))
+                check(abandoned === bitmap && first.pixels == null)
+                abandoned.eraseColor(Color.BLACK)
+                abandoned.recycle()
+                check(pixels(history.bitmap()).contentEquals(expected))
                 history.append(second)
                 check(first.pixels == null && first.snapshot?.isFile == true)
                 val restored = history.bitmap(first)
@@ -305,7 +310,13 @@ internal class PhotoRegression(
                 history.append(first)
                 check(history.residentBytes == first.pixels!!.allocationByteCount.toLong())
                 history.move(0)
-                val branchBitmap = history.copy().apply { eraseColor(Color.BLACK) }
+                val retained = history.bitmap()
+                val cropped = history.copy(Rect(0, 0, 2, 2))
+                check(first.pixels === retained && cropped !== retained)
+                cropped.recycle()
+                val branchBitmap = history.copy()
+                check(branchBitmap === retained && first.pixels == null)
+                branchBitmap.eraseColor(Color.BLACK)
                 check(pixels(history.bitmap()).contentEquals(expected))
                 val branch = PhotoFrame(null, Photos.rasterInfo(branchBitmap), branchBitmap)
                 val discarded = second.files
@@ -329,6 +340,8 @@ internal class PhotoRegression(
         val history = PhotoHistory(unavailable, frame, 1)
         val nextBitmap = fixture()
         try {
+            check(runCatching { history.copy() }.isFailure)
+            check(frame.pixels === bitmap && !bitmap.isRecycled && frame.snapshot == null)
             check(
                 runCatching { history.append(PhotoFrame(null, frame.info, nextBitmap)) }.isFailure
             )
