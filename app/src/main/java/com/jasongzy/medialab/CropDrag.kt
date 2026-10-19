@@ -16,6 +16,19 @@ internal fun expandedSize(width: Int, height: Int, ratio: Float): IntSize =
         maxOf(height, ceil(width / ratio).toInt()),
     ) else IntSize(width, height)
 
+internal fun ratioBounds(bounds: IntRect, ratio: Float, expand: Boolean): IntRect {
+    if (ratio <= 0) return bounds
+    val width = bounds.width
+    val height = bounds.height
+    val size = if (expand) expandedSize(width, height, ratio) else IntSize(
+        minOf(width, (height * ratio).roundToInt().coerceAtLeast(1)),
+        minOf(height, (width / ratio).roundToInt().coerceAtLeast(1)),
+    )
+    val left = bounds.left + (width - size.width) / 2
+    val top = bounds.top + (height - size.height) / 2
+    return IntRect(left, top, left + size.width, top + size.height)
+}
+
 internal class CropDrag(
     private val original: Rect,
     private val start: Offset,

@@ -13,6 +13,37 @@ class CropDragTest {
     private val original = Rect(200f, 200f, 600f, 400f)
 
     @Test
+    fun presetsUseTheCurrentFrameCenterAndRespectTheEditingDirection() {
+        val crop = IntRect(210, 130, 610, 430)
+        assertEquals(IntRect(260, 130, 560, 430), ratioBounds(crop, 1f, expand = false))
+        assertEquals(IntRect(210, 180, 610, 380), ratioBounds(crop, 2f, expand = false))
+        val canvas = IntRect(-80, -30, 1120, 870)
+        assertEquals(IntRect(-80, -180, 1120, 1020), ratioBounds(canvas, 1f, expand = true))
+        assertEquals(IntRect(-380, -30, 1420, 870), ratioBounds(canvas, 2f, expand = true))
+        for (expand in listOf(false, true)) {
+            var bounds = if (expand) canvas else crop
+            for (ratio in listOf(16f / 9, 9f / 16, 4f / 3, 1f)) {
+                val next = ratioBounds(bounds, ratio, expand)
+                val inner = if (expand) bounds else next
+                val outer = if (expand) next else bounds
+                assertTrue(inner.left >= outer.left && inner.top >= outer.top)
+                assertTrue(inner.right <= outer.right && inner.bottom <= outer.bottom)
+                assertEquals(next, ratioBounds(next, 0f, expand))
+                bounds = next
+            }
+        }
+    }
+
+    @Test
+    fun presetsKeepTinyEdgeSelectionsValid() {
+        val pixel = IntRect(999, 799, 1000, 800)
+        assertEquals(pixel, ratioBounds(pixel, 16f / 9, expand = false))
+        val strip = IntRect(999, 0, 1000, 800)
+        assertEquals(IntRect(999, 399, 1000, 401), ratioBounds(strip, 9f / 16, expand = false))
+        assertEquals(IntRect(-1, 0, 1, 1), ratioBounds(IntRect(-1, 0, 0, 1), 16f / 9, expand = true))
+    }
+
+    @Test
     fun expansionRoundsDimensionsOnceAndKeepsFractionalEdgesOutside() {
         assertEquals(IntSize(178, 100), expandedSize(100, 100, 16f / 9))
         assertEquals(IntSize(64, 114), expandedSize(64, 48, 9f / 16))

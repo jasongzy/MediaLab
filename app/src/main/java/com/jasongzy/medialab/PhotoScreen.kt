@@ -45,6 +45,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import kotlin.math.roundToInt
@@ -222,17 +223,15 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
                                         ratios.indexOfFirst { it.first == ratio },
                                     ) { i ->
                                         val nextRatio = ratios[i].first
-                                        val nextBounds = if (nextRatio > 0) {
-                                            val expanded = expandedSize(info.width, info.height, nextRatio)
-                                            val w = if (expanding) expanded.width
-                                            else minOf(info.width, (info.height * nextRatio).roundToInt()).coerceAtLeast(1)
-                                            val h = if (expanding) expanded.height
-                                            else (w / nextRatio).roundToInt().coerceIn(1, info.height)
-                                            val left = (info.width - w) / 2
-                                            val top = (info.height - h) / 2
-                                            Rect(left, top, left + w, top + h)
-                                        } else bounds
-                                        frameHistory.change(FrameSelection(nextBounds, nextRatio))
+                                        if (nextRatio == ratio) return@ChoiceChips
+                                        val next = ratioBounds(
+                                            IntRect(bounds.left, bounds.top, bounds.right, bounds.bottom),
+                                            nextRatio,
+                                            expanding,
+                                        )
+                                        frameHistory.change(FrameSelection(
+                                            Rect(next.left, next.top, next.right, next.bottom), nextRatio,
+                                        ))
                                     }
                                 }
                                 HistoryButtons(frameHistory)
