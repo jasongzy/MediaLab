@@ -31,6 +31,10 @@
     <string name="clean">清理</string>
     <string name="export">导出</string>
     <string name="apply">应用</string>
+    <string name="unapplied_changes">尚未应用的修改</string>
+    <string name="discard_unapplied_message">此操作会丢弃尚未应用的修改，是否继续？</string>
+    <string name="discard_other_edits_message">应用后将丢弃其他工具中尚未应用的修改，是否继续？</string>
+    <string name="unapplied_export">以下修改尚未应用，导出时不会包含：\n%1$s</string>
     <string name="undo">撤销</string>
     <string name="redo">重做</string>
     <string name="hold_original">按住查看原图</string>
@@ -80,8 +84,8 @@
     <string name="motion_photo">动态照片</string>
     <string name="editable_photo">可恢复编辑</string>
     <string name="hdr">HDR</string>
-    <string name="replace_image">打开其他图片？</string>
-    <string name="replace_message">打开另一张图片将放弃当前未保存的修改。</string>
+    <string name="replace_image">打开新图片</string>
+    <string name="replace_message">打开新图片将放弃当前未保存的修改。</string>
     <string name="open">打开</string>
     <string name="convert_color">以标准色彩继续编辑？</string>
     <string name="convert_color_message">此操作会将图像转为标准色彩（sRGB），原有的广色域或 HDR 显示效果将丢失。</string>

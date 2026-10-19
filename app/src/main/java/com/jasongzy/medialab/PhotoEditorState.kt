@@ -46,6 +46,23 @@ internal class PhotoEditorState(info: PhotoInfo, hasAlpha: Boolean, previous: Ph
     var pixelX by mutableIntStateOf(info.width / 2)
     var pixelY by mutableIntStateOf(info.height / 2)
     var export: ExportOptions by mutableStateOf(previous?.export ?: ExportOptions())
+
+    fun pending(info: PhotoInfo, hasSource: Boolean): List<PhotoTool> = buildList {
+        val fullBounds = Rect(0, 0, info.width, info.height)
+        if (cropHistory.value.bounds != fullBounds) add(PhotoTool.CROP)
+        if (canvasHistory.value.bounds != fullBounds) add(PhotoTool.EXPAND)
+        if (coverHistory.value.isNotEmpty()) add(PhotoTool.COVER)
+        if (resize.width != info.width || resize.height != info.height) add(PhotoTool.RESIZE)
+        if (hasPendingCleanup(info, cleanup, hasSource)) add(PhotoTool.CLEAN)
+    }
 }
 
 private val defaultCleanup = ExportOptions(metadata = true, static = true, flatten = true)
+
+internal fun hasPendingCleanup(info: PhotoInfo, options: ExportOptions, hasSource: Boolean): Boolean =
+    options != defaultCleanup &&
+        if (hasSource) {
+            options.metadata || !options.keepColor ||
+                (options.static && info.container?.video != null) ||
+                (options.flatten && info.container?.edit != null)
+        } else options.metadata && info.metadata.isNotEmpty()

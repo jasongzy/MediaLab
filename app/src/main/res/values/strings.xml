@@ -31,6 +31,10 @@
     <string name="clean">Clean up</string>
     <string name="export">Export</string>
     <string name="apply">Apply</string>
+    <string name="unapplied_changes">Unapplied changes</string>
+    <string name="discard_unapplied_message">This will discard unapplied changes. Continue?</string>
+    <string name="discard_other_edits_message">Applying this change will discard unapplied changes in other tools. Continue?</string>
+    <string name="unapplied_export">These changes have not been applied and will not be included in the export:\n%1$s</string>
     <string name="undo">Undo</string>
     <string name="redo">Redo</string>
     <string name="hold_original">Hold to view original</string>
@@ -80,8 +84,8 @@
     <string name="motion_photo">Motion photo</string>
     <string name="editable_photo">Recoverable edits</string>
     <string name="hdr">HDR</string>
-    <string name="replace_image">Open another image?</string>
-    <string name="replace_message">Opening another image will discard your unsaved edits.</string>
+    <string name="replace_image">Open a new image</string>
+    <string name="replace_message">Opening a new image will discard your unsaved edits.</string>
     <string name="open">Open</string>
     <string name="convert_color">Continue in standard color?</string>
     <string name="convert_color_message">This edit converts the image to standard sRGB. Any wide-gamut color or HDR effects will be lost.</string>

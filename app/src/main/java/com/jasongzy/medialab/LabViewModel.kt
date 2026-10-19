@@ -31,6 +31,14 @@ internal enum class ImportType {
     AUDIO,
 }
 
+internal enum class DiscardAction(val title: Int, val message: Int, val confirm: Int = R.string.discard) {
+    IMAGE(R.string.replace_image, R.string.replace_message),
+    AUDIO(R.string.replace_audio, R.string.replace_audio_message),
+    UNDO(R.string.undo, R.string.discard_unapplied_message),
+    REDO(R.string.redo, R.string.discard_unapplied_message),
+    APPLY(R.string.apply, R.string.discard_other_edits_message, R.string.apply),
+}
+
 internal data class PhotoState(
     val name: String = "",
     val history: List<PhotoFrame> = emptyList(),
@@ -45,6 +53,8 @@ internal data class PhotoState(
 ) {
     val frame
         get() = history.getOrNull(position)
+    val pending
+        get() = editor?.pending(checkNotNull(info), frame?.source != null).orEmpty()
 }
 
 internal data class Notice(val message: Int, val argument: String? = null)
@@ -55,7 +65,7 @@ internal data class LabState(
     val batchPage: Boolean = false,
     val audio: AudioDocument? = null,
     val audioDirty: Boolean = false,
-    val replacing: ImportType? = null,
+    val confirmation: DiscardAction? = null,
     val busy: Boolean = false,
     val refreshingMedia: Boolean = false,
     val stage: Int = R.string.loading_photo,
@@ -85,7 +95,7 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
     private var playbackPosition: Pair<File, Long>? = null
     private var history: PhotoHistory? = null
     private var resizePreview: ResizePreview? = null
-    private var replacement: CompletableDeferred<Boolean>? = null
+    private var discardAnswer: CompletableDeferred<Boolean>? = null
 
     private data class ResizePreview(
         val source: PhotoFrame,
@@ -199,25 +209,35 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
         job?.cancel()
     }
 
-    fun confirmReplacement(discard: Boolean) {
-        replacement?.complete(discard)
+    fun confirmDiscard(discard: Boolean) {
+        discardAnswer?.complete(discard)
     }
 
     private suspend fun canReplace(type: ImportType): Boolean {
         val current = state.value
         val edited =
-            if (type == ImportType.IMAGE) current.photo.history.size > 1 else current.audioDirty
-        if (!edited) return true
+            if (type == ImportType.IMAGE)
+                current.photo.history.size > 1 || current.photo.pending.isNotEmpty()
+            else current.audioDirty || current.audio?.editor?.hasDraft == true
+        return !edited || canDiscard(
+            if (type == ImportType.IMAGE) DiscardAction.IMAGE else DiscardAction.AUDIO
+        )
+    }
+
+    private suspend fun canDiscard(action: DiscardAction): Boolean {
         val answer = CompletableDeferred<Boolean>()
-        replacement = answer
-        mutable.update { it.copy(replacing = type) }
+        discardAnswer = answer
+        mutable.update { it.copy(confirmation = action) }
         return try {
             answer.await()
         } finally {
-            replacement = null
-            mutable.update { it.copy(replacing = null) }
+            discardAnswer = null
+            mutable.update { it.copy(confirmation = null) }
         }
     }
+
+    private suspend fun canApply(tool: PhotoTool): Boolean =
+        state.value.photo.pending.none { it != tool } || canDiscard(DiscardAction.APPLY)
 
     fun open(uri: Uri, type: ImportType?) =
         work(
@@ -342,6 +362,10 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
         work(R.string.preparing_image) {
             val history = checkNotNull(history)
             val position = (history.position + direction).coerceIn(history.frames.indices)
+            if (position == history.position) return@work
+            if (state.value.photo.pending.isNotEmpty() && !canDiscard(
+                    if (direction < 0) DiscardAction.UNDO else DiscardAction.REDO
+                )) return@work
             val frame = history.frames[position]
             discardResize()
             val preview =
@@ -371,6 +395,7 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
 
     fun crop(rect: Rect, lossless: Boolean) =
         work(R.string.preparing_image) {
+            if (!canApply(PhotoTool.CROP)) return@work
             if (lossless) {
                 val photo = state.value.photo
                 val info = checkNotNull(photo.info)
@@ -403,6 +428,7 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
 
     fun expand(bounds: Rect, color: Int) =
         work(R.string.preparing_image) {
+            if (!canApply(PhotoTool.EXPAND)) return@work
             discardResize()
             val history = checkNotNull(history)
             val source = history.bitmap()
@@ -423,6 +449,7 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
 
     fun resize(width: Int, height: Int, method: Int) =
         work(R.string.preparing_image) {
+            if (!canApply(PhotoTool.RESIZE)) return@work
             val result = resized(width, height, method)
             push(result.bitmap, result.preview)
         }
@@ -475,6 +502,7 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
 
     fun cover(strokes: List<Stroke>) =
         work(R.string.preparing_image) {
+            if (!canApply(PhotoTool.COVER)) return@work
             bitmapEdit {
                 Photos.cover(it, strokes)
             }
@@ -482,6 +510,7 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
 
     fun removeBackground() =
         work(R.string.preparing_image) {
+            if (!canApply(PhotoTool.BACKGROUND)) return@work
             mutable.update { it.copy(photo = it.photo.copy(backgroundElapsedMs = null)) }
             val started = SystemClock.elapsedRealtime()
             bitmapEdit { bitmap ->
@@ -544,9 +573,13 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
         work(R.string.preparing_image) {
             val photo = state.value.photo
             val frame = checkNotNull(photo.frame)
+            if (frame.source == null && (!metadata || frame.info.metadata.isEmpty())) {
+                mutable.update { it.copy(notice = Notice(R.string.changes_applied)) }
+                return@work
+            }
+            if (!canApply(PhotoTool.CLEAN)) return@work
             if (frame.source == null) {
-                if (metadata && frame.info.metadata.isNotEmpty()) bitmapEdit(clearMetadata = true)
-                else mutable.update { it.copy(notice = Notice(R.string.changes_applied)) }
+                bitmapEdit(clearMetadata = true)
                 return@work
             }
             discardResize()

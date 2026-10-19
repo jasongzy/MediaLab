@@ -203,33 +203,24 @@ private fun LabApp(model: LabViewModel, state: LabState, exit: () -> Unit) {
                 }
             }
     }
-    state.replacing?.let { type ->
-        val image = type == ImportType.IMAGE
+    state.confirmation?.let { action ->
         AlertDialog(
-            onDismissRequest = { model.confirmReplacement(false) },
-            title = {
-                Text(stringResource(if (image) R.string.replace_image else R.string.replace_audio))
-            },
-            text = {
-                Text(
-                    stringResource(
-                        if (image) R.string.replace_message else R.string.replace_audio_message
-                    )
-                )
-            },
+            onDismissRequest = { model.confirmDiscard(false) },
+            title = { Text(stringResource(action.title)) },
+            text = { Text(stringResource(action.message)) },
             confirmButton = {
-                TextButton({ model.confirmReplacement(true) }) {
-                    Text(stringResource(R.string.discard))
+                TextButton({ model.confirmDiscard(true) }) {
+                    Text(stringResource(action.confirm))
                 }
             },
             dismissButton = {
-                TextButton({ model.confirmReplacement(false) }) {
+                TextButton({ model.confirmDiscard(false) }) {
                     Text(stringResource(R.string.cancel))
                 }
             },
         )
     }
-    if (state.busy && state.replacing == null && (!settings || !clearingCache))
+    if (state.busy && state.confirmation == null && (!settings || !clearingCache))
         Dialog(onDismissRequest = {}) {
             Surface(shape = MaterialTheme.shapes.extraLarge, tonalElevation = 6.dp) {
                 Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {

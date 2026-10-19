@@ -9,6 +9,18 @@ import org.junit.Test
 
 class EditorInteractionTest {
     @Test
+    fun cleanupOnlyWarnsForChangedOptionsWithAnApplicableAction() {
+        val info = PhotoInfo(1, 1, 1, 1, 1, "image/png", null, false, null, emptyList())
+        val defaults = ExportOptions(metadata = true, static = true, flatten = true)
+        assertFalse(hasPendingCleanup(info, defaults, hasSource = true))
+        assertFalse(hasPendingCleanup(info, defaults.copy(metadata = false), hasSource = true))
+        val changed = defaults.copy(keepColor = false)
+        assertTrue(hasPendingCleanup(info, changed, hasSource = true))
+        assertFalse(hasPendingCleanup(info, changed, hasSource = false))
+        assertTrue(hasPendingCleanup(info.copy(metadata = listOf("Software" to "Camera")), changed, hasSource = false))
+    }
+
+    @Test
     fun expandedCanvasCanZoomOutAndPanBeyondTheImage() {
         val canvas = Size(400f, 300f)
         val image = Size(800f, 600f)

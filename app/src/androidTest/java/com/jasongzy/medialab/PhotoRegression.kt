@@ -228,6 +228,13 @@ internal class PhotoRegression(
         check(model.state.value.error == null) { model.state.value.error.orEmpty() }
     }
 
+    private suspend fun answer(model: LabViewModel, action: DiscardAction, discard: Boolean) {
+        withTimeout(30_000) { model.state.first { it.confirmation == action } }
+        instrumentation.runOnMainSync { model.confirmDiscard(discard) }
+        idle(model)
+        check(model.state.value.confirmation == null)
+    }
+
     private suspend fun checkPicking(model: LabViewModel, expected: Bitmap) {
         val colors = mutableSetOf<Int>()
         var x = 0
@@ -255,12 +262,6 @@ internal class PhotoRegression(
             model = LabViewModel(app)
             store.put("import-test", model)
         }
-        suspend fun answer(type: ImportType, discard: Boolean) {
-            withTimeout(30_000) { model.state.first { it.replacing == type } }
-            instrumentation.runOnMainSync { model.confirmReplacement(discard) }
-            idle(model)
-            check(model.state.value.replacing == null)
-        }
         val image = File(app.cacheDir, "input.png")
         val bitmap = fixture()
         try {
@@ -276,6 +277,13 @@ internal class PhotoRegression(
             idle(model)
             instrumentation.runOnMainSync { model.open(Uri.fromFile(image), ImportType.IMAGE) }
             idle(model)
+            val draft = checkNotNull(model.state.value.photo.editor)
+            instrumentation.runOnMainSync {
+                draft.cropHistory.change(FrameSelection(Rect(2, 2, 20, 20)))
+                model.open(Uri.fromFile(image), ImportType.IMAGE)
+            }
+            answer(model, DiscardAction.IMAGE, false)
+            check(model.state.value.photo.editor === draft && model.state.value.photo.history.size == 1)
             instrumentation.runOnMainSync { model.crop(Rect(2, 2, 20, 20), false) }
             idle(model)
             val photo = model.state.value.photo
@@ -283,7 +291,7 @@ internal class PhotoRegression(
             val files = work.listFiles()!!.toSet()
             for (type in listOf(ImportType.IMAGE, null)) {
                 instrumentation.runOnMainSync { model.open(Uri.fromFile(image), type) }
-                answer(ImportType.IMAGE, false)
+                answer(model, DiscardAction.IMAGE, false)
                 check(model.state.value.photo === photo && work.listFiles()!!.toSet() == files)
             }
             instrumentation.runOnMainSync {
@@ -291,15 +299,24 @@ internal class PhotoRegression(
             }
             idle(model)
             check(model.state.value.photo === photo && model.state.value.audio != null)
+            val tag = TagDraft("TITLE", emptyList()).apply { text = "Unsaved" }
+            instrumentation.runOnMainSync {
+                model.state.value.audio!!.editor.tag = tag
+                model.open(Uri.fromFile(audio), ImportType.AUDIO)
+            }
+            answer(model, DiscardAction.AUDIO, false)
+            check(model.state.value.audio!!.editor.tag === tag && !model.state.value.audioDirty)
             instrumentation.runOnMainSync {
                 model.editAudio(mapOf("TITLE" to listOf("Unsaved")), emptyList())
+                check(model.state.value.audio!!.editor.tag === tag)
+                model.state.value.audio!!.editor.tag = null
             }
             val editedAudio = checkNotNull(model.state.value.audio)
             check(model.state.value.audioDirty)
             val before = work.listFiles()!!.toSet()
             for (type in listOf(ImportType.AUDIO, null)) {
                 instrumentation.runOnMainSync { model.open(Uri.fromFile(audio), type) }
-                answer(ImportType.AUDIO, false)
+                answer(model, DiscardAction.AUDIO, false)
                 check(model.state.value.audio === editedAudio && model.state.value.audioDirty)
                 check(work.listFiles()!!.toSet() == before)
             }
@@ -310,17 +327,17 @@ internal class PhotoRegression(
             check(model.state.value.notice?.message == R.string.select_audio_only)
             check(model.state.value.audio === editedAudio && work.listFiles()!!.toSet() == before)
             instrumentation.runOnMainSync { model.open(Uri.fromFile(audio), null) }
-            withTimeout(30_000) { model.state.first { it.replacing == ImportType.AUDIO } }
+            withTimeout(30_000) { model.state.first { it.confirmation == DiscardAction.AUDIO } }
             instrumentation.runOnMainSync { model.cancel() }
             idle(model)
-            check(model.state.value.replacing == null && model.state.value.audio === editedAudio)
+            check(model.state.value.confirmation == null && model.state.value.audio === editedAudio)
             check(work.listFiles()!!.toSet() == before)
             instrumentation.runOnMainSync { model.open(Uri.fromFile(audio), null) }
-            answer(ImportType.AUDIO, true)
+            answer(model, DiscardAction.AUDIO, true)
             check(!model.state.value.audioDirty && model.state.value.audio != null)
             check(!editedAudio.file.exists() && model.state.value.photo === photo)
             instrumentation.runOnMainSync { model.open(Uri.fromFile(image), null) }
-            answer(ImportType.IMAGE, true)
+            answer(model, DiscardAction.IMAGE, true)
             check(model.state.value.photo.history.size == 1)
             check(photo.history.flatMap { it.files }.none { it.exists() })
             check(model.state.value.workingFiles.all { it.isFile })
@@ -404,14 +421,43 @@ internal class PhotoRegression(
                 check(draft.cropHistory.value.bounds == Rect(0, 0, 16, 16))
                 model.pick(3, 2)
                 model.pick(9, 7)
-                model.crop(Rect(0, 0, 16, 16), true)
             }
-            idle(model)
+            for (apply in listOf<() -> Unit>(
+                { model.crop(Rect(0, 0, 16, 16), true) },
+                { model.removeBackground() },
+            )) {
+                instrumentation.runOnMainSync(apply)
+                answer(model, DiscardAction.APPLY, false)
+                check(model.state.value.photo.editor === draft && model.state.value.photo.position == 0)
+                check(draft.cropHistory.value.bounds == Rect(0, 0, 16, 16) && draft.resize.width == 32)
+            }
+            instrumentation.runOnMainSync { model.crop(Rect(0, 0, 16, 16), true) }
+            answer(model, DiscardAction.APPLY, true)
             check(model.state.value.photo.picked == null)
             val applied = checkNotNull(model.state.value.photo.editor)
             check(applied !== draft && !applied.cropHistory.canUndo && !applied.cropHistory.canRedo)
             check(applied.resize.width == 16 && applied.resize.height == 16 && applied.export == draft.export)
             checkCapture(checkNotNull(model.state.value.photo.frame?.source))
+            for (direction in listOf(-1, 1)) {
+                val before = model.state.value.photo
+                val editor = checkNotNull(before.editor)
+                val strokes = listOf(Stroke(listOf(0f to 0f, 4f to 4f), Color.WHITE, 1f, CoverShape.RECTANGLE))
+                val action = if (direction < 0) DiscardAction.UNDO else DiscardAction.REDO
+                instrumentation.runOnMainSync {
+                    editor.coverHistory.change(strokes)
+                    model.undo(-direction)
+                }
+                idle(model)
+                check(model.state.value.photo === before && editor.coverHistory.value == strokes)
+                instrumentation.runOnMainSync { model.undo(direction) }
+                answer(model, action, false)
+                check(model.state.value.photo === before && editor.coverHistory.value == strokes)
+                check(model.state.value.photo.pending == listOf(PhotoTool.COVER))
+                instrumentation.runOnMainSync { model.undo(direction) }
+                answer(model, action, true)
+                check(model.state.value.photo.position == before.position + direction)
+                check(model.state.value.photo.editor !== editor && model.state.value.photo.pending.isEmpty())
+            }
             instrumentation.runOnMainSync { model.undo(-1) }
             idle(model)
             instrumentation.runOnMainSync { model.crop(Rect(8, 6, 28, 22), false) }

@@ -95,6 +95,8 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
     val strokes = coverHistory.value
     val resize = editor.resize
     var cleanup by editor::cleanup
+    val pending = photo.pending
+    val pendingDescription = stringResource(R.string.unapplied_changes)
     val toolHistory = if (tool == PhotoTool.COVER) coverHistory else frameHistory
     var fill by editor::fill
     var fillShape by editor::fillShape
@@ -193,7 +195,13 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
                             },
                             label = { Text(stringResource(item.label)) },
                             leadingIcon = {
-                                Icon(painterResource(item.icon), null, Modifier.size(18.dp))
+                                BadgedBox(badge = {
+                                    if (item in pending) Badge(
+                                        Modifier.semantics { contentDescription = pendingDescription }
+                                    )
+                                }) {
+                                    Icon(painterResource(item.icon), null, Modifier.size(18.dp))
+                                }
                             },
                         )
                     }
@@ -514,7 +522,17 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
                                     }
                                 }
                             }
-                        PhotoTool.EXPORT -> ExportPanel(model, state)
+                        PhotoTool.EXPORT -> {
+                            if (pending.isNotEmpty()) Text(
+                                stringResource(
+                                    R.string.unapplied_export,
+                                    pending.map { stringResource(it.label) }.joinToString("\n") { "• $it" },
+                                ),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error,
+                            )
+                            ExportPanel(model, state)
+                        }
                     }
                 }
             }

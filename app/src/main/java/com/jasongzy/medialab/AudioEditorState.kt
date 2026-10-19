@@ -9,6 +9,9 @@ internal class AudioEditorState {
     var tag by mutableStateOf<TagDraft?>(null)
     var picture by mutableStateOf<PictureDraft?>(null)
     var coverRequest by mutableStateOf<CoverRequest?>(null)
+
+    val hasDraft: Boolean
+        get() = tag != null || picture != null
 }
 
 internal class TagDraft(val original: String, values: List<String>) {
