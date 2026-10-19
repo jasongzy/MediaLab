@@ -59,3 +59,15 @@ target_include_directories(taglib PRIVATE ${TAGLIB_INCLUDES}
     "${taglib_core_SOURCE_DIR}/taglib" "${taglib_core_BINARY_DIR}/taglib")
 target_link_libraries(taglib PRIVATE tag)
 set_target_properties(taglib PROPERTIES CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN YES)
+
+FetchContent_Declare(mnn_runtime
+    URL "${THIRD_PARTY}/mnn-${MNN_VERSION}-arm64.tar.gz"
+    URL_HASH SHA256=35d0495833a3bd1d0241588a4fc22e1423b9b474f18384cf5701461b69c94ef1)
+FetchContent_MakeAvailable(mnn_runtime)
+foreach(name MNN MNN_CL)
+    add_library(${name} SHARED IMPORTED)
+    set_target_properties(${name} PROPERTIES IMPORTED_LOCATION "${mnn_runtime_SOURCE_DIR}/lib/lib${name}.so")
+endforeach()
+add_library(medialab_mnn SHARED background.cpp)
+target_include_directories(medialab_mnn PRIVATE "${mnn_runtime_SOURCE_DIR}/include")
+target_link_libraries(medialab_mnn PRIVATE MNN MNN_CL)

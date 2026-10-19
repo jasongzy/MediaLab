@@ -1,4 +1,4 @@
-Media Lab 1.0.0
+Media Lab
 
 BRIA RMBG 1.4
 Copyright BRIA Artificial Intelligence Ltd.
@@ -13,6 +13,19 @@ Modifications: model converted to FP32 TensorFlow Lite format using onnx2tf
 2.6.9 with a fixed 1024 x 1024 input. Training weights were retained.
 These modifications and this application are not endorsed by BRIA.
 The model license governs the weights and compiled models separately from application code.
+
+BRIA RMBG 2.0: Copyright BRIA Artificial Intelligence Ltd., CC BY-NC 4.0.
+https://huggingface.co/briaai/RMBG-2.0
+The license is included in assets/licenses/RMBG-2.0-LICENSE.txt.
+Modifications: fixed 1024 x 1024 input, equivalent GridSample-based deformable
+convolutions and patch reshaping, converted to MNN with FP16 weights and shared
+encoder weights. These modifications are not endorsed by BRIA.
+
+MNN 3.6.1: Copyright Alibaba Group and contributors, Apache License 2.0.
+https://github.com/alibaba/MNN
+Runtime provenance and source links are in third_party/mnn-SOURCE.txt.
+LLVM libc++ / libc++abi: Apache License 2.0 with LLVM Exceptions and legacy licenses.
+The Android NDK runtime notices are included in assets/licenses/LLVM-runtime-NOTICE.txt.
 
 LiteRT: Copyright Google LLC and contributors, Apache License 2.0.
 https://github.com/google-ai-edge/LiteRT

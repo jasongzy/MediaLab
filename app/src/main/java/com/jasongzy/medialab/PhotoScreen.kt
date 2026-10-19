@@ -361,9 +361,23 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
                             }
                         }
                         PhotoTool.BACKGROUND -> {
+                            SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                                BackgroundModel.entries.forEachIndexed { index, item ->
+                                    SegmentedButton(
+                                        selected = editor.backgroundModel == item,
+                                        onClick = { editor.backgroundModel = item },
+                                        shape = SegmentedButtonDefaults.itemShape(index, BackgroundModel.entries.size),
+                                    ) { Text(stringResource(item.label)) }
+                                }
+                            }
                             Text(
                                 stringResource(R.string.background_description),
                                 style = MaterialTheme.typography.bodySmall,
+                            )
+                            if (editor.backgroundModel == BackgroundModel.RMBG20) Text(
+                                stringResource(R.string.model_rmbg20_hint),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                             ColorField(cutoutBackground, allowTransparent = true, pick = { dropper = !dropper }) {
                                 cutoutBackground = it
@@ -389,7 +403,7 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
                                         )
                                     }
                                 }
-                                Button({ edit { model.removeBackground(cutoutBackground) } }) {
+                                Button({ edit { model.removeBackground(cutoutBackground, editor.backgroundModel) } }) {
                                     Text(stringResource(R.string.remove_background))
                                 }
                             }

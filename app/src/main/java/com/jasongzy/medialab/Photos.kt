@@ -429,6 +429,7 @@ internal object Photos {
         context: Context,
         bitmap: Bitmap,
         background: Int,
+        model: BackgroundModel,
         progress: (Int) -> Unit,
     ) {
         require(background ushr 24 == 0 || background ushr 24 == 255)
@@ -446,12 +447,17 @@ internal object Photos {
             { y, row -> row.copyInto(pixels, y * ImageMath.SIZE) },
         )
         val mask =
-            BackgroundEngine(context).infer(ImageMath.normalize(pixels), progress)
+            BackgroundEngine(context).infer(model, ImageMath.normalize(pixels, model), progress)
         progress(R.string.finishing_image)
-        applyMask(bitmap, mask, background)
+        applyMask(bitmap, mask, background, model)
     }
 
-    suspend fun applyMask(bitmap: Bitmap, mask: FloatArray, background: Int) {
+    suspend fun applyMask(
+        bitmap: Bitmap,
+        mask: FloatArray,
+        background: Int,
+        model: BackgroundModel = BackgroundModel.RMBG14,
+    ) {
         require(background ushr 24 == 0 || background ushr 24 == 255)
         val coroutine = currentCoroutineContext()
         val opaque = !bitmap.hasAlpha()
@@ -463,6 +469,7 @@ internal object Photos {
             bitmap.width,
             bitmap.height,
             { coroutine.ensureActive() },
+            model,
         ) { y, alpha ->
             BitmapPixels.readRow(bitmap, y, row)
             for (x in alpha.indices) {

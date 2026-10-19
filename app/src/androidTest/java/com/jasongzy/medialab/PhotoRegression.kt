@@ -550,6 +550,8 @@ internal class PhotoRegression(
             idle(model)
             val draft = checkNotNull(model.state.value.photo.editor)
             instrumentation.runOnMainSync {
+                check(draft.backgroundModel == BackgroundModel.RMBG14)
+                draft.backgroundModel = BackgroundModel.RMBG20
                 draft.cropHistory.change(FrameSelection(Rect(0, 0, 16, 16)))
                 draft.resize.width = 32
                 draft.resize.height = 24
@@ -568,7 +570,7 @@ internal class PhotoRegression(
             }
             for (apply in listOf<() -> Unit>(
                 { model.crop(Rect(0, 0, 16, 16), true) },
-                { model.removeBackground(Color.TRANSPARENT) },
+                { model.removeBackground(Color.TRANSPARENT, BackgroundModel.RMBG14) },
             )) {
                 instrumentation.runOnMainSync(apply)
                 answer(model, DiscardAction.APPLY, false)
@@ -581,6 +583,7 @@ internal class PhotoRegression(
             val applied = checkNotNull(model.state.value.photo.editor)
             check(applied !== draft && !applied.cropHistory.canUndo && !applied.cropHistory.canRedo)
             check(applied.resize.width == 16 && applied.resize.height == 16 && applied.export == draft.export)
+            check(applied.backgroundModel == BackgroundModel.RMBG20)
             checkCapture(checkNotNull(model.state.value.photo.frame?.source))
             for (direction in listOf(-1, 1)) {
                 val before = model.state.value.photo

@@ -521,13 +521,13 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
             }
         }
 
-    fun removeBackground(background: Int) =
+    fun removeBackground(background: Int, model: BackgroundModel) =
         work(R.string.preparing_image) {
             if (!canApply(PhotoTool.BACKGROUND)) return@work
             mutable.update { it.copy(photo = it.photo.copy(backgroundElapsedMs = null)) }
             val started = SystemClock.elapsedRealtime()
             bitmapEdit { bitmap ->
-                Photos.removeBackground(context, bitmap, background) { stage ->
+                Photos.removeBackground(context, bitmap, background, model) { stage ->
                     mutable.update { it.copy(stage = stage) }
                 }
             }

@@ -142,6 +142,10 @@
     <string name="comment">Comment</string>
     <string name="remove_background">Remove background</string>
     <string name="background_description">⚡ On-device neural network inference</string>
+    <string name="model_rmbg14" translatable="false">RMBG 1.4</string>
+    <string name="model_rmbg20" translatable="false">RMBG 2.0</string>
+    <string name="model_rmbg20_hint">May produce better results, but takes more time and memory. Preparing the model on first use may take a few minutes.</string>
+    <string name="model_gpu_unavailable">Model 2.0 is unavailable on this device. Please use 1.4.</string>
     <string name="background_elapsed">Time: %1$.2f s</string>
     <string name="preparing_model">Preparing model…</string>
     <string name="running_model">Removing background…</string>

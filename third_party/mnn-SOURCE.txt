@@ -1,0 +1,16 @@
+MNN 3.6.1, Alibaba Group, Apache License 2.0
+Source revision: d407447ed56c4121a11ccbd266dc184ca1ead0c2
+https://github.com/alibaba/MNN/releases/tag/3.6.1
+
+mnn-3.6.1-arm64.tar.gz contains the unmodified arm64-v8a libMNN.so and
+libMNN_CL.so from the official Android release, the six public headers
+required by Interpreter.hpp, and LICENSE.txt from the matching source tag.
+The application supplies libc++_shared.so from its Android NDK.
+
+Runtime archive:
+https://github.com/alibaba/MNN/releases/download/3.6.1/mnn_3.6.1_android_armv7_armv8_cpu_opencl_vulkan.zip
+SHA-256: 46dc7e86d45b8d4e957db81d2603e0b7f6c9ce9b84092ffdcee1b843cbfc9d71
+
+Source archive:
+https://github.com/alibaba/MNN/archive/refs/tags/3.6.1.tar.gz
+SHA-256: 4b6065c4e2674318f5bf1dc75836ce4d30c17bfe598c4a1b11b7d0b2092b06e6

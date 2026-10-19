@@ -13,7 +13,7 @@ A native Android media toolbox
 ### Images
 
 - Edit one image across multiple tools, with undo/redo and a shared export step
-- Remove backgrounds locally with the built-in RMBG model and LiteRT, using compatible Qualcomm NPUs with GPU/CPU fallback
+- Remove backgrounds locally with RMBG 1.4 (LiteRT with compatible Qualcomm NPUs and GPU/CPU fallback) or RMBG 2.0 (MNN OpenCL GPU)
 - Crop to any size or aspect ratio, including block-aligned lossless JPEG cropping
 - Expand the canvas freely or to a preset aspect ratio, filling new areas with a solid color or transparency
 - Cover or erase areas with rectangles, ellipses, freehand selections, and brushes
@@ -39,9 +39,10 @@ Supports static JPEG, PNG, WebP, BMP, and device-supported HEIF/AVIF images. Edi
 
 Download the latest APK from [GitHub Releases](https://github.com/jasongzy/MediaLab/releases/latest).
 
-The APK includes the neural network model; the first NPU run compiles it on device, and later runs reuse the compilation cache.
+The APK includes neural network models. First use prepares the selected model on device.
 
 ## 🤝 Acknowledgements
 
 - [RMBG 1.4](https://huggingface.co/briaai/RMBG-1.4)
+- [RMBG 2.0](https://huggingface.co/briaai/RMBG-2.0)
 - [DeNcm](https://github.com/Pacoshao/DeNcm)

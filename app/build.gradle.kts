@@ -35,7 +35,11 @@ android {
         versionName = providers.gradleProperty("VERSION_NAME").get()
         testInstrumentationRunner = "com.jasongzy.medialab.RegressionTests"
         ndk { abiFilters += "arm64-v8a" }
-        externalNativeBuild { cmake { cppFlags += "-std=c++17" } }
+        externalNativeBuild { cmake {
+            cppFlags += "-std=c++17"
+            arguments += listOf("-DMNN_VERSION=${libs.versions.mnn.get()}", "-DANDROID_STL=c++_shared")
+        } }
+        buildConfigField("String", "MNN_VERSION", "\"${libs.versions.mnn.get()}\"")
     }
     signingConfigs {
         create("release") {
@@ -58,7 +62,7 @@ android {
     buildFeatures { buildConfig = true; compose = true }
     externalNativeBuild { cmake { path = file("src/main/cpp/CMakeLists.txt"); version = "3.22.1" } }
     androidResources {
-        noCompress += "tflite"
+        noCompress += listOf("tflite", "mnn")
         localeFilters += listOf("en", "zh-rCN")
     }
     packaging {

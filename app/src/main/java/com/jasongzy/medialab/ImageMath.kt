@@ -11,25 +11,31 @@ internal object ImageMath {
 
     private data class Kernel(val start: Int, val weights: IntArray)
 
-    private fun kernels(source: Int, target: Int): Array<Kernel> {
+    private fun kernels(source: Int, target: Int, bicubic: Boolean = false): Array<Kernel> {
         require(source > 0 && target > 0)
         val scale = source.toDouble() / target
         val filterScale = max(1.0, scale)
+        val support = filterScale * if (bicubic) 2 else 1
         return Array(target) { index ->
             val center = (index + 0.5) * scale
-            val start = max(0, (center - filterScale + 0.5).toInt())
-            val end = min(source, (center + filterScale + 0.5).toInt())
+            val start = max(0, (center - support + 0.5).toInt())
+            val end = min(source, (center + support + 0.5).toInt())
             val weights =
                 DoubleArray(end - start) { offset ->
                     val x = abs((offset + start - center + 0.5) / filterScale)
-                    max(0.0, 1 - x)
+                    when {
+                        !bicubic -> max(0.0, 1 - x)
+                        x < 1 -> ((1.5 * x - 2.5) * x) * x + 1
+                        x < 2 -> (((x - 5) * x + 8) * x - 4) * -0.5
+                        else -> 0.0
+                    }
                 }
             val sum = weights.sum()
             Kernel(
                 start,
                 IntArray(weights.size) { i ->
                     val scaled = weights[i] / sum * UNIT
-                    (scaled + 0.5).toInt()
+                    (scaled + if (scaled < 0) -0.5 else 0.5).toInt()
                 },
             )
         }
@@ -85,12 +91,24 @@ internal object ImageMath {
         }
     }
 
-    fun normalize(rgb: IntArray): FloatArray {
+    fun normalize(rgb: IntArray, model: BackgroundModel): FloatArray {
         val output = FloatArray(rgb.size * 3)
         for (i in rgb.indices) {
-            output[i * 3] = ((rgb[i] ushr 16) and 255) / 255f - 0.5f
-            output[i * 3 + 1] = ((rgb[i] ushr 8) and 255) / 255f - 0.5f
-            output[i * 3 + 2] = (rgb[i] and 255) / 255f - 0.5f
+            val r = ((rgb[i] ushr 16) and 255) / 255f
+            val g = ((rgb[i] ushr 8) and 255) / 255f
+            val b = (rgb[i] and 255) / 255f
+            when (model) {
+                BackgroundModel.RMBG14 -> {
+                    output[i * 3] = r - 0.5f
+                    output[i * 3 + 1] = g - 0.5f
+                    output[i * 3 + 2] = b - 0.5f
+                }
+                BackgroundModel.RMBG20 -> {
+                    output[i] = (r - 0.485f) / 0.229f
+                    output[rgb.size + i] = (g - 0.456f) / 0.224f
+                    output[rgb.size * 2 + i] = (b - 0.406f) / 0.225f
+                }
+            }
         }
         return output
     }
@@ -100,9 +118,15 @@ internal object ImageMath {
         width: Int,
         height: Int,
         checkCancelled: () -> Unit = {},
+        model: BackgroundModel = BackgroundModel.RMBG14,
         writeRow: (Int, IntArray) -> Unit,
     ) {
         require(mask.size == SIZE * SIZE && mask.all { it.isFinite() }) { "Invalid model output" }
+        require(width > 0 && height > 0)
+        if (model == BackgroundModel.RMBG20) {
+            resizeAlpha(mask, width, height, checkCancelled, writeRow)
+            return
+        }
         val xScale = SIZE.toFloat() / width
         val yScale = SIZE.toFloat() / height
         fun sample(x: Int, y: Int): Float {
@@ -135,6 +159,47 @@ internal object ImageMath {
                 row[x] =
                     if (range > 0) ((sample(x, y) - low) / range * 255).toInt().coerceIn(0, 255)
                     else 0
+            }
+            writeRow(y, row)
+        }
+    }
+
+    private fun resizeAlpha(
+        mask: FloatArray,
+        width: Int,
+        height: Int,
+        checkCancelled: () -> Unit,
+        writeRow: (Int, IntArray) -> Unit,
+    ) {
+        val horizontal = kernels(SIZE, width, bicubic = true)
+        val vertical = kernels(SIZE, height, bicubic = true)
+        val intermediate = ByteArray(Math.multiplyExact(width, SIZE))
+        val sourceRow = IntArray(SIZE)
+        // RMBG 2.0 uses ToPILImage before resizing, so quantization precedes interpolation.
+        for (y in 0 until SIZE) {
+            checkCancelled()
+            for (x in sourceRow.indices) {
+                sourceRow[x] = (mask[y * SIZE + x] * 255).toInt().coerceIn(0, 255)
+            }
+            for (x in 0 until width) {
+                val kernel = horizontal[x]
+                var value = UNIT / 2
+                for (i in kernel.weights.indices) {
+                    value += sourceRow[kernel.start + i] * kernel.weights[i]
+                }
+                intermediate[y * width + x] = (value shr PRECISION).coerceIn(0, 255).toByte()
+            }
+        }
+        val row = IntArray(width)
+        for (y in 0 until height) {
+            checkCancelled()
+            val kernel = vertical[y]
+            for (x in row.indices) {
+                var value = UNIT / 2
+                for (i in kernel.weights.indices) {
+                    value += (intermediate[(kernel.start + i) * width + x].toInt() and 255) * kernel.weights[i]
+                }
+                row[x] = (value shr PRECISION).coerceIn(0, 255)
             }
             writeRow(y, row)
         }

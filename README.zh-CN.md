@@ -13,7 +13,7 @@
 ### 图像
 
 - 在多个工具间连续编辑同一张图片，支持撤销、重做和统一导出
-- 内置 RMBG 模型，通过 LiteRT 在本地去背景，支持兼容 Qualcomm 设备的 NPU 加速及 GPU／CPU 回退
+- 本地去背景，可选 RMBG 1.4（LiteRT，支持兼容 Qualcomm 设备的 NPU 加速及 GPU／CPU 回退）或 RMBG 2.0（MNN OpenCL GPU）模型
 - 按任意尺寸或比例裁剪，支持对齐编码块的 JPEG 无损裁剪
 - 按比例或自由扩展画布，使用纯色或透明填充新增区域
 - 使用矩形、椭圆、任意圈选或笔刷遮盖、擦除图像区域
@@ -39,9 +39,10 @@
 
 最新版本 APK 可从 [GitHub Releases](https://github.com/jasongzy/MediaLab/releases/latest) 下载。
 
-APK 内置神经网络模型，首次使用 NPU 时在设备端编译，后续复用编译缓存。
+APK 内置神经网络模型，首次使用时会在设备端完成准备工作。
 
 ## 🤝 致谢
 
 - [RMBG 1.4](https://huggingface.co/briaai/RMBG-1.4)
+- [RMBG 2.0](https://huggingface.co/briaai/RMBG-2.0)
 - [DeNcm](https://github.com/Pacoshao/DeNcm)

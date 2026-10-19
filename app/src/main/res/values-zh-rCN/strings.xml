@@ -142,6 +142,8 @@
     <string name="comment">备注</string>
     <string name="remove_background">去背景</string>
     <string name="background_description">⚡ 基于神经网络本地推理</string>
+    <string name="model_rmbg20_hint">效果可能更好，但耗时和内存占用更高，且首次使用可能需要数分钟以准备模型</string>
+    <string name="model_gpu_unavailable">此设备暂不支持模型 2.0，请使用 1.4。</string>
     <string name="background_elapsed">耗时 %1$.2f 秒</string>
     <string name="preparing_model">正在准备模型…</string>
     <string name="running_model">正在去背景…</string>
