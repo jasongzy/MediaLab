@@ -95,15 +95,6 @@ internal object ImageMath {
         return output
     }
 
-    fun maskedPixel(pixel: Int, mask: Int, background: Int): Int {
-        val alpha = (pixel ushr 24) * mask / 255
-        if (background ushr 24 == 0) return (pixel and 0xffffff) or (alpha shl 24)
-        fun channel(shift: Int): Int =
-            (((pixel ushr shift) and 255) * alpha +
-                ((background ushr shift) and 255) * (255 - alpha) + 127) / 255
-        return (255 shl 24) or (channel(16) shl 16) or (channel(8) shl 8) or channel(0)
-    }
-
     fun alpha(
         mask: FloatArray,
         width: Int,

@@ -2,9 +2,9 @@ package com.jasongzy.medialab
 
 import android.app.Application
 import android.graphics.Bitmap
+import android.graphics.ColorSpace
 import android.graphics.Rect
 import android.net.Uri
-import android.os.Build
 import android.os.SystemClock
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
@@ -352,7 +352,6 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
     }
 
     private suspend fun push(bitmap: Bitmap, preview: Bitmap? = null, clearMetadata: Boolean = false) {
-        if (Build.VERSION.SDK_INT >= 34) bitmap.gainmap = null
         val rendered = preview ?: Photos.preview(bitmap)
         val metadata = if (clearMetadata) emptyList() else checkNotNull(state.value.photo.info).metadata
         val frame = PhotoFrame(null, Photos.rasterInfo(bitmap, metadata), bitmap)
@@ -490,14 +489,13 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
             }
         discardResize()
         val source = history.bitmap()
-        val bytesPerPixel = if (method == 0 && source.config == Bitmap.Config.RGBA_F16) 8 else 4
+        val bytesPerPixel = if (source.config == Bitmap.Config.RGBA_F16) 8 else 4
         history.reserve(width.toLong() * height * bytesPerPixel)
         val scaled = Photos.resize(source, width, height, method)
         val bitmap =
             if (scaled === source) checkNotNull(source.copy(source.config!!, true)) else scaled
         try {
             currentCoroutineContext().ensureActive()
-            if (Build.VERSION.SDK_INT >= 34) bitmap.gainmap = null
             val result =
                 ResizePreview(
                     history.current,
@@ -588,13 +586,27 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
         work(R.string.preparing_image) {
             val photo = state.value.photo
             val frame = checkNotNull(photo.frame)
-            if (frame.source == null && (!metadata || frame.info.metadata.isEmpty())) {
+            val convert = !keepColor && frame.info.colorSpace?.isSrgb == false
+            if (frame.source == null && !convert && (!metadata || frame.info.metadata.isEmpty())) {
                 mutable.update { it.copy(notice = Notice(R.string.changes_applied)) }
                 return@work
             }
             if (!canApply(PhotoTool.CLEAN)) return@work
             if (frame.source == null) {
-                bitmapEdit(clearMetadata = true)
+                if (convert) {
+                    discardResize()
+                    val history = checkNotNull(history)
+                    val source = history.bitmap()
+                    history.reserve(source.width.toLong() * source.height * 4)
+                    val bitmap = Photos.convert(source, ColorSpace.get(ColorSpace.Named.SRGB))
+                    try {
+                        currentCoroutineContext().ensureActive()
+                        push(bitmap, clearMetadata = metadata)
+                    } catch (error: Throwable) {
+                        bitmap.recycle()
+                        throw error
+                    }
+                } else bitmapEdit(clearMetadata = true)
                 return@work
             }
             discardResize()
@@ -629,8 +641,12 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
             else {
                 val history = checkNotNull(history)
                 val bitmap = history.bitmap(frame)
-                if (options.format == ImageFormat.JPEG && bitmap.hasAlpha())
-                    history.reserve(bitmap.width.toLong() * bitmap.height * 4)
+                if ((options.format == ImageFormat.JPEG && bitmap.hasAlpha()) ||
+                    (!options.keepColor && bitmap.colorSpace?.isSrgb == false)
+                ) history.reserve(
+                    if (options.keepColor) bitmap.allocationByteCount.toLong()
+                    else bitmap.width.toLong() * bitmap.height * 4
+                )
                 Photos.export(workspace.work, bitmap, frame.info, options)
             }
         val preview =

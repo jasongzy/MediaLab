@@ -89,6 +89,7 @@
     <string name="hdr">HDR</string>
     <string name="sdr">SDR</string>
     <string name="color_space">Color space</string>
+    <string name="source_color_space">Original color space</string>
     <string name="wide_gamut">Wide gamut</string>
     <string name="color_model">Color model</string>
     <string name="dynamic_range">Dynamic range</string>
@@ -99,8 +100,8 @@
     <string name="replace_image">Open a new image</string>
     <string name="replace_message">Opening a new image will discard your unsaved edits.</string>
     <string name="open">Open</string>
-    <string name="convert_color">Convert to standard color to continue editing?</string>
-    <string name="convert_color_message">This edit converts the image to standard sRGB.\n\nThe following features will be lost:\n%1$s</string>
+    <string name="convert_color">Convert image to continue editing?</string>
+    <string name="convert_color_message">This edit converts the image. The following features will be lost:\n%1$s</string>
     <string name="convert_and_apply">Convert and apply</string>
     <string name="loading_photo">Opening image…</string>
     <string name="preparing_image">Processing image…</string>
@@ -178,7 +179,7 @@
     <string name="replace_audio">Open new audio</string>
     <string name="replace_audio_message">Changing audio will discard unsaved changes to tags and artwork.</string>
     <string name="discard">Discard</string>
-    <string name="pixel_export_note">This export converts the image to standard sRGB.\n\nThe following features will be lost:\n%1$s</string>
+    <string name="pixel_export_note">This export will lose the following features:\n%1$s</string>
     <string name="pixel_x">X</string>
     <string name="pixel_y">Y</string>
     <string name="jpeg_alignment">Lossless cropping moves the top-left corner outward to a JPEG block boundary (%1$d × %2$d px), so the crop may be slightly larger.</string>

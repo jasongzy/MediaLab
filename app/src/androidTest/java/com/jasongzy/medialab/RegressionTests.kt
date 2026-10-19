@@ -35,6 +35,7 @@ class RegressionTests : Instrumentation() {
             listOf<Pair<String, suspend () -> Unit>>(
                     "lassoEdges" to { photos.lassoEdges() },
                     "history" to { photos.history() },
+                    "colorEditing" to { photos.colorEditing() },
                     "expansion" to { photos.expansion() },
                     "photoWorkflow" to { photos.workflow() },
                     "imports" to { photos.imports() },

@@ -66,4 +66,5 @@ internal fun hasPendingCleanup(info: PhotoInfo, options: ExportOptions, hasSourc
             options.metadata || !options.keepColor ||
                 (options.static && info.container?.video != null) ||
                 (options.flatten && info.container?.edit != null)
-        } else options.metadata && info.metadata.isNotEmpty()
+        } else (options.metadata && info.metadata.isNotEmpty()) ||
+            (!options.keepColor && info.color.space != null && info.color.space != "sRGB")

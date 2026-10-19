@@ -123,8 +123,13 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
     var pixelX by editor::pixelX
     var pixelY by editor::pixelY
     var pixelAction by remember { mutableStateOf<(() -> Unit)?>(null) }
-    val edit: (() -> Unit) -> Unit = { action ->
-        if (info.color.losses.isNotEmpty()) pixelAction = action else action()
+    var pixelLosses by remember { mutableStateOf(emptyList<Int>()) }
+    fun edit(forceSrgb: Boolean = false, action: () -> Unit) {
+        val losses = info.color.losses(forceSrgb)
+        if (losses.isNotEmpty()) {
+            pixelLosses = losses
+            pixelAction = action
+        } else action()
     }
     LaunchedEffect(photo.picked, dropper, tool) {
         if (dropper && photo.picked != null) {
@@ -531,7 +536,7 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
                                         )
                                     }
                                     if (!cleanup.preservesSource(info))
-                                        edit(action)
+                                        edit(forceSrgb = !cleanup.keepColor, action = action)
                                     else action()
                                 },
                                 Modifier.align(Alignment.End),
@@ -621,7 +626,7 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
         AlertDialog(
             onDismissRequest = { pixelAction = null },
             title = { Text(stringResource(R.string.convert_color)) },
-            text = { Text(stringResource(R.string.convert_color_message, colorLosses(info.color))) },
+            text = { Text(stringResource(R.string.convert_color_message, colorLosses(pixelLosses))) },
             confirmButton = {
                 TextButton({
                     val action = pixelAction
@@ -651,8 +656,8 @@ private fun PhotoDetail(label: String, value: String) {
 }
 
 @Composable
-private fun colorLosses(color: PhotoColor): String =
-    color.losses.map { stringResource(it) }.joinToString("\n") { "• $it" }
+private fun colorLosses(losses: List<Int>): String =
+    losses.map { stringResource(it) }.joinToString("\n") { "• $it" }
 
 @Composable
 private fun PhotoCanvas(
@@ -1320,11 +1325,12 @@ private fun ExportPanel(model: LabViewModel, state: LabState) {
             style = MaterialTheme.typography.bodySmall,
         )
     }
+    val losses = info.color.losses(forceSrgb = !options.keepColor)
     if (
-        info.color.losses.isNotEmpty() &&
+        losses.isNotEmpty() &&
             (state.photo.frame?.source == null || !options.preservesSource(info))
     )
-        Text(stringResource(R.string.pixel_export_note, colorLosses(info.color)), style = MaterialTheme.typography.bodySmall)
+        Text(stringResource(R.string.pixel_export_note, colorLosses(losses)), style = MaterialTheme.typography.bodySmall)
     Row(
         Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),

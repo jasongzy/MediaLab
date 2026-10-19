@@ -12,16 +12,20 @@ import org.junit.Test
 class EditorInteractionTest {
     @Test
     fun colorWarningsFollowCurrentFeaturesAndActualExportPath() {
-        assertTrue(PhotoColor(wide = false, hdr = false).losses.isEmpty())
-        assertEquals(listOf(R.string.wide_gamut), PhotoColor(wide = true, hdr = false).losses)
-        assertEquals(listOf(R.string.hdr), PhotoColor(wide = false, hdr = true).losses)
-        assertEquals(listOf(R.string.wide_gamut, R.string.hdr), PhotoColor(wide = true, hdr = true).losses)
+        val p3 = PhotoColor("Display P3", "RGB", true, false)
+        assertTrue(p3.losses().isEmpty())
+        assertEquals(listOf(R.string.hdr), p3.copy(hdr = true).losses())
+        assertEquals(listOf(R.string.wide_gamut), p3.losses(forceSrgb = true))
+        assertEquals(listOf(R.string.wide_gamut, R.string.hdr), p3.copy(hdr = true, convertsToSrgb = true).losses())
+        assertTrue(PhotoColor("sRGB", wide = false, hdr = false).losses(forceSrgb = true).isEmpty())
+        assertEquals(listOf(R.string.source_color_space), PhotoColor("Custom RGB", convertsToSrgb = true).losses())
         val info = PhotoInfo(1, 1, 1, 1, 1, "image/jpeg", 5, PhotoColor(), null, emptyList())
         val clean = ExportOptions(metadata = true)
         assertTrue(clean.preservesSource(info))
         assertFalse(clean.preservesSource(info.copy(orientation = 6)))
         assertFalse(clean.preservesSource(info.copy(mime = "image/heif")))
         assertFalse(ExportOptions(format = ImageFormat.PNG).preservesSource(info))
+        assertTrue(hasPendingCleanup(info.copy(color = p3), ExportOptions(metadata = false, keepColor = false), false))
     }
 
     @Test

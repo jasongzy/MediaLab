@@ -6,6 +6,7 @@ import android.graphics.BitmapFactory
 import android.graphics.BitmapRegionDecoder
 import android.graphics.BlendMode
 import android.graphics.Canvas
+import android.graphics.Color
 import android.graphics.ColorSpace
 import android.graphics.ImageDecoder
 import android.graphics.Matrix
@@ -19,7 +20,6 @@ import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.floor
 import kotlin.math.max
-import kotlin.math.roundToInt
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 
@@ -28,10 +28,12 @@ internal data class PhotoColor(
     val model: String? = null,
     val wide: Boolean? = null,
     val hdr: Boolean? = null,
+    val convertsToSrgb: Boolean = false,
 ) {
-    val losses: List<Int>
-        get() = listOfNotNull(
-            R.string.wide_gamut.takeIf { wide == true },
+    fun losses(forceSrgb: Boolean = false): List<Int> =
+        listOfNotNull(
+            (if (wide == true) R.string.wide_gamut else R.string.source_color_space)
+                .takeIf { (convertsToSrgb || forceSrgb) && space != null && space != "sRGB" },
             R.string.hdr.takeIf { hdr == true },
         )
 }
@@ -47,6 +49,8 @@ internal data class PhotoInfo(
     val color: PhotoColor,
     val container: PhotoContainer?,
     val metadata: List<Pair<String, String>>,
+    val colorSpace: ColorSpace? = null,
+    val config: Bitmap.Config = Bitmap.Config.ARGB_8888,
 )
 
 internal enum class CoverShape(val label: Int) {
@@ -172,6 +176,10 @@ internal object Photos {
             ),
             container,
             metadata,
+            options.outColorSpace ?: preview?.colorSpace,
+            if (options.outConfig == Bitmap.Config.RGBA_F16 || preview?.config == Bitmap.Config.RGBA_F16 ||
+                (Build.VERSION.SDK_INT >= 33 && options.outConfig == Bitmap.Config.RGBA_1010102))
+                Bitmap.Config.RGBA_F16 else Bitmap.Config.ARGB_8888,
         )
     }
 
@@ -208,6 +216,8 @@ internal object Photos {
         colorInfo(bitmap.colorSpace, bitmap.colorSpace?.model?.name, Build.VERSION.SDK_INT >= 34 && bitmap.hasGainmap()),
         null,
         PhotoMetadata.retained(metadata),
+        bitmap.colorSpace,
+        bitmap.config!!,
     )
 
     private fun colorInfo(space: ColorSpace?, model: String?, gainmap: Boolean): PhotoColor {
@@ -221,6 +231,7 @@ internal object Photos {
             model,
             space?.isWideGamut,
             if (gainmap || hdrSpace != null) true else space?.let { false },
+            space != null && (hdrSpace != null || space !is ColorSpace.Rgb || space.transferParameters == null),
         )
     }
 
@@ -235,6 +246,23 @@ internal object Photos {
     }
 
     fun decode(file: File, info: PhotoInfo, crop: Rect? = null): Bitmap {
+        val space = if (info.color.convertsToSrgb) ColorSpace.get(ColorSpace.Named.SRGB)
+            else info.colorSpace ?: ColorSpace.get(ColorSpace.Named.SRGB)
+        fun finish(bitmap: Bitmap): Bitmap {
+            if (Build.VERSION.SDK_INT >= 34) bitmap.gainmap = null
+            if (info.color.convertsToSrgb && bitmap.config != Bitmap.Config.ARGB_8888)
+                return try { convert(bitmap, ColorSpace.get(ColorSpace.Named.SRGB)) } finally { bitmap.recycle() }
+            if (bitmap.config == Bitmap.Config.ARGB_8888 || bitmap.config == Bitmap.Config.RGBA_F16) return bitmap
+            return try { checkNotNull(bitmap.copy(info.config, true)) } finally { bitmap.recycle() }
+        }
+        fun decodeImage(): Bitmap =
+            finish(ImageDecoder.decodeBitmap(ImageDecoder.createSource(file)) { decoder, image, _ ->
+                require(!image.isAnimated)
+                decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+                decoder.isMutableRequired = true
+                decoder.setTargetColorSpace(space)
+                if (crop != null) decoder.crop = crop
+            })
         if (crop != null) {
             require(
                 crop.left >= 0 &&
@@ -263,18 +291,12 @@ internal object Photos {
                 inset(-1, -1)
                 intersect(0, 0, info.rawWidth, info.rawHeight)
             } else raw
-            budget(region.width(), region.height())
+            budget(region.width(), region.height(), if (info.config == Bitmap.Config.RGBA_F16) 4 else 2)
             val decoder =
                 try {
                     BitmapRegionDecoder.newInstance(file.path)
                 } catch (_: java.io.IOException) {
-                    return ImageDecoder.decodeBitmap(ImageDecoder.createSource(file)) { image, _, _
-                        ->
-                        image.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
-                        image.isMutableRequired = true
-                        image.setTargetColorSpace(ColorSpace.get(ColorSpace.Named.SRGB))
-                        image.crop = crop
-                    }
+                    return decodeImage()
                 }
             val bitmap =
                 try {
@@ -283,8 +305,8 @@ internal object Photos {
                             region,
                             BitmapFactory.Options().apply {
                                 inMutable = true
-                                inPreferredConfig = Bitmap.Config.ARGB_8888
-                                inPreferredColorSpace = ColorSpace.get(ColorSpace.Named.SRGB)
+                                inPreferredConfig = info.config
+                                inPreferredColorSpace = space
                             },
                         )
                     )
@@ -296,15 +318,10 @@ internal object Photos {
             } finally {
                 bitmap.recycle()
             }
-            return orient(selected, info.orientation)
+            return finish(orient(selected, info.orientation))
         }
-        budget(info.width, info.height)
-        return ImageDecoder.decodeBitmap(ImageDecoder.createSource(file)) { decoder, image, _ ->
-            require(!image.isAnimated)
-            decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
-            decoder.isMutableRequired = true
-            decoder.setTargetColorSpace(ColorSpace.get(ColorSpace.Named.SRGB))
-        }
+        budget(info.width, info.height, if (info.config == Bitmap.Config.RGBA_F16) 4 else 2)
+        return decodeImage()
     }
 
     private fun rawPoint(x: Int, y: Int, info: PhotoInfo): Pair<Int, Int> =
@@ -435,19 +452,31 @@ internal object Photos {
         val mask =
             BackgroundEngine(context).infer(ImageMath.normalize(pixels), progress)
         progress(R.string.finishing_image)
+        applyMask(bitmap, mask, background)
+    }
+
+    suspend fun applyMask(bitmap: Bitmap, mask: FloatArray, background: Int) {
+        require(background ushr 24 == 0 || background ushr 24 == 255)
+        val coroutine = currentCoroutineContext()
+        val opaque = !bitmap.hasAlpha()
         bitmap.setHasAlpha(bitmap.hasAlpha() || background ushr 24 == 0)
-        val row = IntArray(bitmap.width)
+        val fill = Color.valueOf(background).convert(bitmap.colorSpace!!).components
+        val row = FloatArray(bitmap.width * 4)
         ImageMath.alpha(
             mask,
             bitmap.width,
             bitmap.height,
             { coroutine.ensureActive() },
         ) { y, alpha ->
-            bitmap.getPixels(row, 0, bitmap.width, 0, y, bitmap.width, 1)
-            for (x in row.indices) {
-                row[x] = ImageMath.maskedPixel(row[x], alpha[x], background)
+            BitmapPixels.readRow(bitmap, y, row)
+            for (x in alpha.indices) {
+                val coverage = alpha[x] / 255f
+                val a = (if (opaque) 1f else row[x * 4 + 3]) * coverage
+                for (c in 0..2)
+                    row[x * 4 + c] = row[x * 4 + c] * coverage + fill[c] * fill[3] * (1f - a)
+                row[x * 4 + 3] = a + fill[3] * (1f - a)
             }
-            bitmap.setPixels(row, 0, bitmap.width, 0, y, bitmap.width, 1)
+            BitmapPixels.writeRow(bitmap, y, row)
         }
     }
 
@@ -509,17 +538,20 @@ internal object Photos {
     }
 
     suspend fun resize(bitmap: Bitmap, width: Int, height: Int, method: Int): Bitmap {
-        budget(width, height, 3)
+        require(method in 0..2)
+        budget(width, height, if (bitmap.config == Bitmap.Config.RGBA_F16) 6 else 3)
         if (method == 0) return Bitmap.createScaledBitmap(bitmap, width, height, false)
-        val output = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        val space = bitmap.colorSpace!!
+        val output = Bitmap.createBitmap(width, height, bitmap.config!!, bitmap.hasAlpha(), space)
+        output.density = bitmap.density
         val radius = if (method == 2) 2 else 1
         val sx = bitmap.width.toDouble() / width
         val sy = bitmap.height.toDouble() / height
         val fx = max(1.0, sx)
         val fy = max(1.0, sy)
         val cache = linkedMapOf<Int, FloatArray>()
-        val source = IntArray(bitmap.width)
-        val row = IntArray(width)
+        val source = FloatArray(bitmap.width * 4)
+        val row = FloatArray(width * 4)
         val channels = DoubleArray(4)
         try {
             for (y in 0 until height) {
@@ -530,7 +562,7 @@ internal object Photos {
                 cache.keys.filter { it < start }.forEach { cache.remove(it) }
                 for (iy in start..end) if (iy !in cache) {
                     currentCoroutineContext().ensureActive()
-                    bitmap.getPixels(source, 0, bitmap.width, 0, iy, bitmap.width, 1)
+                    BitmapPixels.readRow(bitmap, iy, source)
                     val horizontal = FloatArray(width * 4)
                     for (x in 0 until width) {
                         val cx = (x + 0.5) * sx - 0.5
@@ -540,11 +572,7 @@ internal object Photos {
                         for (ix in lo..hi) {
                             val w = kernel((ix - cx) / fx, method)
                             weight += w
-                            val pixel = source[ix]
-                            val alpha = (pixel ushr 24) / 255.0
-                            horizontal[x * 4] += (alpha * w).toFloat()
-                            for (c in 1..3) horizontal[x * 4 + c] +=
-                                (((pixel ushr ((3 - c) * 8)) and 255) * alpha * w).toFloat()
+                            for (c in 0..3) horizontal[x * 4 + c] += (source[ix * 4 + c] * w).toFloat()
                         }
                         for (c in 0..3) horizontal[x * 4 + c] =
                             (horizontal[x * 4 + c] / weight).toFloat()
@@ -560,16 +588,12 @@ internal object Photos {
                         val horizontal = cache.getValue(iy)
                         for (c in 0..3) channels[c] += horizontal[x * 4 + c] * w
                     }
-                    val alpha = (channels[0] / weight).coerceIn(0.0, 1.0)
-                    var pixel = (alpha * 255).roundToInt() shl 24
-                    if (alpha > 0)
-                        for (c in 1..3) pixel =
-                            pixel or
-                                ((channels[c] / weight / alpha).roundToInt().coerceIn(0, 255) shl
-                                    ((3 - c) * 8))
-                    row[x] = pixel
+                    val alpha = (channels[3] / weight).coerceIn(0.0, 1.0).toFloat()
+                    for (c in 0..2) row[x * 4 + c] = (channels[c] / weight).toFloat()
+                        .coerceIn(space.getMinValue(c) * alpha, space.getMaxValue(c) * alpha)
+                    row[x * 4 + 3] = alpha
                 }
-                output.setPixels(row, 0, width, 0, y, width, 1)
+                BitmapPixels.writeRow(output, y, row)
             }
             return output
         } catch (error: Throwable) {
@@ -658,22 +682,35 @@ internal object Photos {
         }
     }
 
+    fun convert(bitmap: Bitmap, space: ColorSpace, background: Int? = null): Bitmap {
+        budget(bitmap.width, bitmap.height, if (bitmap.config == Bitmap.Config.RGBA_F16) 4 else 2)
+        val output = Bitmap.createBitmap(
+            bitmap.width, bitmap.height,
+            if (space.isSrgb) Bitmap.Config.ARGB_8888 else bitmap.config!!,
+            background == null && bitmap.hasAlpha(), space,
+        )
+        try {
+            output.density = bitmap.density
+            Canvas(output).apply {
+                if (background != null) drawColor(background)
+                drawBitmap(bitmap, null, Rect(0, 0, bitmap.width, bitmap.height), null)
+            }
+            return output
+        } catch (error: Throwable) {
+            output.recycle()
+            throw error
+        }
+    }
+
     private fun encode(
         bitmap: Bitmap,
         target: File,
         options: ExportOptions,
         metadata: List<Pair<String, String>>,
     ) {
-        val flat =
-            if (options.format == ImageFormat.JPEG && bitmap.hasAlpha()) {
-                budget(bitmap.width, bitmap.height)
-                Bitmap.createBitmap(bitmap.width, bitmap.height, Bitmap.Config.ARGB_8888).also {
-                    Canvas(it).apply {
-                        drawColor(options.background)
-                        drawBitmap(bitmap, 0f, 0f, null)
-                    }
-                }
-            } else bitmap
+        val background = options.background.takeIf { options.format == ImageFormat.JPEG && bitmap.hasAlpha() }
+        val space = if (options.keepColor) bitmap.colorSpace!! else ColorSpace.get(ColorSpace.Named.SRGB)
+        val flat = if (background != null || bitmap.colorSpace != space) convert(bitmap, space, background) else bitmap
         try {
             val compression = when (options.format) {
                 ImageFormat.JPEG -> Bitmap.CompressFormat.JPEG

@@ -21,7 +21,7 @@ A native Android media toolbox
 - Pick pixel colors, copy HEX codes, and extract representative colors from images
 - Clean metadata, extract still images from Motion Photos, and finalize Xiaomi recoverable edits
 
-Supports static JPEG, PNG, WebP, BMP, and device-supported HEIF/AVIF images. Pixel editing uses 8-bit sRGB. Editing and format conversion preserve relevant EXIF metadata, such as capture dates and camera details, by default.
+Supports static JPEG, PNG, WebP, BMP, and device-supported HEIF/AVIF images. Editing and export preserve supported SDR color spaces, including Display P3 and Adobe RGB. Pixel editing and format conversion reduce HDR to SDR; JPEG and WebP export use 8-bit channels. Editing and format conversion preserve relevant EXIF metadata, such as capture dates and camera details, by default.
 
 ### Audio
 

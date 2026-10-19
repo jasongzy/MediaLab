@@ -8,16 +8,18 @@ import java.util.UUID
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 
-internal object BitmapSnapshots {
+internal object BitmapPixels {
     init { System.loadLibrary("medialab") }
 
-    external fun write(bitmap: Bitmap, path: String)
-    external fun read(bitmap: Bitmap, path: String)
+    external fun writeSnapshot(bitmap: Bitmap, path: String)
+    external fun readSnapshot(bitmap: Bitmap, path: String)
+    external fun readRow(bitmap: Bitmap, y: Int, row: FloatArray)
+    external fun writeRow(bitmap: Bitmap, y: Int, row: FloatArray)
 }
 
 internal class PhotoFrame(val source: File?, val info: PhotoInfo, internal var pixels: Bitmap? = null) {
     internal var snapshot: File? = null
-    internal var config = Bitmap.Config.ARGB_8888
+    internal var config = info.config
     internal var colorSpace: ColorSpace? = null
     internal var alpha = true
     internal var premultiplied = true
@@ -79,7 +81,7 @@ internal class PhotoHistory(
                         check(it.rowBytes == frame.rowBytes) { "Unexpected snapshot row size" }
                         it.density = frame.density
                         it.setPremultiplied(frame.premultiplied)
-                        BitmapSnapshots.read(it, file.path)
+                        BitmapPixels.readSnapshot(it, file.path)
                     } catch (error: Throwable) {
                         it.recycle()
                         throw error
@@ -99,7 +101,7 @@ internal class PhotoHistory(
         val width = crop?.width() ?: frame.info.width
         val height = crop?.height() ?: frame.info.height
         if (frame.pixels == null && frame.source != null) {
-            reserve(width.toLong() * height * 4)
+            reserve(width.toLong() * height * if (frame.config == Bitmap.Config.RGBA_F16) 8 else 4)
             return Photos.decode(frame.source, frame.info, crop)
         }
         val source = bitmap()
@@ -135,7 +137,7 @@ internal class PhotoHistory(
             directory.mkdirs()
             val file = File(directory, "${UUID.randomUUID()}.pixels")
             try {
-                BitmapSnapshots.write(bitmap, file.path)
+                BitmapPixels.writeSnapshot(bitmap, file.path)
                 currentCoroutineContext().ensureActive()
                 frame.config = checkNotNull(bitmap.config)
                 frame.colorSpace = checkNotNull(bitmap.colorSpace)

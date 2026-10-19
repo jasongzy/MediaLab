@@ -89,6 +89,7 @@
     <string name="hdr">HDR</string>
     <string name="sdr">SDR</string>
     <string name="color_space">色彩空间</string>
+    <string name="source_color_space">原色彩空间</string>
     <string name="wide_gamut">广色域</string>
     <string name="color_model">颜色模型</string>
     <string name="dynamic_range">动态范围</string>
@@ -99,8 +100,8 @@
     <string name="replace_image">打开新图片</string>
     <string name="replace_message">打开新图片将放弃当前未保存的修改。</string>
     <string name="open">打开</string>
-    <string name="convert_color">转换为标准色彩继续编辑？</string>
-    <string name="convert_color_message">此操作会将图像转换为标准色彩（sRGB）。\n\n以下特性将会丢失：\n%1$s</string>
+    <string name="convert_color">转换图像以继续编辑？</string>
+    <string name="convert_color_message">此操作会转换图像，以下特性将会丢失：\n%1$s</string>
     <string name="convert_and_apply">转换并应用</string>
     <string name="loading_photo">正在打开图片…</string>
     <string name="preparing_image">正在处理图片…</string>
@@ -178,7 +179,7 @@
     <string name="replace_audio">打开新音频</string>
     <string name="replace_audio_message">更换音频将放弃尚未保存的标签和封面修改。</string>
     <string name="discard">放弃</string>
-    <string name="pixel_export_note">此导出方式会将图像转换为标准色彩（sRGB）。\n\n以下特性将会丢失：\n%1$s</string>
+    <string name="pixel_export_note">此导出方式将丢失以下特性：\n%1$s</string>
     <string name="pixel_x">X</string>
     <string name="pixel_y">Y</string>
     <string name="jpeg_alignment">无损裁剪会将左上角向外对齐到 %1$d × %2$d 像素边界，实际裁剪区域可能稍大。</string>

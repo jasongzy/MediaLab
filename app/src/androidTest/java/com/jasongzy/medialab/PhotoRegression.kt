@@ -5,8 +5,10 @@ import android.app.Instrumentation
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.ColorSpace
+import android.graphics.Gainmap
 import android.graphics.Rect
 import android.net.Uri
+import android.os.Build
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.exifinterface.media.ExifInterface
@@ -72,6 +74,119 @@ internal class PhotoRegression(
                 setPixels(row, 0, width, 0, y, width, 1)
             }
         }
+
+    suspend fun colorEditing() {
+        val capture = listOf(ExifInterface.TAG_SOFTWARE to "Color fixture")
+        val mask = FloatArray(ImageMath.SIZE * ImageMath.SIZE) { (it % ImageMath.SIZE).toFloat() }
+        for ((named, config) in listOf(
+            ColorSpace.Named.DISPLAY_P3 to Bitmap.Config.ARGB_8888,
+            ColorSpace.Named.ADOBE_RGB to Bitmap.Config.RGBA_F16,
+        )) {
+            val space = ColorSpace.get(named)
+            val source = Bitmap.createBitmap(8, 4, config, true, space).apply {
+                eraseColor(Color.pack(0.9f, 0.05f, 0.02f, 0.6f, space))
+            }
+            val expected = source.getColor(0, 0).components
+            val original = pixels(source)
+            fun checkColor(bitmap: Bitmap, x: Int = 0, y: Int = 0, color: FloatArray = expected, tolerance: Float = 0.004f) {
+                val actual = bitmap.getColor(x, y).convert(space).components
+                check(actual.indices.all { abs(actual[it] - color[it]) < tolerance }) {
+                    "$named $config: ${actual.toList()} != ${color.toList()}"
+                }
+            }
+            try {
+                for (method in 0..2) {
+                    val scaled = Photos.resize(source, 5, 3, method)
+                    try {
+                        check(scaled.colorSpace == space && scaled.config == config)
+                        checkColor(scaled)
+                    } finally { scaled.recycle() }
+                }
+                val expanded = Photos.expand(source, Rect(-2, -1, 10, 5), Color.TRANSPARENT)
+                try {
+                    check(expanded.colorSpace == space && expanded.config == config)
+                    checkColor(expanded, 2, 1)
+                    Photos.cover(expanded, listOf(Stroke(listOf(2f to 1f, 3f to 2f), Color.TRANSPARENT, 1f, CoverShape.RECTANGLE)))
+                    check(expanded.getColor(2, 1).alpha() == 0f)
+                    checkColor(expanded, 4, 2)
+                } finally { expanded.recycle() }
+                for (background in listOf(Color.TRANSPARENT, 0xff2468ac.toInt())) {
+                    val cutout = checkNotNull(source.copy(config, true))
+                    try {
+                        Photos.applyMask(cutout, mask, background)
+                        val fill = Color.valueOf(background).convert(space).components
+                        checkColor(cutout, color = fill)
+                        val alpha = expected[3] + fill[3] * (1f - expected[3])
+                        val combined = FloatArray(4) { c ->
+                            if (c == 3) alpha else
+                                (expected[c] * expected[3] + fill[c] * fill[3] * (1f - expected[3])) / alpha
+                        }
+                        checkColor(cutout, 7, color = combined)
+                        if (background == Color.TRANSPARENT)
+                            checkColor(cutout, 3, color = expected.clone().apply { this[3] *= 109f / 255f }, tolerance = 0.015f)
+                    } finally { cutout.recycle() }
+                }
+                val opaque = checkNotNull(source.copy(config, true)).apply { eraseColor(Color.RED); setHasAlpha(false) }
+                try {
+                    Photos.applyMask(opaque, mask, Color.WHITE)
+                    check(!opaque.hasAlpha() && opaque.getPixel(0, 0) == Color.WHITE)
+                } finally { opaque.recycle() }
+                val info = Photos.rasterInfo(source, capture)
+                check(info.color.losses().isEmpty())
+                for (format in ImageFormat.entries.filter { it != ImageFormat.ORIGINAL }) {
+                    val file = Photos.export(app.cacheDir, source, info, ExportOptions(format, quality = 100))
+                    val decodedInfo = Photos.info(file)
+                    check(decodedInfo.color.wide == true && decodedInfo.color.hdr == false)
+                    val decoded = Photos.decode(file, decodedInfo)
+                    try {
+                        val color = if (format == ImageFormat.JPEG) FloatArray(4) { c ->
+                            if (c == 3) 1f else expected[c] * expected[3] + 1f - expected[3]
+                        } else expected
+                        checkColor(decoded, color = color, tolerance = 0.025f)
+                        check(ExifInterface(file).getAttribute(ExifInterface.TAG_SOFTWARE) == "Color fixture")
+                        if (format == ImageFormat.PNG) {
+                            check(decoded.config == config)
+                            val crop = Photos.decode(file, decodedInfo, Rect(1, 1, 5, 3))
+                            try { checkColor(crop) } finally { crop.recycle() }
+                            val clean = Photos.export(app.cacheDir, file, decodedInfo, ExportOptions(metadata = true))
+                            check(Photos.info(clean).color.wide == true)
+                            check(ExifInterface(clean).getAttribute(ExifInterface.TAG_SOFTWARE) == null)
+                        }
+                    } finally { decoded.recycle() }
+                }
+                val standard = Photos.convert(source, ColorSpace.get(ColorSpace.Named.SRGB))
+                try {
+                    val file = Photos.export(app.cacheDir, source, info, ExportOptions(ImageFormat.PNG, keepColor = false))
+                    val decoded = Photos.decode(file, Photos.info(file))
+                    try {
+                        check(decoded.colorSpace?.isSrgb == true)
+                        check(decoded.getPixel(0, 0) == standard.getPixel(0, 0))
+                    } finally { decoded.recycle() }
+                } finally { standard.recycle() }
+                check(pixels(source).contentEquals(original))
+            } finally { source.recycle() }
+        }
+        if (Build.VERSION.SDK_INT >= 34) {
+            val source = Bitmap.createBitmap(16, 16, Bitmap.Config.ARGB_8888, false, ColorSpace.get(ColorSpace.Named.DISPLAY_P3))
+            val gain = Bitmap.createBitmap(4, 4, Bitmap.Config.ARGB_8888)
+            try {
+                source.eraseColor(Color.RED)
+                gain.eraseColor(Color.WHITE)
+                source.gainmap = Gainmap(gain).apply { setRatioMax(2f, 2f, 2f); setDisplayRatioForFullHdr(2f) }
+                val file = File(app.cacheDir, "hdr.jpg")
+                file.outputStream().use { check(source.compress(Bitmap.CompressFormat.JPEG, 100, it)) }
+                val preview = Photos.preview(file)
+                val info = try { Photos.info(file, preview) } finally { preview.recycle() }
+                check(info.color.losses() == listOf(R.string.hdr))
+                val edited = Photos.decode(file, info)
+                try {
+                    check(!edited.hasGainmap() && edited.colorSpace?.isWideGamut == true)
+                    val exported = Photos.export(app.cacheDir, edited, Photos.rasterInfo(edited), ExportOptions())
+                    check(Photos.info(exported).color.hdr == false)
+                } finally { edited.recycle() }
+            } finally { source.recycle(); gain.recycle() }
+        }
+    }
 
     suspend fun expansion() {
         val store = ViewModelStore()
@@ -155,7 +270,7 @@ internal class PhotoRegression(
                         true,
                         ColorSpace.get(
                             if (config == Bitmap.Config.RGBA_F16) ColorSpace.Named.EXTENDED_SRGB
-                            else ColorSpace.Named.SRGB
+                            else ColorSpace.Named.DISPLAY_P3
                         ),
                     )
                     .apply {
