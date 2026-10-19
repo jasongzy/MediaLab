@@ -440,7 +440,7 @@ internal class PhotoRegression(
             }
             for (apply in listOf<() -> Unit>(
                 { model.crop(Rect(0, 0, 16, 16), true) },
-                { model.removeBackground() },
+                { model.removeBackground(Color.TRANSPARENT) },
             )) {
                 instrumentation.runOnMainSync(apply)
                 answer(model, DiscardAction.APPLY, false)

@@ -141,7 +141,7 @@
     <string name="comment">Comment</string>
     <string name="remove_background">Remove background</string>
     <string name="background_description">⚡ On-device neural network inference</string>
-    <string name="background_elapsed">Completed in %1$.2f s</string>
+    <string name="background_elapsed">Time: %1$.2f s</string>
     <string name="preparing_model">Preparing model…</string>
     <string name="running_model">Removing background…</string>
     <string name="finishing_image">Creating image…</string>

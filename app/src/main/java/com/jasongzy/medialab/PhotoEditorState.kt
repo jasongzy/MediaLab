@@ -36,6 +36,7 @@ internal class PhotoEditorState(info: PhotoInfo, hasAlpha: Boolean, previous: Ph
     val coverHistory = ToolHistory(emptyList<Stroke>())
     val resize = ResizeSelection(info.width, info.height)
     var background by mutableIntStateOf(if (hasAlpha) Color.TRANSPARENT else Color.WHITE)
+    var cutoutBackground: Int by mutableIntStateOf(previous?.cutoutBackground ?: Color.TRANSPARENT)
     var cleanup by mutableStateOf(defaultCleanup)
     var fill: Boolean by mutableStateOf(previous?.fill ?: true)
     var fillShape: CoverShape by mutableStateOf(previous?.fillShape ?: CoverShape.RECTANGLE)

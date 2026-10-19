@@ -415,8 +415,10 @@ internal object Photos {
     suspend fun removeBackground(
         context: Context,
         bitmap: Bitmap,
+        background: Int,
         progress: (Int) -> Unit,
     ) {
+        require(background ushr 24 == 0 || background ushr 24 == 255)
         val coroutine = currentCoroutineContext()
         val pixels = IntArray(ImageMath.SIZE * ImageMath.SIZE)
         ImageMath.resize(
@@ -433,7 +435,7 @@ internal object Photos {
         val mask =
             BackgroundEngine(context).infer(ImageMath.normalize(pixels), progress)
         progress(R.string.finishing_image)
-        bitmap.setHasAlpha(true)
+        bitmap.setHasAlpha(bitmap.hasAlpha() || background ushr 24 == 0)
         val row = IntArray(bitmap.width)
         ImageMath.alpha(
             mask,
@@ -443,8 +445,7 @@ internal object Photos {
         ) { y, alpha ->
             bitmap.getPixels(row, 0, bitmap.width, 0, y, bitmap.width, 1)
             for (x in row.indices) {
-                val combined = (row[x] ushr 24) * alpha[x] / 255
-                row[x] = (row[x] and 0xffffff) or (combined shl 24)
+                row[x] = ImageMath.maskedPixel(row[x], alpha[x], background)
             }
             bitmap.setPixels(row, 0, bitmap.width, 0, y, bitmap.width, 1)
         }

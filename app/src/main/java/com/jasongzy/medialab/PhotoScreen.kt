@@ -107,6 +107,7 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
     val ratio = frameHistory.value.ratio
     fun setBounds(value: Rect) = frameHistory.change(frameHistory.value.copy(bounds = value))
     var background by editor::background
+    var cutoutBackground by editor::cutoutBackground
     val coverHistory = editor.coverHistory
     val strokes = coverHistory.value
     val resize = editor.resize
@@ -125,10 +126,14 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
     val edit: (() -> Unit) -> Unit = { action ->
         if (info.color.losses.isNotEmpty()) pixelAction = action else action()
     }
-    LaunchedEffect(photo.picked, dropper, expanding) {
+    LaunchedEffect(photo.picked, dropper, tool) {
         if (dropper && photo.picked != null) {
-            if (expanding) background = photo.picked or (255 shl 24)
-            else color = photo.picked or (255 shl 24)
+            val picked = photo.picked or (255 shl 24)
+            when (tool) {
+                PhotoTool.EXPAND -> background = picked
+                PhotoTool.BACKGROUND -> cutoutBackground = picked
+                else -> color = picked
+            }
         }
     }
     LaunchedEffect(photo.frame, tool, dropper) {
@@ -355,18 +360,33 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
                                 stringResource(R.string.background_description),
                                 style = MaterialTheme.typography.bodySmall,
                             )
-                            photo.backgroundElapsedMs?.let { elapsed ->
-                                Text(
-                                    stringResource(R.string.background_elapsed, elapsed / 1000.0),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
+                            ColorField(cutoutBackground, allowTransparent = true, pick = { dropper = !dropper }) {
+                                cutoutBackground = it
+                                dropper = false
                             }
-                            Button(
-                                { edit { model.removeBackground() } },
-                                Modifier.align(Alignment.End),
+                            if (dropper) Text(
+                                stringResource(R.string.tap_color),
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                            Row(
+                                Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
                             ) {
-                                Text(stringResource(R.string.remove_background))
+                                Box(Modifier.weight(1f)) {
+                                    photo.backgroundElapsedMs?.let { elapsed ->
+                                        Text(
+                                            stringResource(R.string.background_elapsed, elapsed / 1000.0),
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                    }
+                                }
+                                Button({ edit { model.removeBackground(cutoutBackground) } }) {
+                                    Text(stringResource(R.string.remove_background))
+                                }
                             }
                         }
                         PhotoTool.COVER -> {
