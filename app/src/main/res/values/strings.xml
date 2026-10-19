@@ -10,9 +10,7 @@
     <string name="unknown_time">—:—</string>
     <string name="playback_error">Unable to play this audio (%1$s).</string>
     <string name="pick_photo">Choose image</string>
-    <string name="change_photo">Open image</string>
     <string name="choose_audio">Choose audio</string>
-    <string name="change_audio">Change audio</string>
     <string name="more">More</string>
     <string name="image_empty">Choose an image to edit</string>
     <string name="audio_empty">Choose music to edit</string>
@@ -177,7 +175,7 @@
     <string name="photo_description">Image preview</string>
     <string name="zoom_in">Zoom in</string>
     <string name="reset_view">Reset view</string>
-    <string name="replace_audio">Change audio?</string>
+    <string name="replace_audio">Open new audio</string>
     <string name="replace_audio_message">Changing audio will discard unsaved changes to tags and artwork.</string>
     <string name="discard">Discard</string>
     <string name="pixel_export_note">This export converts the image to standard sRGB.\n\nThe following features will be lost:\n%1$s</string>

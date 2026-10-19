@@ -99,7 +99,6 @@ internal fun AudioScreen(model: LabViewModel, state: LabState, active: Boolean) 
                 ),
                 Modifier.weight(1f),
             )
-            TextButton(open) { Text(stringResource(R.string.change_audio)) }
             ToolButton(R.drawable.ic_undo, R.string.undo, history.canUndo) { model.undoAudio(-1) }
             ToolButton(R.drawable.ic_redo, R.string.redo, history.canRedo) { model.undoAudio(1) }
             ToolButton(R.drawable.ic_save, R.string.save_copy, action = model::saveAudio)
@@ -112,6 +111,13 @@ internal fun AudioScreen(model: LabViewModel, state: LabState, active: Boolean) 
                         onClick = {
                             menu = false
                             model.restoreAudio()
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.replace_audio)) },
+                        onClick = {
+                            menu = false
+                            open()
                         },
                     )
                     DropdownMenuItem(

@@ -7,6 +7,8 @@ import android.text.format.Formatter
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -15,6 +17,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
@@ -23,6 +26,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect as FloatRect
 import androidx.compose.ui.geometry.Size
@@ -82,8 +86,19 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
     val editor = checkNotNull(photo.editor)
     var menu by remember(editor) { mutableStateOf(false) }
     var tool by editor::tool
-    val previewInteraction = remember { MutableInteractionSource() }
-    val showOriginal by previewInteraction.collectIsPressedAsState()
+    val toolScroll = rememberLazyListState()
+    val panelScroll = rememberScrollState()
+    val exportHighlight = remember(editor) { Animatable(0f) }
+    val highlightColor = MaterialTheme.colorScheme.primary
+    var exportRequest by remember(editor) { mutableIntStateOf(0) }
+    LaunchedEffect(exportRequest) {
+        if (exportRequest > 0) {
+            panelScroll.scrollTo(0)
+            toolScroll.animateScrollToItem(PhotoTool.EXPORT.ordinal)
+            exportHighlight.snapTo(0.16f)
+            exportHighlight.animateTo(0f, tween(1200))
+        }
+    }
     val expanding = tool == PhotoTool.EXPAND
     val cropHistory = editor.cropHistory
     val canvasHistory = editor.canvasHistory
@@ -139,7 +154,6 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                ToolButton(R.drawable.ic_photo, R.string.change_photo, action = open)
                 ToolButton(R.drawable.ic_undo, R.string.undo, photo.position > 0) { model.undo(-1) }
                 ToolButton(
                     R.drawable.ic_redo,
@@ -148,11 +162,10 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
                 ) {
                     model.undo(1)
                 }
-                IconButton(onClick = {}, interactionSource = previewInteraction) {
-                    Icon(
-                        painterResource(R.drawable.ic_visibility),
-                        stringResource(R.string.hold_original),
-                    )
+                ToolButton(R.drawable.ic_save, R.string.export) {
+                    tool = PhotoTool.EXPORT
+                    dropper = false
+                    exportRequest++
                 }
                 Box {
                     ToolButton(R.drawable.ic_more, R.string.more) { menu = true }
@@ -165,6 +178,13 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
                                 model.restoreOriginal()
                             },
                         )
+                        DropdownMenuItem(
+                            text = { Text(stringResource(R.string.replace_image)) },
+                            onClick = {
+                                menu = false
+                                open()
+                            },
+                        )
                     }
                 }
             }
@@ -173,7 +193,6 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
                     photo,
                     area,
                     tool,
-                    showOriginal,
                     bounds,
                     ratio,
                     { frameHistory.preview(frameHistory.value.copy(bounds = it)) },
@@ -196,6 +215,7 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
             val controls: @Composable ColumnScope.() -> Unit = {
                 LazyRow(
                     Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                    state = toolScroll,
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     items(PhotoTool.entries.size) { i ->
@@ -222,7 +242,11 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
                 Column(
                     Modifier.fillMaxWidth()
                         .weight(1f)
-                        .verticalScroll(rememberScrollState())
+                        .drawBehind {
+                            if (tool == PhotoTool.EXPORT)
+                                drawRect(highlightColor.copy(alpha = exportHighlight.value))
+                        }
+                        .verticalScroll(panelScroll)
                         .padding(horizontal = 16.dp, vertical = 4.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
@@ -615,7 +639,6 @@ private fun PhotoCanvas(
     photo: PhotoState,
     modifier: Modifier,
     tool: PhotoTool,
-    showOriginal: Boolean,
     bounds: Rect,
     ratio: Float,
     setCrop: (Rect) -> Unit,
@@ -631,6 +654,8 @@ private fun PhotoCanvas(
     pixelY: Int,
     pick: (Int, Int) -> Unit,
 ) {
+    val previewInteraction = remember { MutableInteractionSource() }
+    val showOriginal by previewInteraction.collectIsPressedAsState()
     val info = photo.info!!
     val imageSize = Size(info.width.toFloat(), info.height.toFloat())
     val expanding = tool == PhotoTool.EXPAND
@@ -977,6 +1002,12 @@ private fun PhotoCanvas(
             val initialView = if (expanding) fitted() else ImageViewport(initialScale)
             ToolButton(R.drawable.ic_reset, R.string.reset_view, !showOriginal && viewport != initialView) {
                 viewport = initialView
+            }
+            IconButton(onClick = {}, interactionSource = previewInteraction) {
+                Icon(
+                    painterResource(R.drawable.ic_visibility),
+                    stringResource(R.string.hold_original),
+                )
             }
         }
     }

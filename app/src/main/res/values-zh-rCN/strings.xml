@@ -10,9 +10,7 @@
     <string name="unknown_time">—:—</string>
     <string name="playback_error">无法播放此音频（%1$s）。</string>
     <string name="pick_photo">选择图片</string>
-    <string name="change_photo">打开图片</string>
     <string name="choose_audio">选择音频</string>
-    <string name="change_audio">更换音频</string>
     <string name="more">更多</string>
     <string name="image_empty">选择图像以编辑</string>
     <string name="audio_empty">选择音乐以编辑</string>
@@ -177,7 +175,7 @@
     <string name="photo_description">图像预览</string>
     <string name="zoom_in">放大</string>
     <string name="reset_view">重置视图</string>
-    <string name="replace_audio">更换音频？</string>
+    <string name="replace_audio">打开新音频</string>
     <string name="replace_audio_message">更换音频将放弃尚未保存的标签和封面修改。</string>
     <string name="discard">放弃</string>
     <string name="pixel_export_note">此导出方式会将图像转换为标准色彩（sRGB）。\n\n以下特性将会丢失：\n%1$s</string>
