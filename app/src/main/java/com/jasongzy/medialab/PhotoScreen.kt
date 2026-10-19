@@ -30,6 +30,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.geometry.center
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
@@ -636,7 +637,8 @@ private fun PhotoCanvas(
     val expanding = tool == PhotoTool.EXPAND
     val framing = tool == PhotoTool.CROP || expanding
     val frameColor = if (expanding) MaterialTheme.colorScheme.primary.toArgb() else android.graphics.Color.WHITE
-    val initialScale = if (expanding) 0.6f else 1f
+    val imageBorderColor = MaterialTheme.colorScheme.outline.toArgb()
+    val initialScale = if (expanding) 0.6f else 0.9f
     val minScale = if (expanding) ImageViewport.MIN_OUTSIDE_SCALE else ImageViewport.MIN_SCALE
     var viewport by remember(photo.frame, expanding) { mutableStateOf(ImageViewport(initialScale)) }
     var canvasSize by remember { mutableStateOf(Size.Zero) }
@@ -822,58 +824,63 @@ private fun PhotoCanvas(
                     }
                 }
         ) {
+            val original = photo.original.takeIf { showOriginal }
+            val preview = original ?: photo.preview!!
+            val displaySize = if (original == null) imageSize
+                else Size(original.width.toFloat(), original.height.toFloat())
+            val fit = minOf(size.width / displaySize.width, size.height / displaySize.height) * viewport.scale
+            val origin = size.center + viewport.offset - Offset(displaySize.width * fit / 2, displaySize.height * fit / 2)
+            val destination = android.graphics.RectF(0f, 0f, displaySize.width, displaySize.height)
+            val transparencyBounds = if (expanding && original == null) android.graphics.RectF(bounds) else destination
             val cell = 12.dp.toPx()
-            for (y in 0..(size.height / cell).toInt()) for (x in 0..(size.width / cell).toInt()) {
-                drawRect(
-                    if ((x + y) % 2 == 0) Color(0xffdddddd) else Color(0xfff5f5f5),
-                    Offset(x * cell, y * cell),
-                    Size(cell, cell),
-                )
+            clipRect(
+                origin.x + transparencyBounds.left * fit,
+                origin.y + transparencyBounds.top * fit,
+                origin.x + transparencyBounds.right * fit,
+                origin.y + transparencyBounds.bottom * fit,
+            ) {
+                for (y in 0..(size.height / cell).toInt()) for (x in 0..(size.width / cell).toInt()) {
+                    drawRect(
+                        if ((x + y) % 2 == 0) Color(0xffdddddd) else Color(0xfff5f5f5),
+                        Offset(x * cell, y * cell),
+                        Size(cell, cell),
+                    )
+                }
             }
-            val fit = minOf(size.width / info.width, size.height / info.height) * viewport.scale
-            val origin =
-                size.center + viewport.offset - Offset(info.width * fit / 2, info.height * fit / 2)
             val canvas = drawContext.canvas.nativeCanvas
             val paint =
                 android.graphics.Paint(
                     android.graphics.Paint.ANTI_ALIAS_FLAG or
                         android.graphics.Paint.FILTER_BITMAP_FLAG
                 )
-            if (showOriginal && photo.original != null) {
-                val original = photo.original
-                val scale =
-                    minOf(size.width / original.width, size.height / original.height) *
-                        viewport.scale
-                val bounds =
-                    android.graphics.RectF(
-                        size.width / 2 + viewport.offset.x - original.width * scale / 2,
-                        size.height / 2 + viewport.offset.y - original.height * scale / 2,
-                        size.width / 2 + viewport.offset.x + original.width * scale / 2,
-                        size.height / 2 + viewport.offset.y + original.height * scale / 2,
-                    )
-                canvas.drawBitmap(original, null, bounds, paint)
-                return@Canvas
-            }
             canvas.save()
             canvas.translate(origin.x, origin.y)
             canvas.scale(fit, fit)
-            val destination =
-                android.graphics.RectF(0f, 0f, info.width.toFloat(), info.height.toFloat())
-            if (expanding) {
+            if (expanding && original == null) {
                 canvas.save()
                 canvas.clipRect(bounds)
                 canvas.clipOutRect(destination)
                 canvas.drawColor(color)
                 canvas.restore()
             }
-            val coverStrokes = if (tool == PhotoTool.COVER) strokes else emptyList()
+            val coverStrokes = if (tool == PhotoTool.COVER && original == null) strokes else emptyList()
             val imageLayer =
                 if (coverStrokes.any { it.clearsPixels }) canvas.saveLayer(destination, null)
                 else canvas.save()
             canvas.clipRect(destination)
-            canvas.drawBitmap(photo.preview!!, null, destination, paint)
+            canvas.drawBitmap(preview, null, destination, paint)
             Photos.cover(canvas, coverStrokes)
             canvas.restoreToCount(imageLayer)
+            paint.style = android.graphics.Paint.Style.STROKE
+            paint.strokeWidth = 1.dp.toPx() / fit
+            paint.color = imageBorderColor
+            paint.pathEffect = android.graphics.DashPathEffect(floatArrayOf(4.dp.toPx() / fit, 3.dp.toPx() / fit), 0f)
+            canvas.drawRect(destination, paint)
+            paint.pathEffect = null
+            if (original != null) {
+                canvas.restore()
+                return@Canvas
+            }
             selection
                 ?.takeIf { it.points.size > 1 }
                 ?.let {
@@ -895,11 +902,17 @@ private fun PhotoCanvas(
                 canvas.drawPaint(paint)
                 canvas.restore()
                 paint.style = android.graphics.Paint.Style.STROKE
+                paint.color = android.graphics.Color.BLACK
+                paint.strokeWidth = 4.dp.toPx() / fit
+                canvas.drawRect(bounds, paint)
                 paint.color = frameColor
                 paint.strokeWidth = 2.dp.toPx() / fit
                 canvas.drawRect(bounds, paint)
                 for (x in listOf(bounds.left, bounds.right)) for (y in listOf(bounds.top, bounds.bottom)) {
                     paint.style = android.graphics.Paint.Style.FILL
+                    paint.color = android.graphics.Color.BLACK
+                    canvas.drawCircle(x.toFloat(), y.toFloat(), 7.dp.toPx() / fit, paint)
+                    paint.color = frameColor
                     canvas.drawCircle(x.toFloat(), y.toFloat(), 5.dp.toPx() / fit, paint)
                 }
             }
@@ -963,7 +976,7 @@ private fun PhotoCanvas(
                     viewport.transformed(2f, Offset.Zero, canvasSize.center, canvasSize, imageSize, outside = expanding)
             }
             ToolButton(R.drawable.ic_reset, R.string.reset_view, !showOriginal) {
-                viewport = if (expanding) fitted() else ImageViewport()
+                viewport = if (expanding) fitted() else ImageViewport(initialScale)
             }
         }
     }
