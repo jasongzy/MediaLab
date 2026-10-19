@@ -50,6 +50,7 @@ internal data class PhotoState(
     val picked: Int? = null,
     val backgroundElapsedMs: Long? = null,
     val editor: PhotoEditorState? = info?.let { PhotoEditorState(it, preview?.hasAlpha() == true) },
+    val sourceUri: Uri? = null,
 ) {
     val frame
         get() = history.getOrNull(position)
@@ -275,7 +276,7 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
                     val preview = Photos.preview(file)
                     val next =
                         PhotoHistory(workspace.work, PhotoFrame(file, info))
-                    val photo = PhotoState(name, next.frames, 0, preview, preview, info)
+                    val photo = PhotoState(name, next.frames, 0, preview, preview, info, sourceUri = uri)
                     currentCoroutineContext().ensureActive()
                     val old = history
                     val oldExport = state.value.exportFile
@@ -292,7 +293,7 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
                     old?.close()
                     oldExport?.delete()
                 } else {
-                    val document = AudioFiles.read(file, name)
+                    val document = AudioFiles.read(file, name).copy(sourceUri = uri, sourceBytes = file.length())
                     currentCoroutineContext().ensureActive()
                     val old = state.value.audio?.file
                     mutable.update {
@@ -328,6 +329,7 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
                 old.original,
                 history.current.info,
                 editor = PhotoEditorState(history.current.info, preview.hasAlpha(), old.editor),
+                sourceUri = old.sourceUri,
             )
         mutable.update {
             it.copy(
@@ -680,7 +682,10 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
                     MediaFiles.outputName(document.name, file.extension),
                     false,
                 )
-                val audio = AudioFiles.read(file, document.name)
+                val audio = AudioFiles.read(file, document.name).copy(
+                    sourceUri = document.sourceUri, sourceBytes = document.sourceBytes,
+                    sourceDuration = document.sourceDuration,
+                )
                 mutable.update {
                     it.copy(
                         audio = audio,

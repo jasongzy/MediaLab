@@ -287,6 +287,8 @@ internal class PhotoRegression(
             instrumentation.runOnMainSync { model.crop(Rect(2, 2, 20, 20), false) }
             idle(model)
             val photo = model.state.value.photo
+            check(photo.sourceUri == Uri.fromFile(image))
+            check(photo.history.first().info.bytes == image.length())
             val work = photo.history.first().source!!.parentFile!!
             val files = work.listFiles()!!.toSet()
             for (type in listOf(ImportType.IMAGE, null)) {
@@ -312,6 +314,8 @@ internal class PhotoRegression(
                 model.state.value.audio!!.editor.tag = null
             }
             val editedAudio = checkNotNull(model.state.value.audio)
+            check(editedAudio.sourceUri == Uri.fromFile(audio))
+            check(editedAudio.sourceBytes == audio.length())
             check(model.state.value.audioDirty)
             val before = work.listFiles()!!.toSet()
             for (type in listOf(ImportType.AUDIO, null)) {
@@ -456,6 +460,7 @@ internal class PhotoRegression(
                 instrumentation.runOnMainSync { model.undo(direction) }
                 answer(model, action, true)
                 check(model.state.value.photo.position == before.position + direction)
+                check(model.state.value.photo.sourceUri == Uri.fromFile(input))
                 check(model.state.value.photo.editor !== editor && model.state.value.photo.pending.isEmpty())
             }
             instrumentation.runOnMainSync { model.undo(-1) }

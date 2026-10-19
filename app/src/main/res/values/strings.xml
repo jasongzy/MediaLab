@@ -172,6 +172,16 @@
     <string name="jpeg_alignment">Lossless cropping moves the top-left corner outward to a JPEG block boundary (%1$d × %2$d px), so the crop may be slightly larger.</string>
     <string name="zoom_out">Zoom out</string>
     <string name="copied">Copied</string>
+    <string name="filename_copied">Filename copied</string>
+    <string name="file_details">File details</string>
+    <string name="filename">Filename</string>
+    <string name="original_file_size">Original file size</string>
+    <string name="original_dimensions">Original image dimensions</string>
+    <string name="original_duration">Original audio duration</string>
+    <string name="source_address">Source address</string>
+    <string name="open_with">Open with another app</string>
+    <string name="no_file_viewer">No app available to open this file.</string>
+    <string name="source_open_failed">Could not open the original file.</string>
     <string name="changes_applied">Changes applied</string>
     <string name="color_copied">Copied %1$s</string>
     <string name="exit_confirmation">Confirm exit?</string>

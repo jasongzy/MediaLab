@@ -87,12 +87,15 @@ internal fun AudioScreen(model: LabViewModel, state: LabState, active: Boolean) 
             Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(
-                audio.name,
+            FileName(
+                audio.name, audio.sourceUri,
+                MediaFiles.mime(audio.file).takeUnless { it == "application/octet-stream" } ?: "audio/*",
+                audio.sourceBytes,
+                R.string.original_duration to (
+                    audio.sourceDuration?.takeIf { it >= 0 }?.let(::playbackTime)
+                        ?: stringResource(R.string.unknown)
+                ),
                 Modifier.weight(1f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                style = MaterialTheme.typography.titleSmall,
             )
             TextButton(open) { Text(stringResource(R.string.change_audio)) }
             TextButton(importNcm) { Text(stringResource(R.string.unlock)) }

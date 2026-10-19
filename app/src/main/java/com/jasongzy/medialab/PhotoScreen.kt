@@ -127,11 +127,10 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(Modifier.weight(1f)) {
-                    Text(
-                        photo.name,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        style = MaterialTheme.typography.titleSmall,
+                    val source = photo.history.first().info
+                    FileName(
+                        photo.name, photo.sourceUri, source.mime, source.bytes,
+                        R.string.original_dimensions to "${source.width} × ${source.height} px",
                     )
                     Text(
                         "${info.width} × ${info.height}",

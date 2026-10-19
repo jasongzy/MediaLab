@@ -172,6 +172,16 @@
     <string name="jpeg_alignment">无损裁剪会将左上角向外对齐到 %1$d × %2$d 像素边界，实际裁剪区域可能稍大。</string>
     <string name="zoom_out">缩小</string>
     <string name="copied">已复制</string>
+    <string name="filename_copied">已复制文件名</string>
+    <string name="file_details">文件信息</string>
+    <string name="filename">文件名</string>
+    <string name="original_file_size">原文件大小</string>
+    <string name="original_dimensions">原文件尺寸</string>
+    <string name="original_duration">原文件时长</string>
+    <string name="source_address">源地址</string>
+    <string name="open_with">用其他应用打开</string>
+    <string name="no_file_viewer">没有可打开此文件的应用</string>
+    <string name="source_open_failed">无法打开原文件</string>
     <string name="changes_applied">已应用修改</string>
     <string name="color_copied">已复制 %1$s</string>
     <string name="exit_confirmation">确认退出？</string>

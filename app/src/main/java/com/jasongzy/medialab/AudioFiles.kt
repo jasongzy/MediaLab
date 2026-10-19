@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.media.MediaExtractor
 import android.media.MediaFormat
+import android.net.Uri
 import android.os.ParcelFileDescriptor
 import com.kyant.taglib.AudioProperties
 import com.kyant.taglib.Picture
@@ -22,6 +23,9 @@ internal data class AudioDocument(
     val pictures: List<Picture>,
     val technical: List<Pair<String, String>>,
     val editor: AudioEditorState = AudioEditorState(),
+    val sourceUri: Uri? = null,
+    val sourceBytes: Long? = null,
+    val sourceDuration: Long? = properties?.length?.toLong(),
 )
 
 internal object AudioFiles {
