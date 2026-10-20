@@ -651,13 +651,22 @@ internal class PhotoRegression(
                 check(model.state.value.photo.frame!!.pixels === resident)
                 check(draft.cropHistory.value.bounds == Rect(0, 0, 16, 16) && draft.resize.width == 32)
             }
-            instrumentation.runOnMainSync {
-                cutout.history.change(listOf(Stroke(listOf(1f to 1f), Color.WHITE, 2f, CoverShape.BRUSH)))
-                model.removeBackground(BackgroundModel.RMBG20)
+            for ((confirmation, action) in listOf<Pair<Confirmation, () -> Unit>>(
+                Confirmation.REINFER to { model.removeBackground(BackgroundModel.RMBG20) },
+                Confirmation.DISCARD_MASK to model::discardBackground,
+            )) {
+                instrumentation.runOnMainSync(action)
+                answer(model, confirmation, false)
+                check(draft.cutout === cutout && cutout.history.value.isEmpty())
             }
-            answer(model, Confirmation.REINFER, false)
-            check(draft.cutout === cutout && cutout.history.value.isNotEmpty())
-            instrumentation.runOnMainSync { model.crop(Rect(0, 0, 16, 16), true) }
+            instrumentation.runOnMainSync { model.discardBackground() }
+            answer(model, Confirmation.DISCARD_MASK, true)
+            check(draft.cutout == null && model.state.value.photo.backgroundElapsedMs == null)
+            instrumentation.runOnMainSync {
+                draft.cutout = cutout
+                cutout.history.change(listOf(Stroke(listOf(1f to 1f), Color.WHITE, 2f, CoverShape.BRUSH)))
+                model.crop(Rect(0, 0, 16, 16), true)
+            }
             answer(model, Confirmation.APPLY, true)
             check(model.state.value.photo.picked == null)
             val applied = checkNotNull(model.state.value.photo.editor)

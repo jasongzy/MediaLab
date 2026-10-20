@@ -529,7 +529,7 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
         work(R.string.preparing_image) {
             val photo = state.value.photo
             val editor = checkNotNull(photo.editor)
-            if (editor.cutout?.history?.value?.isNotEmpty() == true && !confirm(Confirmation.REINFER))
+            if (editor.cutout != null && !confirm(Confirmation.REINFER))
                 return@work
             discardResize()
             val bitmap = checkNotNull(history).bitmap()
@@ -567,8 +567,7 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
     fun discardBackground() =
         work(R.string.preparing_image) {
             val editor = checkNotNull(state.value.photo.editor)
-            val draft = editor.cutout ?: return@work
-            if (draft.history.value.isNotEmpty() && !confirm(Confirmation.DISCARD_MASK)) return@work
+            if (editor.cutout == null || !confirm(Confirmation.DISCARD_MASK)) return@work
             withContext(Dispatchers.Main) { editor.cutout = null }
             mutable.update { it.copy(photo = it.photo.copy(backgroundElapsedMs = null)) }
         }
