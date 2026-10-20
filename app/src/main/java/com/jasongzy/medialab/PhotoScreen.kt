@@ -297,7 +297,7 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
                                         ))
                                     }
                                 }
-                                HistoryButtons(frameHistory)
+                                HistoryButtons(frameHistory) { dropper = false }
                             }
                             key(frameHistory) {
                                 FrameFields(frameHistory, info, expanding)
@@ -390,7 +390,7 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
                                     label = { Text(stringResource(R.string.brush)) },
                                 )
                                 Spacer(Modifier.weight(1f))
-                                HistoryButtons(coverHistory)
+                                HistoryButtons(coverHistory) { dropper = false }
                             }
                             if (fill)
                                 ChoiceChips(
@@ -630,7 +630,7 @@ private fun BackgroundPanel(model: LabViewModel, photo: PhotoState) {
         BackgroundModel.entries.forEachIndexed { index, item ->
             SegmentedButton(
                 selected = editor.backgroundModel == item,
-                onClick = { editor.backgroundModel = item },
+                onClick = { editor.backgroundModel = item; editor.dropper = false },
                 shape = SegmentedButtonDefaults.itemShape(index, BackgroundModel.entries.size),
             ) { Text(stringResource(item.label)) }
         }
@@ -641,23 +641,31 @@ private fun BackgroundPanel(model: LabViewModel, photo: PhotoState) {
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
-    ColorField(editor.cutoutBackground, allowTransparent = true, pick = { editor.dropper = !editor.dropper }) {
-        editor.cutoutBackground = it
-        editor.dropper = false
-    }
-    if (editor.dropper) Text(stringResource(R.string.tap_color), style = MaterialTheme.typography.bodySmall)
     if (draft != null) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FilterChip(!draft.showMask, { draft.showMask = false }, label = { Text(stringResource(R.string.mask_result)) })
-            FilterChip(draft.showMask, { draft.showMask = true }, label = { Text(stringResource(R.string.mask)) })
+            FilterChip(
+                draft.showMask, { draft.showMask = true; editor.dropper = false },
+                label = { Text(stringResource(R.string.mask)) },
+            )
+            FilterChip(
+                !draft.showMask, { draft.showMask = false; editor.dropper = false },
+                label = { Text(stringResource(R.string.mask_result)) },
+            )
             Spacer(Modifier.weight(1f))
-            HistoryButtons(draft.history)
+            HistoryButtons(draft.history) { editor.dropper = false }
         }
-        if (draft.showMask) Text(
-            stringResource(R.string.mask_hint),
+        Text(
+            stringResource(if (draft.showMask) R.string.mask_hint else R.string.mask_result_hint),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        if (!draft.showMask) {
+            ColorField(editor.cutoutBackground, allowTransparent = true, pick = { editor.dropper = !editor.dropper }) {
+                editor.cutoutBackground = it
+                editor.dropper = false
+            }
+            if (editor.dropper) Text(stringResource(R.string.tap_color), style = MaterialTheme.typography.bodySmall)
+        }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             FilterChip(
                 draft.keep, { draft.keep = true; editor.dropper = false },
@@ -668,12 +676,15 @@ private fun BackgroundPanel(model: LabViewModel, photo: PhotoState) {
                 label = { Text(stringResource(R.string.mask_remove)) },
             )
             Spacer(Modifier.weight(1f))
-            TextButton({ draft.history.change(emptyList()) }, enabled = draft.history.value.isNotEmpty()) {
+            TextButton(
+                { draft.history.change(emptyList()); editor.dropper = false },
+                enabled = draft.history.value.isNotEmpty(),
+            ) {
                 Text(stringResource(R.string.reset_mask))
             }
         }
-        BrushSize(editor.brushWidth, checkNotNull(photo.info)) { editor.brushWidth = it }
-        Toggle(R.string.soft_edges, draft.softEdges) { draft.softEdges = it }
+        BrushSize(editor.brushWidth, checkNotNull(photo.info)) { editor.brushWidth = it; editor.dropper = false }
+        Toggle(R.string.soft_edges, draft.softEdges) { draft.softEdges = it; editor.dropper = false }
     }
     Row(
         Modifier.fillMaxWidth(),
@@ -692,17 +703,18 @@ private fun BackgroundPanel(model: LabViewModel, photo: PhotoState) {
                 )
             }
         }
-        if (draft == null) Button({ model.removeBackground(editor.backgroundModel) }) {
+        val infer: () -> Unit = { editor.dropper = false; model.removeBackground(editor.backgroundModel) }
+        if (draft == null) Button(infer) {
             Text(stringResource(R.string.remove_background))
-        } else TextButton({ model.removeBackground(editor.backgroundModel) }) {
+        } else TextButton(infer) {
             Text(stringResource(R.string.reinfer))
         }
     }
     if (draft != null) Row(
         Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
     ) {
-        TextButton(model::discardBackground) { Text(stringResource(R.string.discard)) }
-        Button(model::applyBackground) { Text(stringResource(R.string.apply)) }
+        TextButton({ editor.dropper = false; model.discardBackground() }) { Text(stringResource(R.string.discard)) }
+        Button({ editor.dropper = false; model.applyBackground() }) { Text(stringResource(R.string.apply)) }
     }
 }
 
@@ -1127,10 +1139,10 @@ private fun PhotoCanvas(
 }
 
 @Composable
-private fun HistoryButtons(history: ToolHistory<*>) {
+private fun HistoryButtons(history: ToolHistory<*>, beforeChange: () -> Unit) {
     Row {
-        ToolButton(R.drawable.ic_undo, R.string.undo, history.canUndo, history::undo)
-        ToolButton(R.drawable.ic_redo, R.string.redo, history.canRedo, history::redo)
+        ToolButton(R.drawable.ic_undo, R.string.undo, history.canUndo) { beforeChange(); history.undo() }
+        ToolButton(R.drawable.ic_redo, R.string.redo, history.canRedo) { beforeChange(); history.redo() }
     }
 }
 

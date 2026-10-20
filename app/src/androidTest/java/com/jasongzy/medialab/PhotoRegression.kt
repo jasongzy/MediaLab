@@ -112,6 +112,7 @@ internal class PhotoRegression(
             check(kept.zipWithNext().all { (a, b) -> a < b })
             val removed = listOf(11, 12, 13, 15).map { output.getColor(it, 128).alpha() }
             check(removed.zipWithNext().all { (a, b) -> a < b })
+            draft.showMask = false
             Photos.drawCutout(Canvas(rendered), draft, RectF(0f, 0f, 16f, 260f), Color.TRANSPARENT)
             val expected = FloatArray(source.width * 4)
             val actual = FloatArray(source.width * 4)

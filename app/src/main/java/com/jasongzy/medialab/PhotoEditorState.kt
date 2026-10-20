@@ -30,7 +30,7 @@ internal class CutoutDraft(
     val maskPreview: Bitmap,
 ) {
     val history = ToolHistory(emptyList<Stroke>())
-    var showMask by mutableStateOf(false)
+    var showMask by mutableStateOf(true)
     var keep by mutableStateOf(true)
     var softEdges by mutableStateOf(false)
 }

@@ -151,6 +151,7 @@
     <string name="mask_keep">保留</string>
     <string name="mask_remove">去除</string>
     <string name="mask_hint">红色标记将被去除的区域。</string>
+    <string name="mask_result_hint">被去除的区域将填充为所选颜色</string>
     <string name="reset_mask">重置蒙版</string>
     <string name="discard_mask">放弃蒙版？</string>
     <string name="discard_mask_message">当前蒙版和手工修整将被丢弃。</string>
