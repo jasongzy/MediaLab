@@ -123,8 +123,14 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
         mutable.update {
             it.copy(mode = ColorMode.fromStored(settings.getString("colorMode", null)))
         }
-        work(R.string.preparing_image) {
-            workspace.clearStale()
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                workspace.clearStale()
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                if (BuildConfig.DEBUG) Log.w("WorkspaceCache", "Stale cache cleanup failed", error)
+            }
         }
     }
 

@@ -504,10 +504,6 @@ internal class PhotoRegression(
     suspend fun imports() {
         val store = ViewModelStore()
         lateinit var model: LabViewModel
-        instrumentation.runOnMainSync {
-            model = LabViewModel(app)
-            store.put("import-test", model)
-        }
         val image = File(app.cacheDir, "input.png")
         val bitmap = fixture()
         try {
@@ -520,8 +516,12 @@ internal class PhotoRegression(
             audio.outputStream().use { input.copyTo(it) }
         }
         try {
-            idle(model)
-            instrumentation.runOnMainSync { model.open(Uri.fromFile(image), ImportType.IMAGE) }
+            instrumentation.runOnMainSync {
+                model = LabViewModel(app)
+                store.put("import-test", model)
+                check(!model.state.value.busy) { "Startup cleanup blocks the workspace" }
+                model.open(Uri.fromFile(image), ImportType.IMAGE)
+            }
             idle(model)
             val draft = checkNotNull(model.state.value.photo.editor)
             instrumentation.runOnMainSync {
