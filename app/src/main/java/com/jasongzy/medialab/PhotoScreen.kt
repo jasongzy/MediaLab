@@ -1485,7 +1485,7 @@ private fun ExportPanel(model: LabViewModel, state: LabState) {
             onDismissRequest = { showPreview = false },
             title = { Text(stringResource(R.string.preview)) },
             text = {
-                Column {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Image(
                         state.exportPreview.asImageBitmap(),
                         stringResource(R.string.preview),

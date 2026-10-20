@@ -8,7 +8,7 @@
     <string name="playback_position">Playback position</string>
     <string name="playback_time">%1$s of %2$s</string>
     <string name="unknown_time">—:—</string>
-    <string name="playback_error">Unable to play this audio (%1$s).</string>
+    <string name="playback_error">Unable to play this audio (%1$s)</string>
     <string name="pick_photo">Choose image</string>
     <string name="choose_audio">Choose audio</string>
     <string name="more">More</string>
@@ -79,11 +79,11 @@
     <string name="analyze">Find representative colors</string>
     <string name="analyzing_colors">Finding colors…</string>
     <string name="copy">Copy</string>
-    <string name="tap_color">Touch the image to pick a pixel.</string>
+    <string name="tap_color">Touch the image to pick a pixel</string>
     <string name="extract_static">Convert to still image</string>
     <string name="flatten_edits">Delete edit recovery data</string>
     <string name="clear_metadata">Clear metadata</string>
-    <string name="clear_metadata_hint">Remove capture dates, device details, location, and other metadata.</string>
+    <string name="clear_metadata_hint">Remove capture dates, device details, location, and other metadata</string>
     <string name="keep_color">Preserve color and HDR</string>
     <string name="motion_photo">Motion photo</string>
     <string name="editable_photo">Recoverable edits</string>
@@ -150,7 +150,7 @@
     <string name="mask_result">Result</string>
     <string name="mask_keep">Keep</string>
     <string name="mask_remove">Remove</string>
-    <string name="mask_hint">Red marks the areas to remove.</string>
+    <string name="mask_hint">Red marks the areas to remove</string>
     <string name="mask_result_hint">Removed areas are filled with the selected color</string>
     <string name="store_mask">Store mask</string>
     <string name="load_mask">Load mask</string>
@@ -166,7 +166,7 @@
     <string name="background_description">⚡ On-device neural network inference</string>
     <string name="model_rmbg14" translatable="false">RMBG 1.4</string>
     <string name="model_rmbg20" translatable="false">RMBG 2.0</string>
-    <string name="model_rmbg20_hint">May produce better results, but takes more time and memory. Preparing the model on first use may take a few minutes.</string>
+    <string name="model_rmbg20_hint">May produce better results, but takes more time and memory; preparing the model on first use may take a few minutes</string>
     <string name="model_gpu_unavailable">Model 2.0 is unavailable on this device. Please use 1.4.</string>
     <string name="background_elapsed">Time: %1$.2f s</string>
     <string name="preparing_model">Preparing model…</string>
@@ -183,7 +183,7 @@
     <string name="clearing_cache">Clearing cache…</string>
     <string name="cache_cleared">Cache cleared</string>
     <string name="refresh_media_index">Refresh media index</string>
-    <string name="media_index_description">Rescan images, videos, and audio in shared storage.</string>
+    <string name="media_index_description">Rescan images, videos, and audio in shared storage</string>
     <string name="media_index_refreshed">Media index refreshed</string>
     <string name="media_index_failed">Could not refresh the media index. Please try again later.</string>
     <string name="color_mode">Appearance</string>
@@ -208,7 +208,7 @@
     <string name="pixel_export_note">This export will lose the following features:\n%1$s</string>
     <string name="pixel_x">X</string>
     <string name="pixel_y">Y</string>
-    <string name="jpeg_alignment">Lossless cropping moves the top-left corner outward to a JPEG block boundary (%1$d × %2$d px), so the crop may be slightly larger.</string>
+    <string name="jpeg_alignment">Lossless cropping moves the top-left corner outward to a JPEG block boundary (%1$d × %2$d px), so the crop may be slightly larger</string>
     <string name="zoom_out">Zoom out</string>
     <string name="copied">Copied</string>
     <string name="filename_copied">Filename copied</string>
@@ -230,8 +230,8 @@
     <string name="image_stream_unavailable">Could not read the image. Extract or save it to your device, then open it again.</string>
     <string name="select_audio_only">Please choose a supported audio file.</string>
     <string name="transparency_background">Transparency background</string>
-    <string name="jpeg_background_hint">JPEG fills transparent areas with this color.</string>
+    <string name="jpeg_background_hint">JPEG fills transparent areas with this color</string>
     <string name="export_size">Exported file size: %1$s</string>
-    <string name="cleanup_motion_edits">Converting to a still image deletes the embedded video, edit history, and recoverable original, keeping the current picture. Clearing metadata also deletes this data.</string>
-    <string name="cleanup_attachments">Clearing metadata also deletes embedded video, edit history, and recoverable originals.</string>
+    <string name="cleanup_motion_edits">Converting to a still image deletes the embedded video, edit history, and recoverable original, keeping the current picture; clearing metadata also deletes this data</string>
+    <string name="cleanup_attachments">Clearing metadata also deletes embedded video, edit history, and recoverable originals</string>
 </resources>

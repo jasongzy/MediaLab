@@ -8,7 +8,7 @@
     <string name="playback_position">播放进度</string>
     <string name="playback_time">%1$s，共 %2$s</string>
     <string name="unknown_time">—:—</string>
-    <string name="playback_error">无法播放此音频（%1$s）。</string>
+    <string name="playback_error">无法播放此音频（%1$s）</string>
     <string name="pick_photo">选择图片</string>
     <string name="choose_audio">选择音频</string>
     <string name="more">更多</string>
@@ -79,11 +79,11 @@
     <string name="analyze">提取代表色</string>
     <string name="analyzing_colors">正在分析颜色…</string>
     <string name="copy">复制</string>
-    <string name="tap_color">触摸图像选取像素颜色。</string>
+    <string name="tap_color">触摸图像选取像素颜色</string>
     <string name="extract_static">转为静态图</string>
     <string name="flatten_edits">删除编辑恢复数据</string>
     <string name="clear_metadata">清理元数据</string>
-    <string name="clear_metadata_hint">删除拍摄时间、设备、定位等信息。</string>
+    <string name="clear_metadata_hint">删除拍摄时间、设备、定位等信息</string>
     <string name="keep_color">保留色彩与 HDR</string>
     <string name="motion_photo">动态照片</string>
     <string name="editable_photo">可恢复编辑</string>
@@ -150,7 +150,7 @@
     <string name="mask_result">结果</string>
     <string name="mask_keep">保留</string>
     <string name="mask_remove">去除</string>
-    <string name="mask_hint">红色标记将被去除的区域。</string>
+    <string name="mask_hint">红色标记将被去除的区域</string>
     <string name="mask_result_hint">被去除的区域将填充为所选颜色</string>
     <string name="store_mask">暂存蒙版</string>
     <string name="load_mask">加载蒙版</string>
@@ -181,7 +181,7 @@
     <string name="clearing_cache">正在清除缓存…</string>
     <string name="cache_cleared">缓存已清理</string>
     <string name="refresh_media_index">刷新媒体索引</string>
-    <string name="media_index_description">重新扫描共享存储中的图片、视频和音频。</string>
+    <string name="media_index_description">重新扫描共享存储中的图片、视频和音频</string>
     <string name="media_index_refreshed">媒体索引已刷新</string>
     <string name="media_index_failed">无法刷新媒体索引，请稍后重试。</string>
     <string name="color_mode">外观</string>
@@ -206,7 +206,7 @@
     <string name="pixel_export_note">此导出方式将丢失以下特性：\n%1$s</string>
     <string name="pixel_x">X</string>
     <string name="pixel_y">Y</string>
-    <string name="jpeg_alignment">无损裁剪会将左上角向外对齐到 %1$d × %2$d 像素边界，实际裁剪区域可能稍大。</string>
+    <string name="jpeg_alignment">无损裁剪会将左上角向外对齐到 %1$d × %2$d 像素边界，实际裁剪区域可能稍大</string>
     <string name="zoom_out">缩小</string>
     <string name="copied">已复制</string>
     <string name="filename_copied">已复制文件名</string>
@@ -228,8 +228,8 @@
     <string name="image_stream_unavailable">无法读取图片，请先解压或保存到设备后再打开。</string>
     <string name="select_audio_only">请选择支持的音频文件</string>
     <string name="transparency_background">透明区域背景色</string>
-    <string name="jpeg_background_hint">JPEG 会用此颜色填充透明区域。</string>
+    <string name="jpeg_background_hint">JPEG 会用此颜色填充透明区域</string>
     <string name="export_size">导出文件大小：%1$s</string>
-    <string name="cleanup_motion_edits">转为静态图会同时删除内嵌视频、恢复记录和原图，保留当前画面。清理元数据也会删除这些内容。</string>
-    <string name="cleanup_attachments">清理元数据会同时删除图像中的动态视频，以及用于恢复编辑的记录和原图。</string>
+    <string name="cleanup_motion_edits">转为静态图会同时删除内嵌视频、恢复记录和原图，保留当前画面；清理元数据也会删除这些内容</string>
+    <string name="cleanup_attachments">清理元数据会同时删除图像中的动态视频，以及用于恢复编辑的记录和原图</string>
 </resources>
