@@ -139,6 +139,37 @@ internal class PhotoRegression(
                 Photos.applyMask(loaded, stored, Color.TRANSPARENT, listOf(keep))
                 check(stored.pixels.contentEquals(snapshot))
             } finally { loaded.recycle() }
+            val beforeHarden = draft.history.value
+            draft.history.change(beforeHarden + MaskEdit.Harden)
+            val hardened = Photos.storeMask(draft, source.width, source.height)
+            check(hardened.pixels.indices.all {
+                (hardened.pixels[it].toInt() and 255) == if ((stored.pixels[it].toInt() and 255) >= 128) 255 else 0
+            })
+            checkNotNull(source.copy(source.config!!, true)).let { hardenedOutput ->
+                try {
+                    Photos.applyMask(hardenedOutput, mask, Color.TRANSPARENT, draft.history.value)
+                    draft.showMask = false
+                    rendered.eraseColor(Color.TRANSPARENT)
+                    Photos.drawCutout(Canvas(rendered), draft, RectF(0f, 0f, 16f, 260f), Color.TRANSPARENT)
+                    for (y in 0 until source.height) for (x in 0 until source.width) {
+                        val alpha = if (hardened.pixels[y * source.width + x] == 0.toByte()) 0f
+                            else source.getColor(x, y).alpha()
+                        check(abs(hardenedOutput.getColor(x, y).alpha() - alpha) < 0.002f)
+                        val previewAlpha = rendered.getColor(x, y).alpha()
+                        check(previewAlpha == 0f || abs(previewAlpha - source.getColor(x, y).alpha()) < 0.002f)
+                    }
+                    check(rendered.getColor(8, 128).alpha() == 0f)
+                    check(abs(rendered.getColor(1, 127).alpha() - source.getColor(1, 127).alpha()) < 0.002f)
+                } finally { hardenedOutput.recycle() }
+            }
+            draft.history.undo()
+            check(Photos.storeMask(draft, source.width, source.height).pixels.contentEquals(stored.pixels))
+            draft.history.redo()
+            check(draft.history.value == beforeHarden + MaskEdit.Harden)
+            draft.history.change(draft.history.value + softKeep)
+            check(Photos.storeMask(draft, source.width, source.height).pixels.any { it != 0.toByte() && it != (-1).toByte() })
+            draft.history.change(draft.history.value + MaskEdit.Harden)
+            check(Photos.storeMask(draft, source.width, source.height).pixels.all { it == 0.toByte() || it == (-1).toByte() })
             check(pixels(source).contentEquals(original))
         } finally {
             source.recycle()

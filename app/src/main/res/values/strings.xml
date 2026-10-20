@@ -158,6 +158,8 @@
     <string name="load_mask_message">Loading the stored mask will replace the current mask and brush edits. Continue?</string>
     <string name="resize_mask_message">The stored mask and current image have different dimensions. Resize the mask to fit this image?</string>
     <string name="reset_mask">Reset mask</string>
+    <string name="harden_mask">Harden mask</string>
+    <string name="mask_hardened">Mask hardened</string>
     <string name="discard_mask">Discard mask?</string>
     <string name="discard_mask_message">The current mask and brush edits will be discarded.</string>
     <string name="replace_mask_message">Running again will replace the current mask and brush edits. Continue?</string>

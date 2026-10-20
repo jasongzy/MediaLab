@@ -112,7 +112,7 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
     val coverHistory = editor.coverHistory
     val cutout = editor.cutout.takeIf { tool == PhotoTool.BACKGROUND }
     val brushHistory = cutout?.history ?: coverHistory
-    val strokes = brushHistory.value
+    val strokes = coverHistory.value
     val resize = editor.resize
     var cleanup by editor::cleanup
     val pending = photo.pending
@@ -210,7 +210,7 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
                     ratio,
                     { frameHistory.preview(frameHistory.value.copy(bounds = it)) },
                     strokes,
-                    brushHistory::preview,
+                    coverHistory::preview,
                     { commit -> if (commit) toolHistory.commit() else toolHistory.cancel() },
                     toolHistory.revision,
                     when {
@@ -624,6 +624,7 @@ internal fun colorLosses(losses: List<Int>): String =
 
 @Composable
 private fun BackgroundPanel(model: LabViewModel, photo: PhotoState, hasStoredMask: Boolean) {
+    val context = LocalContext.current
     val editor = checkNotNull(photo.editor)
     val draft = editor.cutout
     SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
@@ -642,17 +643,32 @@ private fun BackgroundPanel(model: LabViewModel, photo: PhotoState, hasStoredMas
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
     if (draft != null) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FilterChip(
-                draft.showMask, { draft.showMask = true; editor.dropper = false },
-                label = { Text(stringResource(R.string.mask)) },
-            )
-            FilterChip(
-                !draft.showMask, { draft.showMask = false; editor.dropper = false },
-                label = { Text(stringResource(R.string.mask_result)) },
-            )
-            Spacer(Modifier.weight(1f))
-            HistoryButtons(draft.history) { editor.dropper = false }
+        FlowRow(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Row(Modifier.align(Alignment.CenterVertically), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(
+                    draft.showMask, { draft.showMask = true; editor.dropper = false },
+                    label = { Text(stringResource(R.string.mask)) },
+                )
+                FilterChip(
+                    !draft.showMask, { draft.showMask = false; editor.dropper = false },
+                    label = { Text(stringResource(R.string.mask_result)) },
+                )
+            }
+            Row(Modifier.align(Alignment.CenterVertically), verticalAlignment = Alignment.CenterVertically) {
+                TextButton(
+                    {
+                        draft.history.change(draft.history.value + MaskEdit.Harden)
+                        editor.dropper = false
+                        Toast.makeText(context, R.string.mask_hardened, Toast.LENGTH_SHORT).show()
+                    },
+                    enabled = draft.history.value.lastOrNull() != MaskEdit.Harden,
+                ) { Text(stringResource(R.string.harden_mask)) }
+                HistoryButtons(draft.history) { editor.dropper = false }
+            }
         }
         Text(
             stringResource(if (draft.showMask) R.string.mask_hint else R.string.mask_result_hint),
@@ -864,6 +880,11 @@ private fun PhotoCanvas(
                         var cropDragging = false
                         var points = listOf(start.x to start.y)
                         val before = currentStrokes
+                        val beforeMask = cutout?.history?.value.orEmpty()
+                        fun brush(stroke: Stroke? = null) {
+                            if (cutout != null) cutout.history.preview(beforeMask + listOfNotNull(stroke))
+                            else setStrokes(before + listOfNotNull(stroke))
+                        }
                         var transformed = false
                         var completed = false
                         try {
@@ -875,7 +896,7 @@ private fun PhotoCanvas(
                                     transformed = true
                                     selection = null
                                     brushPoint = null
-                                    if (painting) setStrokes(before)
+                                    if (painting) brush()
                                     if (framing) setCrop(originalBounds)
                                     viewport =
                                         viewport.transformed(
@@ -905,8 +926,8 @@ private fun PhotoCanvas(
                                             if (stroke.fill) {
                                                 selection = stroke.takeIf { pointers > 0 }
                                                 if (pointers == 0 && stroke.isDrawable)
-                                                    setStrokes(before + stroke)
-                                            } else setStrokes(before + stroke)
+                                                    brush(stroke)
+                                            } else brush(stroke)
                                         }
                                         framing -> {
                                             if (

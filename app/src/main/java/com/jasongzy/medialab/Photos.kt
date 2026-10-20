@@ -7,6 +7,7 @@ import android.graphics.BitmapRegionDecoder
 import android.graphics.BlendMode
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.ColorMatrixColorFilter
 import android.graphics.ColorSpace
 import android.graphics.ImageDecoder
 import android.graphics.Matrix
@@ -65,13 +66,17 @@ internal enum class CoverShape(val label: Int) {
     BRUSH(R.string.brush),
 }
 
+internal sealed interface MaskEdit {
+    data object Harden : MaskEdit
+}
+
 internal data class Stroke(
     val points: List<Pair<Float, Float>>,
     val color: Int,
     val width: Float,
     val shape: CoverShape,
     val softEdges: Boolean = false,
-) {
+) : MaskEdit {
     val fill: Boolean
         get() = shape != CoverShape.BRUSH
 
@@ -504,8 +509,13 @@ internal object Photos {
             paint.blendMode = if (draft.showMask) BlendMode.DST_OUT else BlendMode.DST_IN
             val maskLayer = saveLayer(bounds, paint)
             paint.blendMode = null
+            val edits = draft.history.value
+            repeat(edits.count { it == MaskEdit.Harden }) { saveLayer(bounds, hardenPaint) }
             drawBitmap(draft.maskPreview, null, bounds, paint)
-            cover(this, draft.history.value)
+            for (edit in edits) when (edit) {
+                is Stroke -> cover(this, listOf(edit))
+                MaskEdit.Harden -> restore()
+            }
             restoreToCount(maskLayer)
             restoreToCount(imageLayer)
         }
@@ -515,14 +525,14 @@ internal object Photos {
         bitmap: Bitmap,
         mask: CutoutMask,
         background: Int,
-        strokes: List<Stroke> = emptyList(),
+        edits: List<MaskEdit> = emptyList(),
     ) {
         require(background ushr 24 == 0 || background ushr 24 == 255)
         val opaque = !bitmap.hasAlpha()
         bitmap.setHasAlpha(bitmap.hasAlpha() || background ushr 24 == 0)
         val fill = Color.valueOf(background).convert(bitmap.colorSpace!!).components
         val row = FloatArray(bitmap.width * 4)
-        maskRows(mask, bitmap.width, bitmap.height, strokes) { y, coverage ->
+        maskRows(mask, bitmap.width, bitmap.height, edits) { y, coverage ->
             BitmapPixels.readRow(bitmap, y, row)
             for (x in coverage.indices) {
                 val a = (if (opaque) 1f else row[x * 4 + 3]) * coverage[x]
@@ -546,41 +556,62 @@ internal object Photos {
         mask: CutoutMask,
         width: Int,
         height: Int,
-        strokes: List<Stroke>,
+        edits: List<MaskEdit>,
         writeRow: (Int, FloatArray) -> Unit,
     ) {
         val coroutine = currentCoroutineContext()
         val row = FloatArray(width)
-        // Opaque black/white strokes encode removal/retention; tile alpha records brush coverage.
-        val edits = strokes.map { it.copy(color = if (it.clearsPixels) Color.BLACK else Color.WHITE) }
-        val tile = if (edits.isEmpty()) null else createBitmap(
-            width, minOf(height, 128, maxOf(1, 256 * 1024 / width)),
-        )
+        val groups = mutableListOf(mutableListOf<Stroke>())
+        for (edit in edits) when (edit) {
+            // Opaque black/white strokes encode removal/retention; alpha records brush coverage.
+            is Stroke -> groups.last().add(edit.copy(color = if (edit.clearsPixels) Color.BLACK else Color.WHITE))
+            MaskEdit.Harden -> groups.add(mutableListOf())
+        }
+        val tileHeight = if (edits.isEmpty()) 1 else minOf(height, 128, maxOf(1, 256 * 1024 / width))
+        val coverage = FloatArray(width * tileHeight)
+        val tile = if (groups.any { it.isNotEmpty() }) createBitmap(width, tileHeight) else null
         try {
             val canvas = tile?.let(::Canvas)
-            val brush = if (tile == null) null else IntArray(width)
+            val brush = if (tile == null) null else IntArray(coverage.size)
             mask.alpha(width, height, { coroutine.ensureActive() }) { y, alpha ->
-                if (tile != null && canvas != null && brush != null) {
-                    if (y % tile.height == 0) {
-                        tile.eraseColor(Color.TRANSPARENT)
-                        canvas.withTranslation(0f, -y.toFloat()) { cover(this, edits) }
+                val tileRow = y % tileHeight
+                for (x in alpha.indices) coverage[tileRow * width + x] = alpha[x] / 255f
+                if (tileRow == tileHeight - 1 || y == height - 1) {
+                    val rows = tileRow + 1
+                    val startY = y - tileRow
+                    for ((index, strokes) in groups.withIndex()) {
+                        coroutine.ensureActive()
+                        if (index > 0)
+                            for (i in 0 until rows * width) coverage[i] = if (coverage[i] >= 0.5f) 1f else 0f
+                        if (strokes.isNotEmpty() && tile != null && canvas != null && brush != null) {
+                            tile.eraseColor(Color.TRANSPARENT)
+                            canvas.withTranslation(0f, -startY.toFloat()) { cover(this, strokes) }
+                            tile.getPixels(brush, 0, width, 0, 0, width, rows)
+                            for (i in 0 until rows * width) {
+                                val strength = (brush[i] ushr 24) / 255f
+                                coverage[i] = coverage[i] * (1f - strength) + Color.red(brush[i]) / 255f * strength
+                            }
+                        }
                     }
-                    tile.getPixels(brush, 0, width, 0, y % tile.height, width, 1)
-                }
-                for (x in alpha.indices) {
-                    var coverage = alpha[x] / 255f
-                    if (brush != null) {
-                        val stroke = brush[x]
-                        val strength = (stroke ushr 24) / 255f
-                        coverage = coverage * (1f - strength) + Color.red(stroke) / 255f * strength
+                    for (i in 0 until rows) {
+                        coverage.copyInto(row, 0, i * width, (i + 1) * width)
+                        writeRow(startY + i, row)
                     }
-                    row[x] = coverage
                 }
-                writeRow(y, row)
             }
         } finally {
             tile?.recycle()
         }
+    }
+
+    private val hardenPaint = Paint().apply {
+        // Keep the 50% alpha step binary even on F16 preview layers.
+        colorFilter = ColorMatrixColorFilter(floatArrayOf(
+            1f, 0f, 0f, 0f, 0f,
+            0f, 1f, 0f, 0f, 0f,
+            0f, 0f, 1f, 0f, 0f,
+            0f, 0f, 0f, 4096f, -2047f * 255f,
+        ))
     }
 
     fun cover(bitmap: Bitmap, strokes: List<Stroke>) {
