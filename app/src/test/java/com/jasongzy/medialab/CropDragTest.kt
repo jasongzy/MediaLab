@@ -3,6 +3,7 @@ package com.jasongzy.medialab
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.geometry.center
 import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.IntSize
 import org.junit.Assert.*
@@ -11,6 +12,59 @@ import org.junit.Test
 class CropDragTest {
     private val image = Size(1000f, 800f)
     private val original = Rect(200f, 200f, 600f, 400f)
+
+    @Test
+    fun movingSnapsGuidesWithScreenDistanceHysteresisAndPreservesDimensions() {
+        val square = Rect(200f, 100f, 600f, 500f)
+        for (fit in listOf(0.4f, 1f, 4f)) {
+            val drag = CropDrag(square, square.center, image, 28f / fit, 0f, snapTolerance = 6f / fit)
+            val target = image.center
+            assertEquals(target, drag.update(target - Offset(4f, 4f) / fit).center)
+            val aligned = drag.snapped
+            assertEquals(2, aligned.size)
+            assertEquals(target, drag.update(target + Offset(8f, 8f) / fit).center)
+            assertEquals(aligned, drag.snapped)
+            val released = drag.update(target + Offset(12f, 12f) / fit)
+            assertEquals(target + Offset(12f, 12f) / fit, released.center)
+            assertTrue(drag.snapped.isEmpty())
+            assertEquals(square.size, released.size)
+        }
+        val thirds = CropDrag(original, original.center, image, 20f, 0f, snapTolerance = 6f)
+        val frame = thirds.update(Offset(563f, 300f))
+        assertEquals(500f, frame.left + frame.width / 3, 0.001f)
+        val expanded = Rect(-200f, -100f, 1400f, 1000f)
+        val move = CropDrag(expanded, expanded.center, image, 20f, 0f, expand = true, snapTolerance = 6f)
+        assertEquals(Rect(-300f, -150f, 1300f, 950f), move.update(Offset(504f, 404f)))
+    }
+
+    @Test
+    fun resizingSnapsWithoutMovingTheAnchorOrBreakingRatioAndImageBounds() {
+        val full = Rect(Offset.Zero, image)
+        for ((frame, start) in listOf(original to original.bottomRight, full to original.topLeft)) {
+            val crop = CropDrag(frame, start, image, 20f, 2f, snapTolerance = 6f)
+            val snapped = crop.update(Offset(796f, 498f))
+            assertEquals(original.topLeft, snapped.topLeft)
+            assertEquals(500f, snapped.center.x, 0.001f)
+            assertEquals(2f, snapped.width / snapped.height, 0.001f)
+        }
+        val padded = Rect(-200f, -100f, 1100f, 900f)
+        val visible = Rect(-2000f, -2000f, 3000f, 3000f)
+        val expansion = CropDrag(padded, padded.topLeft, image, 20f, 0f, visible, true, 6f)
+        assertEquals(Rect(-100f, -100f, 1100f, 900f), expansion.update(Offset(-104f, -100f)))
+        val drawing = CropDrag(full, Offset(-200f, -100f), image, 20f, 0f, visible, true, 6f)
+        assertEquals(Rect(-200f, -100f, 1200f, 900f), drawing.update(Offset(1196f, 896f)))
+        for (expand in listOf(false, true)) for (ratio in listOf(0f, 1f, 2f)) {
+            val initial = if (expand) padded else original
+            val drag = CropDrag(initial, initial.bottomRight, image, 20f, ratio, visible, expand, 15f)
+            for (point in listOf(Offset(-100f, -100f), Offset(797f, 598f), Offset(1600f, 1200f))) {
+                val result = drag.pixelBounds(point)
+                assertTrue(result.width > 0 && result.height > 0)
+                if (expand) assertTrue(result.left <= 0 && result.top <= 0 && result.right >= 1000 && result.bottom >= 800)
+                else assertTrue(result.left >= 0 && result.top >= 0 && result.right <= 1000 && result.bottom <= 800)
+                if (ratio > 0) assertEquals(result.width.toFloat(), result.height * ratio, 3f)
+            }
+        }
+    }
 
     @Test
     fun numericDragsRestoreLinkedDimensionsAndCommitOnce() {

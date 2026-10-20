@@ -10,6 +10,8 @@ import kotlin.math.ceil
 import kotlin.math.floor
 import kotlin.math.roundToInt
 
+internal val frameGuideFractions = listOf(0.5f, 1f / 3, 2f / 3)
+
 internal fun expandedSize(width: Int, height: Int, ratio: Float): IntSize =
     if (ratio > 0) IntSize(
         maxOf(width, ceil(height * ratio).toInt()),
@@ -65,7 +67,74 @@ internal class CropDrag(
     private val ratio: Float,
     private val visible: Rect = Rect(Offset.Zero, image),
     private val expand: Boolean = false,
+    private val snapTolerance: Float = 0f,
 ) {
+    var snapped: Set<Int> = aligned(original)
+        private set
+
+    private fun aligned(rect: Rect): Set<Int> = buildSet {
+        frameGuideFractions.forEachIndexed { index, fraction ->
+            if (abs(rect.left + rect.width * fraction - image.width / 2) < 0.01f) add(index)
+            if (abs(rect.top + rect.height * fraction - image.height / 2) < 0.01f) add(index + 3)
+        }
+    }
+
+    private data class Snap(val key: Int, val bounds: Rect, val distance: Float)
+
+    private fun snap(rect: Rect, anchor: Offset? = null, x: Int = 1, y: Int = 1): Rect {
+        if (snapTolerance <= 0) return rect
+        val candidates = buildList {
+            for (axis in 0..1) {
+                if (anchor != null && ratio <= 0 && (if (axis == 0) x else y) == 0) continue
+                val origin = if (axis == 0) rect.left else rect.top
+                val extent = if (axis == 0) rect.width else rect.height
+                val target = (if (axis == 0) image.width else image.height) / 2
+                frameGuideFractions.forEachIndexed { index, fraction ->
+                    val line = origin + extent * fraction
+                    val candidate = if (anchor == null) {
+                        rect.translate(if (axis == 0) Offset(target - line, 0f) else Offset(0f, target - line))
+                    } else {
+                        val fixed = if (axis == 0) anchor.x else anchor.y
+                        if (abs(line - fixed) < 0.01f) return@forEachIndexed
+                        val scale = (target - fixed) / (line - fixed)
+                        if (scale <= 0 || !scale.isFinite()) return@forEachIndexed
+                        val sx = if (axis == 0 || ratio > 0) scale else 1f
+                        val sy = if (axis == 1 || ratio > 0) scale else 1f
+                        Rect(
+                            anchor.x + (rect.left - anchor.x) * sx,
+                            anchor.y + (rect.top - anchor.y) * sy,
+                            anchor.x + (rect.right - anchor.x) * sx,
+                            anchor.y + (rect.bottom - anchor.y) * sy,
+                        )
+                    }
+                    if (candidate.width < 1 || candidate.height < 1) return@forEachIndexed
+                    val valid = if (expand)
+                        candidate.left <= 0 && candidate.top <= 0 &&
+                            candidate.right >= image.width && candidate.bottom >= image.height
+                    else candidate.left >= 0 && candidate.top >= 0 &&
+                        candidate.right <= image.width && candidate.bottom <= image.height
+                    val distance = maxOf(
+                        abs(candidate.left - rect.left), abs(candidate.right - rect.right),
+                        abs(candidate.top - rect.top), abs(candidate.bottom - rect.bottom),
+                    )
+                    val key = axis * 3 + index
+                    if (valid && distance <= snapTolerance * if (key in snapped) 1.75f else 1f)
+                        add(Snap(key, candidate, distance))
+                }
+            }
+        }
+        fun best(options: List<Snap>) = options.minWithOrNull(
+            compareBy<Snap> { it.key !in snapped }.thenBy { it.distance }
+        )
+        val result = if (anchor != null && ratio > 0) best(candidates)?.bounds ?: rect else {
+            val horizontal = best(candidates.filter { it.key < 3 })?.bounds ?: rect
+            val vertical = best(candidates.filter { it.key >= 3 })?.bounds ?: rect
+            Rect(horizontal.left, vertical.top, horizontal.right, vertical.bottom)
+        }
+        snapped = aligned(result)
+        return result
+    }
+
     private fun edge(
         value: Float,
         low: Float,
@@ -115,16 +184,19 @@ internal class CropDrag(
 
     fun update(position: Offset): Rect {
         val delta = position - start
-        if (delta == Offset.Zero) return original
+        if (delta == Offset.Zero) {
+            snapped = aligned(original)
+            return original
+        }
         if (!resizing && moving) {
-            return original.translate(
+            return snap(original.translate(
                 Offset(
                     if (expand) delta.x.coerceIn(image.width - original.right, -original.left)
                     else delta.x.coerceIn(-original.left, image.width - original.right),
                     if (expand) delta.y.coerceIn(image.height - original.bottom, -original.top)
                     else delta.y.coerceIn(-original.top, image.height - original.bottom),
                 )
-            )
+            ))
         }
         if (expand && !resizing) {
             val left = minOf(0f, start.x, position.x)
@@ -135,7 +207,23 @@ internal class CropDrag(
             val height = if (ratio > 0) width / ratio else bottom - top
             val x = (left + right - width) / 2
             val y = (top + bottom - height) / 2
-            return Rect(x, y, x + width, y + height)
+            val rect = Rect(x, y, x + width, y + height)
+            val dx = when {
+                position.x < minOf(0f, start.x) -> -1
+                position.x > maxOf(image.width, start.x) -> 1
+                else -> 0
+            }
+            val dy = when {
+                position.y < minOf(0f, start.y) -> -1
+                position.y > maxOf(image.height, start.y) -> 1
+                else -> 0
+            }
+            if (dx == 0 && dy == 0) return rect.also { snapped = aligned(it) }
+            val anchor = Offset(
+                if (dx < 0) rect.right else if (dx > 0) rect.left else rect.center.x,
+                if (dy < 0) rect.bottom else if (dy > 0) rect.top else rect.center.y,
+            )
+            return snap(rect, anchor, dx, dy)
         }
         val anchor =
             if (resizing)
@@ -202,6 +290,6 @@ internal class CropDrag(
                     0 -> height / 2
                     else -> 0f
                 }
-        return Rect(left, top, left + width, top + height)
+        return snap(Rect(left, top, left + width, top + height), anchor, x, y)
     }
 }

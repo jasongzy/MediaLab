@@ -9,6 +9,27 @@ import org.junit.Test
 
 class RotationTest {
     @Test
+    fun quarterTurnsSnapAndReleaseWithoutChatteringAcrossTheAngleSeam() {
+        fun point(angle: Int): Offset {
+            val radians = Math.toRadians(angle.toDouble())
+            return Offset(cos(radians).toFloat(), sin(radians).toFloat()) * 100f
+        }
+        val drag = RotationDrag(RotationSelection(), point(0), Offset.Zero, 16f)
+        for ((input, expected, snapped) in listOf(
+            Triple(88, 90, 90), Triple(94, 90, 90), Triple(96, 96, null),
+            Triple(94, 94, null), Triple(92, 90, 90),
+            Triple(178, 180, 180), Triple(182, 180, 180), Triple(186, -174, null),
+            Triple(-2, 0, 0),
+        )) {
+            assertEquals(expected, drag.update(point(input)).angle)
+            assertEquals(snapped, drag.snapAngle)
+        }
+        val mirrored = RotationDrag(RotationSelection(flipHorizontal = true), point(0), Offset.Zero, 16f)
+        assertEquals(-90, mirrored.update(point(88)).angle)
+        assertEquals(270, mirrored.snapAngle)
+    }
+
+    @Test
     fun handleDragCrossesTheAngleSeamAndTracksMirrorsWithoutJumpsAtTheCenter() {
         val center = Offset(250f, 170f)
         fun point(angle: Int): Offset {

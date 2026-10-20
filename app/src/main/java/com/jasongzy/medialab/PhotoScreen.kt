@@ -39,6 +39,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.ClipEntry
@@ -46,6 +47,7 @@ import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
@@ -62,6 +64,7 @@ import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
+import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
 
@@ -805,12 +808,14 @@ private fun PhotoCanvas(
     val framing = tool == PhotoTool.CROP || expanding
     val frameColor = if (expanding) MaterialTheme.colorScheme.primary.toArgb() else android.graphics.Color.WHITE
     val imageBorderColor = MaterialTheme.colorScheme.outline.toArgb()
+    val guideColor = if (expanding) android.graphics.Color.WHITE else MaterialTheme.colorScheme.primary.toArgb()
     val initialScale = if (expanding) 0.6f else if (rotation != null) 0.8f else 0.9f
     var viewport by remember(photo.frame, expanding, tool == PhotoTool.ROTATE) { mutableStateOf(ImageViewport(initialScale)) }
     var canvasSize by remember { mutableStateOf(Size.Zero) }
     var toolbarSize by remember { mutableStateOf(IntSize.Zero) }
     var rotationDragging by remember(photo.frame, tool) { mutableStateOf(false) }
     val focus = LocalFocusManager.current
+    val haptics = LocalHapticFeedback.current
     val toolbarInset = toolbarSize.height + with(LocalDensity.current) { 8.dp.toPx() }
     val minScale = if (expanding) ImageViewport.MIN_OUTSIDE_SCALE
         else ImageViewport.minimumScale(canvasSize, toolbarInset)
@@ -951,6 +956,7 @@ private fun PhotoCanvas(
                                     )
                                     .let { if (expanding) it else it.intersect(FloatRect(Offset.Zero, imageSize)) },
                                 expand = expanding,
+                                snapTolerance = 6.dp.toPx() / fit,
                             )
                         var cropDragging = false
                         var points = listOf(start.x to start.y)
@@ -995,7 +1001,12 @@ private fun PhotoCanvas(
                                         rotationDrag != null -> {
                                             if ((position - down.position).getDistance() > viewConfiguration.touchSlop)
                                                 rotationDragging = true
-                                            if (rotationDragging) rotationHistory?.preview(rotationDrag.update(position))
+                                            if (rotationDragging) {
+                                                val previous = rotationDrag.snapAngle
+                                                rotationHistory?.preview(rotationDrag.update(position))
+                                                if (rotationDrag.snapAngle != null && rotationDrag.snapAngle != previous)
+                                                    haptics.performHapticFeedback(HapticFeedbackType.SegmentTick)
+                                            }
                                         }
                                         painting -> {
                                             if (shape == CoverShape.BRUSH) brushPoint = at
@@ -1020,6 +1031,7 @@ private fun PhotoCanvas(
                                             )
                                                 cropDragging = true
                                             if (cropDragging) {
+                                                val previous = cropDrag.snapped
                                                 val rect =
                                                     cropDrag.pixelBounds(
                                                         viewport.imagePoint(
@@ -1035,7 +1047,11 @@ private fun PhotoCanvas(
                                                         rect.right,
                                                         rect.bottom,
                                                     )
-                                                if (!r.isEmpty && r.width() > 0 && r.height() > 0) setCrop(r)
+                                                if (!r.isEmpty && r.width() > 0 && r.height() > 0) {
+                                                    setCrop(r)
+                                                    if (cropDrag.snapped.any { it !in previous })
+                                                        haptics.performHapticFeedback(HapticFeedbackType.SegmentTick)
+                                                }
                                             }
                                         }
                                         else ->
@@ -1137,6 +1153,38 @@ private fun PhotoCanvas(
                 canvas.restore()
                 return@Canvas
             }
+            fun guides(rect: android.graphics.RectF, tint: Int, grid: Boolean) {
+                paint.style = android.graphics.Paint.Style.STROKE
+                val left = if (grid) rect.left else minOf(rect.left, bounds.left.toFloat())
+                val top = if (grid) rect.top else minOf(rect.top, bounds.top.toFloat())
+                val right = if (grid) rect.right else maxOf(rect.right, bounds.right.toFloat())
+                val bottom = if (grid) rect.bottom else maxOf(rect.bottom, bounds.bottom.toFloat())
+                val fractions = when {
+                    !grid -> listOf(0.5f)
+                    rotation != null -> listOf(0.25f, 0.5f, 0.75f)
+                    else -> frameGuideFractions
+                }
+                for (fraction in fractions) {
+                    val center = fraction == 0.5f
+                    paint.pathEffect = android.graphics.DashPathEffect(
+                        floatArrayOf((if (center) 6 else 3).dp.toPx() / fit, 5.dp.toPx() / fit), 0f,
+                    )
+                    val x = rect.left + rect.width() * fraction
+                    val y = rect.top + rect.height() * fraction
+                    for (outline in listOf(true, false)) {
+                        paint.color = if (outline) android.graphics.Color.BLACK else tint
+                        paint.alpha = if (outline) 45 else if (center) 145 else 100
+                        paint.strokeWidth = (if (outline) 2 else 1).dp.toPx() / fit
+                        if (!framing || !grid || abs(x - destination.centerX()) * fit > 1)
+                            canvas.drawLine(x, top, x, bottom, paint)
+                        if (!framing || !grid || abs(y - destination.centerY()) * fit > 1)
+                            canvas.drawLine(left, y, right, y, paint)
+                    }
+                }
+                paint.alpha = 255
+                paint.pathEffect = null
+            }
+            if (rotation != null && !dropper) guides(destination, android.graphics.Color.WHITE, grid = true)
             brushPoint?.let { point ->
                 paint.color = android.graphics.Color.BLACK
                 paint.strokeWidth = 3.dp.toPx() / fit
@@ -1165,6 +1213,10 @@ private fun PhotoCanvas(
                 canvas.clipOutRect(bounds)
                 canvas.drawPaint(paint)
                 canvas.restore()
+                if (!dropper) {
+                    guides(destination, guideColor, grid = false)
+                    guides(android.graphics.RectF(bounds), frameColor, grid = true)
+                }
                 paint.style = android.graphics.Paint.Style.STROKE
                 paint.color = android.graphics.Color.BLACK
                 paint.strokeWidth = 4.dp.toPx() / fit

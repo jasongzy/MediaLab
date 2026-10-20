@@ -32,6 +32,9 @@ internal class RotationDrag(
 ) {
     private var previous = direction(start)
     private var angle = initial.angle.toFloat()
+    private var snapped = angle.takeIf { initial.angle % 90 == 0 }
+    val snapAngle: Int?
+        get() = snapped?.let { (it.roundToInt() % 360 + 360) % 360 }
 
     private fun direction(point: Offset): Float? {
         val offset = point - center
@@ -46,7 +49,9 @@ internal class RotationDrag(
             angle += if (initial.flipHorizontal xor initial.flipVertical) -delta else delta
         }
         previous = next
-        return initial.copy(angle = rotationAngle(angle.roundToInt()))
+        val target = round(angle / 90f) * 90f
+        snapped = target.takeIf { abs(angle - it) <= if (it == snapped) 5f else 3f }
+        return initial.copy(angle = rotationAngle((snapped ?: angle).roundToInt()))
     }
 }
 
