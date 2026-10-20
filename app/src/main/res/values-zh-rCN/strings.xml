@@ -18,6 +18,13 @@
     <string name="reset_crop">重置裁剪框</string>
     <string name="expand_canvas">扩展</string>
     <string name="reset_canvas">重置画布</string>
+    <string name="rotate">旋转</string>
+    <string name="rotation_angle">角度（°）</string>
+    <string name="drag_to_rotate">拖动以旋转</string>
+    <string name="flip_vertical">上下翻转</string>
+    <string name="flip_horizontal">左右翻转</string>
+    <string name="lock_canvas_size">锁定画布大小</string>
+    <string name="reset_rotation">重置旋转</string>
     <string name="left_padding">左侧留白</string>
     <string name="top_padding">顶部留白</string>
     <string name="center_image">原图居中</string>

@@ -6,6 +6,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.painterResource
@@ -54,9 +55,10 @@ internal fun NumberField(
     onDraftChanged: (Boolean) -> Unit = {},
     onDragStarted: () -> Unit = {},
     onDragFinished: (Boolean) -> Unit = {},
+    parse: (String) -> Int? = String::toIntOrNull,
     change: (Int) -> Unit,
 ) {
-    var text by remember(value) { mutableStateOf(value.toString()) }
+    var text by remember { mutableStateOf(value.toString()) }
     var dragging by remember { mutableStateOf(false) }
     val currentValue by rememberUpdatedState(value)
     val currentRange by rememberUpdatedState(range)
@@ -73,20 +75,30 @@ internal fun NumberField(
     val hint = stringResource(R.string.drag_to_adjust)
     val description = stringResource(R.string.adjust_value, stringResource(label))
     val adjustable = range.first < range.last
+    LaunchedEffect(value) {
+        if (parse(text) != value) text = value.toString()
+        onDraftChanged(text != value.toString())
+    }
     OutlinedTextField(
         text,
         { input ->
-            if (input.all(Char::isDigit) && input.length <= 7) {
+            val digits = if (range.first < 0 && (input.startsWith('-') || input.startsWith('+'))) input.drop(1) else input
+            if ((range.first < 0 || input.length <= 7) && digits.all(Char::isDigit)) {
                 text = input
                 onDraftChanged(input != value.toString())
-                input.toIntOrNull()?.takeIf { it in range }?.let(change)
+                parse(input)?.takeIf { it in range }?.let(change)
             }
         },
-        modifier,
+        modifier.onFocusChanged {
+            if (!it.isFocused) parse(text)?.takeIf { number -> number in range }?.let { number ->
+                text = number.toString()
+                onDraftChanged(false)
+            }
+        },
         label = { Text(stringResource(label)) },
         singleLine = true,
-        isError = text.toIntOrNull() !in range,
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+        isError = parse(text) !in range,
+        keyboardOptions = KeyboardOptions(keyboardType = if (range.first < 0) KeyboardType.Ascii else KeyboardType.Number),
         trailingIcon = {
             TooltipBox(
                 positionProvider = TooltipDefaults.rememberTooltipPositionProvider(TooltipAnchorPosition.Above),

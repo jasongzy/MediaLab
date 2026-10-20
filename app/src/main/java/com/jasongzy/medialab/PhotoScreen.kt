@@ -8,6 +8,7 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
@@ -19,6 +20,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
@@ -27,6 +29,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect as FloatRect
 import androidx.compose.ui.geometry.Size
@@ -42,14 +45,19 @@ import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.progressBarRangeInfo
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.setProgress
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
@@ -108,6 +116,7 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
     val ratio = frameHistory.value.ratio
     fun setBounds(value: Rect) = frameHistory.change(frameHistory.value.copy(bounds = value))
     var background by editor::background
+    var rotationBackground by editor::rotationBackground
     var cutoutBackground by editor::cutoutBackground
     val coverHistory = editor.coverHistory
     val cutout = editor.cutout.takeIf { tool == PhotoTool.BACKGROUND }
@@ -139,6 +148,7 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
             val picked = photo.picked or (255 shl 24)
             when (tool) {
                 PhotoTool.EXPAND -> background = picked
+                PhotoTool.ROTATE -> rotationBackground = picked
                 PhotoTool.BACKGROUND -> cutoutBackground = picked
                 else -> color = picked
             }
@@ -215,6 +225,7 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
                     toolHistory.revision,
                     when {
                         expanding -> background
+                        tool == PhotoTool.ROTATE -> rotationBackground
                         cutout != null -> if (cutout.keep) android.graphics.Color.WHITE else android.graphics.Color.TRANSPARENT
                         else -> color
                     },
@@ -366,6 +377,9 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
                                     Text(stringResource(R.string.apply))
                                 }
                             }
+                        }
+                        PhotoTool.ROTATE -> RotationPanel(editor) { selection ->
+                            edit { model.rotate(selection, rotationBackground) }
                         }
                         PhotoTool.BACKGROUND -> BackgroundPanel(model, photo, state.storedMask != null)
                         PhotoTool.COVER -> {
@@ -771,26 +785,61 @@ private fun PhotoCanvas(
     val cutout = photo.editor?.cutout.takeIf { tool == PhotoTool.BACKGROUND }
     val softEdges = cutout?.softEdges == true
     val painting = (tool == PhotoTool.COVER || cutout != null) && !dropper
-    val imageSize = Size(info.width.toFloat(), info.height.toFloat())
+    val rotationHistory = photo.editor?.rotationHistory.takeIf { tool == PhotoTool.ROTATE }
+    val rotation = rotationHistory?.value
+    val flipX = key(photo.frame, tool) {
+        animateFloatAsState(if (rotation?.flipHorizontal == true) -1f else 1f, tween(180), label = "flipX")
+    }
+    val flipY = key(photo.frame, tool) {
+        animateFloatAsState(if (rotation?.flipVertical == true) -1f else 1f, tween(180), label = "flipY")
+    }
+    val rotatedSize = rotation?.size(info.width, info.height)
+    val imageSize = Size((rotatedSize?.width ?: info.width).toFloat(), (rotatedSize?.height ?: info.height).toFloat())
+    val rotationMatrix = remember(rotation, info.width, info.height) {
+        rotation?.let { android.graphics.Matrix().apply { setValues(it.matrixValues(info.width, info.height)) } }
+    }
+    val inverseRotation = remember(rotationMatrix) {
+        rotationMatrix?.let { matrix -> android.graphics.Matrix().also { check(matrix.invert(it)) } }
+    }
     val expanding = tool == PhotoTool.EXPAND
     val framing = tool == PhotoTool.CROP || expanding
     val frameColor = if (expanding) MaterialTheme.colorScheme.primary.toArgb() else android.graphics.Color.WHITE
     val imageBorderColor = MaterialTheme.colorScheme.outline.toArgb()
-    val initialScale = if (expanding) 0.6f else 0.9f
-    var viewport by remember(photo.frame, expanding) { mutableStateOf(ImageViewport(initialScale)) }
+    val initialScale = if (expanding) 0.6f else if (rotation != null) 0.8f else 0.9f
+    var viewport by remember(photo.frame, expanding, tool == PhotoTool.ROTATE) { mutableStateOf(ImageViewport(initialScale)) }
     var canvasSize by remember { mutableStateOf(Size.Zero) }
-    var toolbarHeight by remember { mutableIntStateOf(0) }
-    val toolbarInset = toolbarHeight + with(LocalDensity.current) { 8.dp.toPx() }
+    var toolbarSize by remember { mutableStateOf(IntSize.Zero) }
+    var rotationDragging by remember(photo.frame, tool) { mutableStateOf(false) }
+    val focus = LocalFocusManager.current
+    val toolbarInset = toolbarSize.height + with(LocalDensity.current) { 8.dp.toPx() }
     val minScale = if (expanding) ImageViewport.MIN_OUTSIDE_SCALE
         else ImageViewport.minimumScale(canvasSize, toolbarInset)
     fun fitted() = ImageViewport.fit(
         canvasSize, imageSize,
         FloatRect(bounds.left.toFloat(), bounds.top.toFloat(), bounds.right.toFloat(), bounds.bottom.toFloat()),
     )
-    LaunchedEffect(photo.frame, expanding, ratio, canvasSize, minScale) {
-        if (!canvasSize.isEmpty()) viewport = if (expanding) fitted()
+    LaunchedEffect(photo.frame, expanding, ratio, canvasSize, minScale, imageSize, rotationDragging) {
+        if (!canvasSize.isEmpty() && !rotationDragging) viewport = if (expanding) fitted()
             else viewport.constrained(canvasSize, imageSize, minScale = minScale)
     }
+    val rotationHandle = if (rotationMatrix != null && !dropper && !showOriginal && !canvasSize.isEmpty()) {
+        val point = floatArrayOf(info.width / 2f, 0f)
+        rotationMatrix.mapPoints(point)
+        val fit = minOf(canvasSize.width / imageSize.width, canvasSize.height / imageSize.height) * viewport.scale
+        val center = canvasSize.center + viewport.offset
+        val edge = center + (Offset(point[0], point[1]) - imageSize.center) * fit
+        val vector = floatArrayOf(0f, -1f)
+        rotationMatrix.mapVectors(vector)
+        val direction = Offset(vector[0], vector[1])
+        val gap = with(LocalDensity.current) { 28.dp.toPx() }
+        val margin = with(LocalDensity.current) { 24.dp.toPx() }
+        val desired = edge + direction * gap
+        val x = desired.x.coerceIn(margin, maxOf(margin, canvasSize.width - margin))
+        val top = if (x + margin > canvasSize.width - toolbarSize.width) toolbarInset + margin else margin
+        val bottom = maxOf(margin, canvasSize.height - margin)
+        val y = desired.y.coerceIn(minOf(top, bottom), bottom)
+        edge to Offset(x, y)
+    } else null
     var selection by
         remember(photo.frame, tool, shape, dropper, showOriginal) {
             mutableStateOf<Stroke?>(null)
@@ -798,6 +847,10 @@ private fun PhotoCanvas(
     var brushPoint by remember(photo.frame, tool, dropper, showOriginal) { mutableStateOf<Offset?>(null) }
     val currentStrokes by rememberUpdatedState(strokes)
     val currentBounds by rememberUpdatedState(bounds)
+    val currentRotation by rememberUpdatedState(rotation)
+    val currentImageSize by rememberUpdatedState(imageSize)
+    val currentInverseRotation by rememberUpdatedState(inverseRotation)
+    val currentRotationHandle by rememberUpdatedState(rotationHandle)
     val description = stringResource(R.string.photo_description)
     Box(
         modifier
@@ -823,11 +876,26 @@ private fun PhotoCanvas(
                     cutout,
                     softEdges,
                     minScale,
+                    if (rotation == null) imageSize else null,
+                    rotationHistory?.revision,
+                    rotation?.flipHorizontal,
+                    rotation?.flipVertical,
+                    rotation?.lockCanvas,
                 ) {
                     if (showOriginal) return@pointerInput
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
                         val canvas = Size(size.width.toFloat(), size.height.toFloat())
+                        val imageSize = currentImageSize
+                        val rotation = currentRotation
+                        val inverseRotation = currentInverseRotation
+                        val picking = tool == PhotoTool.COLORS || dropper
+                        val rotationDrag = currentRotationHandle?.takeIf {
+                            (down.position - it.second).getDistance() <= 24.dp.toPx()
+                        }?.let {
+                            focus.clearFocus()
+                            RotationDrag(checkNotNull(rotation), down.position, canvas.center + viewport.offset, 16.dp.toPx())
+                        }
                         fun point(position: Offset): Offset {
                             val at =
                                 viewport.imagePoint(
@@ -839,6 +907,14 @@ private fun PhotoCanvas(
                                         else 0f,
                                 )
                             if (painting) return at
+                            if (picking && inverseRotation != null) {
+                                val pixel = floatArrayOf(at.x, at.y)
+                                inverseRotation.mapPoints(pixel)
+                                return Offset(
+                                    pixel[0].coerceIn(0f, info.width.toFloat()),
+                                    pixel[1].coerceIn(0f, info.height.toFloat()),
+                                )
+                            }
                             return Offset(
                                 at.x.coerceIn(0f, imageSize.width),
                                 at.y.coerceIn(0f, imageSize.height),
@@ -846,7 +922,6 @@ private fun PhotoCanvas(
                         }
                         val start = point(down.position)
                         if (painting && shape == CoverShape.BRUSH) brushPoint = start
-                        val picking = tool == PhotoTool.COLORS || dropper
                         if (picking) pick(start.x.toInt(), start.y.toInt())
                         val originalBounds = Rect(currentBounds)
                         val fit =
@@ -893,6 +968,10 @@ private fun PhotoCanvas(
                                 if (event.changes.any { it.isConsumed }) break
                                 val pointers = event.changes.count { it.pressed }
                                 if (pointers >= 2) {
+                                    if (!transformed && rotationDrag != null) {
+                                        rotationHistory?.cancel()
+                                        rotationDragging = false
+                                    }
                                     transformed = true
                                     selection = null
                                     brushPoint = null
@@ -913,6 +992,11 @@ private fun PhotoCanvas(
                                     val at = point(position)
                                     when {
                                         picking -> pick(at.x.toInt(), at.y.toInt())
+                                        rotationDrag != null -> {
+                                            if ((position - down.position).getDistance() > viewConfiguration.touchSlop)
+                                                rotationDragging = true
+                                            if (rotationDragging) rotationHistory?.preview(rotationDrag.update(position))
+                                        }
                                         painting -> {
                                             if (shape == CoverShape.BRUSH) brushPoint = at
                                             if (
@@ -973,6 +1057,10 @@ private fun PhotoCanvas(
                         } finally {
                             selection = null
                             brushPoint = null
+                            rotationDragging = false
+                            if (rotationDrag != null) {
+                                if (completed && !transformed) rotationHistory?.commit() else rotationHistory?.cancel()
+                            }
                             if (!picking && (framing || painting))
                                 finishEdit(completed && !transformed)
                         }
@@ -1018,7 +1106,16 @@ private fun PhotoCanvas(
                 canvas.drawColor(color)
                 canvas.restore()
             }
-            if (cutout != null && original == null) {
+            if (rotation != null && original == null) {
+                val layer = canvas.saveLayer(destination, null)
+                if (!dropper) canvas.scale(
+                    flipX.value * if (rotation.flipHorizontal) -1f else 1f,
+                    flipY.value * if (rotation.flipVertical) -1f else 1f,
+                    destination.centerX(), destination.centerY(),
+                )
+                Photos.drawRotated(canvas, preview, rotation, info.width, info.height, color)
+                canvas.restoreToCount(layer)
+            } else if (cutout != null && original == null) {
                 Photos.drawCutout(canvas, cutout, destination, checkNotNull(photo.editor).cutoutBackground)
             } else {
                 val coverStrokes = if (tool == PhotoTool.COVER && original == null) strokes else emptyList()
@@ -1084,8 +1181,14 @@ private fun PhotoCanvas(
                 }
             }
             canvas.restore()
+            rotationHandle?.let { (edge, handle) ->
+                drawLine(Color.Black.copy(alpha = 0.6f), edge, handle, 3.dp.toPx())
+                drawLine(Color.White, edge, handle, 1.dp.toPx())
+            }
             if (tool == PhotoTool.COLORS || dropper) {
-                val center = origin + Offset((pixelX + 0.5f) * fit, (pixelY + 0.5f) * fit)
+                val pixel = floatArrayOf(pixelX + 0.5f, pixelY + 0.5f)
+                rotationMatrix?.mapPoints(pixel)
+                val center = origin + Offset(pixel[0] * fit, pixel[1] * fit)
                 val radius = 9.dp.toPx()
                 for ((markerColor, thickness) in
                     listOf(Color.Black to 4.dp.toPx(), Color.White to 2.dp.toPx())) {
@@ -1112,9 +1215,35 @@ private fun PhotoCanvas(
                 drawCircle(Color.White, 1.dp.toPx(), center)
             }
         }
+        rotationHandle?.let { (_, handle) ->
+            val size = with(LocalDensity.current) { 48.dp.toPx() }
+            val description = stringResource(R.string.drag_to_rotate)
+            Box(
+                Modifier.offset { IntOffset((handle.x - size / 2).roundToInt(), (handle.y - size / 2).roundToInt()) }
+                    .size(48.dp)
+                    .semantics(mergeDescendants = true) {
+                        contentDescription = description
+                        progressBarRangeInfo = ProgressBarRangeInfo(checkNotNull(rotation).angle.toFloat(), -180f..180f, 359)
+                        setProgress { angle ->
+                            val next = rotationAngle(angle.roundToInt())
+                            if (next == rotation.angle) false else {
+                                checkNotNull(rotationHistory).change(rotation.copy(angle = next))
+                                true
+                            }
+                        }
+                    },
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    painterResource(R.drawable.ic_rotate), null,
+                    Modifier.size(32.dp).background(MaterialTheme.colorScheme.primary, CircleShape).padding(6.dp),
+                    tint = MaterialTheme.colorScheme.onPrimary,
+                )
+            }
+        }
         Row(
             Modifier.align(Alignment.TopEnd)
-                .onSizeChanged { toolbarHeight = it.height }
+                .onSizeChanged { toolbarSize = it }
                 .background(
                     MaterialTheme.colorScheme.surface.copy(alpha = 0.65f),
                     MaterialTheme.shapes.large,
@@ -1230,6 +1359,95 @@ private fun FrameFields(history: ToolHistory<FrameSelection>, info: PhotoInfo, e
         ) { top ->
             update(positionedBounds(frame, image, frame.left, if (expand) -top else top, ratio, expand))
         }
+    }
+}
+
+@Composable
+private fun RotationPanel(editor: PhotoEditorState, apply: (RotationSelection) -> Unit) {
+    val history = editor.rotationHistory
+    val selection = history.value
+    val focus = LocalFocusManager.current
+    var dragging by remember(history) { mutableStateOf(false) }
+    var inputRevision by remember(history) { mutableIntStateOf(0) }
+    var hasDraft by remember(history, inputRevision) { mutableStateOf(false) }
+    fun finishInput() {
+        focus.clearFocus()
+        editor.dropper = false
+    }
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        key(history, inputRevision) {
+            NumberField(
+                R.string.rotation_angle, selection.angle, Modifier.weight(1f), -180..180,
+                onDraftChanged = { hasDraft = it },
+                onDragStarted = {
+                    dragging = true
+                    editor.dropper = false
+                },
+                onDragFinished = { commit ->
+                    dragging = false
+                    if (commit) history.commit() else history.cancel()
+                },
+                parse = ::rotationAngle,
+            ) { angle ->
+                editor.dropper = false
+                val next = selection.copy(angle = angle)
+                if (dragging) history.preview(next) else history.change(next)
+            }
+        }
+        HistoryButtons(history) {
+            finishInput()
+            inputRevision++
+        }
+    }
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        for (vertical in listOf(true, false)) {
+            FilterChip(
+                selected = if (vertical) selection.flipVertical else selection.flipHorizontal,
+                onClick = {
+                    finishInput()
+                    history.change(
+                        if (vertical) selection.copy(flipVertical = !selection.flipVertical)
+                        else selection.copy(flipHorizontal = !selection.flipHorizontal)
+                    )
+                },
+                label = { Text(stringResource(if (vertical) R.string.flip_vertical else R.string.flip_horizontal)) },
+                leadingIcon = {
+                    Icon(painterResource(R.drawable.ic_flip), null, Modifier.size(18.dp).rotate(if (vertical) 90f else 0f))
+                },
+            )
+        }
+    }
+    Toggle(R.string.lock_canvas_size, selection.lockCanvas) {
+        finishInput()
+        history.change(selection.copy(lockCanvas = it))
+    }
+    ColorField(editor.rotationBackground, allowTransparent = true, pick = {
+        focus.clearFocus()
+        editor.dropper = !editor.dropper
+    }) {
+        finishInput()
+        editor.rotationBackground = it
+    }
+    if (editor.dropper) Text(stringResource(R.string.tap_color), style = MaterialTheme.typography.bodySmall)
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)) {
+        TextButton(
+            {
+                finishInput()
+                inputRevision++
+                history.change(RotationSelection(lockCanvas = selection.lockCanvas))
+            },
+            enabled = selection.changed || hasDraft,
+        ) { Text(stringResource(R.string.reset_rotation)) }
+        Button(
+            {
+                finishInput()
+                apply(selection)
+            },
+            enabled = selection.changed,
+        ) { Text(stringResource(R.string.apply)) }
     }
 }
 

@@ -678,6 +678,37 @@ internal object Photos {
         }
     }
 
+    fun rotate(bitmap: Bitmap, selection: RotationSelection, color: Int): Bitmap {
+        val size = selection.size(bitmap.width, bitmap.height)
+        budget(size.width, size.height, if (bitmap.config == Bitmap.Config.RGBA_F16) 2 else 1)
+        val alpha = bitmap.hasAlpha() || Color.alpha(color) < 255
+        val output = Bitmap.createBitmap(size.width, size.height, bitmap.config!!, alpha, bitmap.colorSpace!!)
+        try {
+            output.density = bitmap.density
+            drawRotated(Canvas(output), bitmap, selection, bitmap.width, bitmap.height, color)
+            return output
+        } catch (error: Throwable) {
+            output.recycle()
+            throw error
+        }
+    }
+
+    fun drawRotated(canvas: Canvas, bitmap: Bitmap, selection: RotationSelection, width: Int, height: Int, color: Int) {
+        val size = selection.size(width, height)
+        val saved = canvas.save()
+        try {
+            canvas.clipRect(0, 0, size.width, size.height)
+            canvas.drawColor(color, BlendMode.SRC)
+            canvas.concat(Matrix().apply { setValues(selection.matrixValues(width, height)) })
+            canvas.drawBitmap(
+                bitmap, null, Rect(0, 0, width, height),
+                Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply { blendMode = BlendMode.SRC },
+            )
+        } finally {
+            canvas.restoreToCount(saved)
+        }
+    }
+
     suspend fun resize(bitmap: Bitmap, width: Int, height: Int, method: Int): Bitmap {
         require(method in 0..2)
         budget(width, height, if (bitmap.config == Bitmap.Config.RGBA_F16) 6 else 3)

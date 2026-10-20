@@ -12,6 +12,7 @@ import androidx.compose.runtime.setValue
 internal enum class PhotoTool(val label: Int, val icon: Int) {
     CROP(R.string.crop, R.drawable.ic_crop),
     EXPAND(R.string.expand_canvas, R.drawable.ic_expand),
+    ROTATE(R.string.rotate, R.drawable.ic_rotate),
     BACKGROUND(R.string.remove_background, R.drawable.ic_photo),
     COVER(R.string.cover, R.drawable.ic_brush),
     RESIZE(R.string.resize, R.drawable.ic_resize),
@@ -45,9 +46,11 @@ internal class PhotoEditorState(info: PhotoInfo, hasAlpha: Boolean, previous: Ph
     var tool: PhotoTool by mutableStateOf(previous?.tool ?: PhotoTool.CROP)
     val cropHistory = ToolHistory(FrameSelection(Rect(0, 0, info.width, info.height)))
     val canvasHistory = ToolHistory(FrameSelection(Rect(0, 0, info.width, info.height)))
+    val rotationHistory = ToolHistory(RotationSelection())
     val coverHistory = ToolHistory(emptyList<Stroke>())
     val resize = ResizeSelection(info.width, info.height)
     var background by mutableIntStateOf(if (hasAlpha) Color.TRANSPARENT else Color.WHITE)
+    var rotationBackground by mutableIntStateOf(if (hasAlpha) Color.TRANSPARENT else Color.WHITE)
     var cutoutBackground: Int by mutableIntStateOf(previous?.cutoutBackground ?: Color.TRANSPARENT)
     var backgroundModel: BackgroundModel by mutableStateOf(previous?.backgroundModel ?: BackgroundModel.RMBG14)
     var cutout by mutableStateOf<CutoutDraft?>(null)
@@ -66,6 +69,7 @@ internal class PhotoEditorState(info: PhotoInfo, hasAlpha: Boolean, previous: Ph
         val fullBounds = Rect(0, 0, info.width, info.height)
         if (cropHistory.value.bounds != fullBounds) add(PhotoTool.CROP)
         if (canvasHistory.value.bounds != fullBounds) add(PhotoTool.EXPAND)
+        if (rotationHistory.value.changed) add(PhotoTool.ROTATE)
         if (cutout != null) add(PhotoTool.BACKGROUND)
         if (coverHistory.value.isNotEmpty()) add(PhotoTool.COVER)
         if (resize.width != info.width || resize.height != info.height) add(PhotoTool.RESIZE)

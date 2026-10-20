@@ -17,6 +17,7 @@ A native Android media toolbox
 - Refine background removal masks with hard or soft keep/remove brushes, and temporarily store masks for reuse across images
 - Crop to any size or aspect ratio, including block-aligned lossless JPEG cropping
 - Expand the canvas freely or to a preset aspect ratio, filling new areas with a solid color or transparency
+- Rotate to any integer angle and flip horizontally or vertically, with automatic canvas expansion or a fixed canvas size
 - Cover or erase areas with rectangles, ellipses, freehand selections, and brushes
 - Resize with interpolation, adjust compression quality, and export PNG, JPEG, or WebP
 - Pick pixel colors, copy HEX codes, and extract representative colors from images

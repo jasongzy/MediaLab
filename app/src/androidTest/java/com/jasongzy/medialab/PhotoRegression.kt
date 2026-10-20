@@ -222,6 +222,11 @@ internal class PhotoRegression(
                     expanded.setPixel(expanded.width - 1, expanded.height - 1, Color.TRANSPARENT)
                     check(Photos.hasFullyTransparentPixels(expanded))
                 } finally { expanded.recycle() }
+                val rotated = Photos.rotate(source, RotationSelection(90, flipHorizontal = true), Color.WHITE)
+                try {
+                    check(rotated.colorSpace == space && rotated.config == config)
+                    checkColor(rotated)
+                } finally { rotated.recycle() }
                 for (background in listOf(Color.TRANSPARENT, 0xff2468ac.toInt())) {
                     val cutout = checkNotNull(source.copy(config, true))
                     try {
@@ -334,6 +339,22 @@ internal class PhotoRegression(
                 }
             }
             check(runCatching { Photos.expand(source, Rect(1, 0, 64, 48), Color.WHITE) }.isFailure)
+            val quarterTurn = Photos.rotate(source, RotationSelection(90), Color.WHITE)
+            try {
+                for (y in 0 until source.height) for (x in 0 until source.width)
+                    check(quarterTurn.getPixel(source.height - y - 1, x) == source.getPixel(x, y))
+            } finally { quarterTurn.recycle() }
+            for (locked in listOf(false, true)) {
+                val selection = RotationSelection(45, lockCanvas = locked)
+                for (color in listOf(Color.WHITE, Color.TRANSPARENT)) {
+                    val rotated = Photos.rotate(source, selection, color)
+                    try {
+                        val size = selection.size(source.width, source.height)
+                        check(rotated.width == size.width && rotated.height == size.height)
+                        check(rotated.getPixel(0, 0) == color)
+                    } finally { rotated.recycle() }
+                }
+            }
 
             input.outputStream().use { check(source.compress(Bitmap.CompressFormat.PNG, 100, it)) }
             PhotoMetadata.write(input, capture, source.width, source.height)
@@ -368,6 +389,28 @@ internal class PhotoRegression(
             idle(model)
             val cropped = checkNotNull(model.state.value.photo.frame)
             check(cropped.pixels!!.sameAs(source) && cropped.info.metadata.containsAll(capture))
+            instrumentation.runOnMainSync {
+                val editor = checkNotNull(model.state.value.photo.editor)
+                editor.rotationHistory.change(RotationSelection(90, flipHorizontal = true))
+                editor.coverHistory.change(listOf(Stroke(listOf(1f to 1f), Color.BLACK, 2f, CoverShape.BRUSH)))
+                model.rotate(editor.rotationHistory.value, Color.TRANSPARENT)
+            }
+            answer(model, Confirmation.APPLY, false)
+            check(model.state.value.photo.frame === cropped && PhotoTool.ROTATE in model.state.value.photo.pending)
+            instrumentation.runOnMainSync {
+                model.rotate(checkNotNull(model.state.value.photo.editor).rotationHistory.value, Color.TRANSPARENT)
+            }
+            answer(model, Confirmation.APPLY, true)
+            val rotated = checkNotNull(model.state.value.photo.frame)
+            check(rotated.info.metadata.containsAll(capture) && model.state.value.photo.pending.isEmpty())
+            for (y in 0 until source.height) for (x in 0 until source.width)
+                check(rotated.pixels!!.getPixel(y, x) == source.getPixel(x, y))
+            instrumentation.runOnMainSync { model.undo(-1) }
+            idle(model)
+            check(model.state.value.photo.frame === cropped)
+            instrumentation.runOnMainSync { model.undo(1) }
+            idle(model)
+            check(model.state.value.photo.frame === rotated)
         } finally {
             source.recycle()
             instrumentation.runOnMainSync { store.clear() }

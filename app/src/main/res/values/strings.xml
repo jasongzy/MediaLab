@@ -18,6 +18,13 @@
     <string name="reset_crop">Reset crop</string>
     <string name="expand_canvas">Expand</string>
     <string name="reset_canvas">Reset canvas</string>
+    <string name="rotate">Rotate</string>
+    <string name="rotation_angle">Angle (°)</string>
+    <string name="drag_to_rotate">Drag to rotate</string>
+    <string name="flip_vertical">Flip vertically</string>
+    <string name="flip_horizontal">Flip horizontally</string>
+    <string name="lock_canvas_size">Lock canvas size</string>
+    <string name="reset_rotation">Reset rotation</string>
     <string name="left_padding">Left padding</string>
     <string name="top_padding">Top padding</string>
     <string name="center_image">Center image</string>

@@ -476,6 +476,24 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
             }
         }
 
+    fun rotate(selection: RotationSelection, color: Int) =
+        work(R.string.preparing_image) {
+            if (!selection.changed || !canApply(PhotoTool.ROTATE)) return@work
+            discardResize()
+            val history = checkNotNull(history)
+            val source = history.bitmap()
+            val size = selection.size(source.width, source.height)
+            history.reserve(size.width.toLong() * size.height * if (source.config == Bitmap.Config.RGBA_F16) 8 else 4)
+            val bitmap = Photos.rotate(source, selection, color)
+            try {
+                currentCoroutineContext().ensureActive()
+                push(bitmap)
+            } catch (error: Throwable) {
+                bitmap.recycle()
+                throw error
+            }
+        }
+
     fun resize(width: Int, height: Int, method: Int) =
         work(R.string.preparing_image) {
             if (!canApply(PhotoTool.RESIZE)) return@work
