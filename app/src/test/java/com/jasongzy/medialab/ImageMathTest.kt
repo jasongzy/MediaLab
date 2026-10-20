@@ -6,6 +6,24 @@ import java.util.zip.CRC32
 
 class ImageMathTest {
     @Test
+    fun storedMaskPreservesAlphaAndResizesAcrossDimensions() {
+        val mask = CutoutMask.Stored(2, 2, byteArrayOf(0, 64, 128.toByte(), 255.toByte()), BackgroundModel.RMBG20)
+        val same = mutableListOf<Int>()
+        mask.alpha(2, 2) { _, row -> same.addAll(row.toList()) }
+        assertEquals(listOf(0, 64, 128, 255), same)
+        val scaled = mutableListOf<Int>()
+        mask.alpha(3, 3) { _, row -> scaled.addAll(row.toList()) }
+        assertEquals(listOf(0, 32, 64, 64, 112, 160, 128, 192, 255), scaled)
+        mask.alpha(1, 1) { _, row -> assertArrayEquals(intArrayOf(112), row) }
+        val single = CutoutMask.Stored(1, 1, byteArrayOf(93), BackgroundModel.RMBG14)
+        single.alpha(3, 5) { _, row -> assertArrayEquals(intArrayOf(93, 93, 93), row) }
+        for ((width, height) in listOf(4 to 1, 1 to 4)) {
+            val edges = CutoutMask.Stored(width, height, byteArrayOf(-1, 0, 0, -1), BackgroundModel.RMBG20)
+            edges.alpha(1, 1) { _, row -> assertArrayEquals(intArrayOf(106), row) }
+        }
+    }
+
+    @Test
     fun normalizationMatchesEachModelsLayoutAndChannels() {
         val pixels = intArrayOf(0xffff0000.toInt(), 0x0000ff7f)
         assertArrayEquals(

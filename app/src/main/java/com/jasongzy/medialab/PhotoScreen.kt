@@ -367,7 +367,7 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
                                 }
                             }
                         }
-                        PhotoTool.BACKGROUND -> BackgroundPanel(model, photo)
+                        PhotoTool.BACKGROUND -> BackgroundPanel(model, photo, state.storedMask != null)
                         PhotoTool.COVER -> {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
@@ -623,7 +623,7 @@ internal fun colorLosses(losses: List<Int>): String =
     losses.map { stringResource(it) }.joinToString("\n") { "• $it" }
 
 @Composable
-private fun BackgroundPanel(model: LabViewModel, photo: PhotoState) {
+private fun BackgroundPanel(model: LabViewModel, photo: PhotoState, hasStoredMask: Boolean) {
     val editor = checkNotNull(photo.editor)
     val draft = editor.cutout
     SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
@@ -686,22 +686,16 @@ private fun BackgroundPanel(model: LabViewModel, photo: PhotoState) {
         BrushSize(editor.brushWidth, checkNotNull(photo.info)) { editor.brushWidth = it; editor.dropper = false }
         Toggle(R.string.soft_edges, draft.softEdges) { draft.softEdges = it; editor.dropper = false }
     }
-    Row(
+    FlowRow(
         Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        Box(Modifier.weight(1f)) {
-            photo.backgroundElapsedMs?.let { elapsed ->
-                val time = stringResource(R.string.background_elapsed, elapsed / 1000.0)
-                Text(
-                    if (draft == null) time else "${stringResource(draft.model.label)} · $time",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
+        TextButton({ editor.dropper = false; model.storeMask() }, enabled = draft != null) {
+            Text(stringResource(R.string.store_mask))
+        }
+        TextButton({ editor.dropper = false; model.loadMask() }, enabled = hasStoredMask) {
+            Text(stringResource(R.string.load_mask))
         }
         val infer: () -> Unit = { editor.dropper = false; model.removeBackground(editor.backgroundModel) }
         if (draft == null) Button(infer) {
@@ -709,6 +703,14 @@ private fun BackgroundPanel(model: LabViewModel, photo: PhotoState) {
         } else TextButton(infer) {
             Text(stringResource(R.string.reinfer))
         }
+    }
+    photo.backgroundElapsedMs?.let { elapsed ->
+        val time = stringResource(R.string.background_elapsed, elapsed / 1000.0)
+        Text(
+            if (draft == null) time else "${stringResource(draft.mask.model.label)} · $time",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
     if (draft != null) Row(
         Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),

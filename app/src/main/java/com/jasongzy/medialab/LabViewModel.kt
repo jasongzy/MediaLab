@@ -40,6 +40,8 @@ internal enum class Confirmation(val title: Int, val message: Int, val confirm: 
     RESTORE(R.string.restore_original, R.string.discard_unapplied_message, R.string.restore_original),
     REINFER(R.string.reinfer, R.string.replace_mask_message, R.string.reinfer),
     DISCARD_MASK(R.string.discard_mask, R.string.discard_mask_message),
+    LOAD_MASK(R.string.load_mask, R.string.load_mask_message, R.string.load_mask),
+    RESIZE_MASK(R.string.load_mask, R.string.resize_mask_message, R.string.continue_action),
     TRANSPARENT_INPUT(R.string.transparent_input, R.string.transparent_input_message, R.string.continue_action),
     CONVERT_COLOR(R.string.convert_color, R.string.convert_color_message, R.string.continue_action),
 }
@@ -68,6 +70,7 @@ internal data class Notice(val message: Int, val argument: String? = null)
 internal data class LabState(
     val tab: Int = 0,
     val photo: PhotoState = PhotoState(),
+    val storedMask: CutoutMask.Stored? = null,
     val batchPage: Boolean = false,
     val audio: AudioDocument? = null,
     val confirmation: Confirmation? = null,
@@ -82,6 +85,8 @@ internal data class LabState(
 ) {
     val audioDirty: Boolean
         get() = audio?.dirty == true
+    val maskBytes: Long
+        get() = listOfNotNull(storedMask, photo.editor?.cutout?.mask).distinct().sumOf { it.bytes }
     val workingFiles: Set<File>
         get() =
             (photo.history.flatMap { it.files } + listOfNotNull(audio?.file, exportFile))
@@ -281,7 +286,7 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
                     val preview = Photos.preview(file)
                     val info = Photos.info(file, preview)
                     val next =
-                        PhotoHistory(workspace.work, PhotoFrame(file, info))
+                        PhotoHistory(workspace.work, PhotoFrame(file, info), retainedBytes = { state.value.maskBytes })
                     val photo = PhotoState(name, next.frames, 0, preview, preview, info, sourceUri = uri)
                     currentCoroutineContext().ensureActive()
                     val old = history
@@ -538,19 +543,53 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
             val converts = checkNotNull(photo.info).color.losses().isNotEmpty()
             if (converts && !confirm(Confirmation.CONVERT_COLOR)) return@work
             val started = SystemClock.elapsedRealtime()
-            val mask = Photos.inferMask(context, bitmap, model) { stage ->
+            val values = Photos.inferMask(context, bitmap, model) { stage ->
                 mutable.update { it.copy(stage = stage) }
             }
+            val mask = CutoutMask.Inferred(values, model)
             val preview = if (converts) Photos.preview(bitmap) else checkNotNull(photo.preview)
-            val maskPreview = Photos.maskPreview(mask, preview.width, preview.height, model, bitmap.width, bitmap.height)
+            val maskPreview = Photos.maskPreview(mask, preview.width, preview.height, bitmap.width, bitmap.height)
             currentCoroutineContext().ensureActive()
             val elapsed = SystemClock.elapsedRealtime() - started
             withContext(Dispatchers.Main) {
-                editor.cutout = CutoutDraft(mask, model, preview, maskPreview)
+                editor.cutout = CutoutDraft(mask, preview, maskPreview)
                 editor.dropper = false
                 mutable.update { it.copy(photo = it.photo.copy(backgroundElapsedMs = elapsed)) }
             }
         }
+
+    fun storeMask() = work(R.string.preparing_image) {
+        val photo = state.value.photo
+        val draft = photo.editor?.cutout ?: return@work
+        val info = checkNotNull(photo.info)
+        discardResize()
+        checkNotNull(history).reserve(info.width.toLong() * info.height, keep = null)
+        val stored = Photos.storeMask(draft, info.width, info.height)
+        currentCoroutineContext().ensureActive()
+        mutable.update { it.copy(storedMask = stored, notice = Notice(R.string.mask_stored)) }
+    }
+
+    fun loadMask() = work(R.string.preparing_image) {
+        val mask = state.value.storedMask ?: return@work
+        val photo = state.value.photo
+        val editor = checkNotNull(photo.editor)
+        val info = checkNotNull(photo.info)
+        if (editor.cutout != null && !confirm(Confirmation.LOAD_MASK)) return@work
+        if ((mask.width != info.width || mask.height != info.height) && !confirm(Confirmation.RESIZE_MASK))
+            return@work
+        val converts = info.color.losses().isNotEmpty()
+        if (converts && !confirm(Confirmation.CONVERT_COLOR)) return@work
+        discardResize()
+        val preview =
+            if (converts) Photos.preview(checkNotNull(history).bitmap()) else checkNotNull(photo.preview)
+        val maskPreview = Photos.maskPreview(mask, preview.width, preview.height)
+        currentCoroutineContext().ensureActive()
+        withContext(Dispatchers.Main) {
+            editor.cutout = CutoutDraft(mask, preview, maskPreview)
+            editor.dropper = false
+            mutable.update { it.copy(photo = it.photo.copy(backgroundElapsedMs = null)) }
+        }
+    }
 
     fun applyBackground() =
         work(R.string.finishing_image) {
@@ -559,7 +598,7 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
             val draft = editor.cutout ?: return@work
             if (!canApply(PhotoTool.BACKGROUND)) return@work
             bitmapEdit { bitmap ->
-                Photos.applyMask(bitmap, draft.mask, editor.cutoutBackground, draft.model, draft.history.value)
+                Photos.applyMask(bitmap, draft.mask, editor.cutoutBackground, draft.history.value)
             }
             mutable.update { it.copy(photo = it.photo.copy(backgroundElapsedMs = photo.backgroundElapsedMs)) }
         }

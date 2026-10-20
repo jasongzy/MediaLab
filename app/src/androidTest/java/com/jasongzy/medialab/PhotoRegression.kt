@@ -83,9 +83,9 @@ internal class PhotoRegression(
             eraseColor(Color.pack(0.9f, 0.1f, 0.2f, 0.6f, space))
             setPixel(0, 127, Color.TRANSPARENT)
         }
-        val mask = FloatArray(ImageMath.SIZE * ImageMath.SIZE) { 0.35f }
-        val preview = Photos.maskPreview(mask, source.width, source.height, BackgroundModel.RMBG20)
-        val draft = CutoutDraft(mask, BackgroundModel.RMBG20, source, preview)
+        val mask = CutoutMask.Inferred(FloatArray(ImageMath.SIZE * ImageMath.SIZE) { 0.35f }, BackgroundModel.RMBG20)
+        val preview = Photos.maskPreview(mask, source.width, source.height)
+        val draft = CutoutDraft(mask, source, preview)
         val rendered = Bitmap.createBitmap(source.width, source.height, source.config!!, true, space)
         val output = checkNotNull(source.copy(source.config!!, true))
         val original = pixels(source)
@@ -99,7 +99,7 @@ internal class PhotoRegression(
             draft.history.undo()
             check(draft.history.value == listOf(softKeep, keep))
             draft.history.redo()
-            Photos.applyMask(output, mask, Color.TRANSPARENT, draft.model, draft.history.value)
+            Photos.applyMask(output, mask, Color.TRANSPARENT, draft.history.value)
             check(output.getColor(0, 127).alpha() == 0f)
             check(output.getColor(8, 128).alpha() == 0f)
             for (y in listOf(127, 128)) for (x in listOf(1, 15)) {
@@ -126,6 +126,19 @@ internal class PhotoRegression(
             Photos.drawCutout(Canvas(rendered), draft, RectF(0f, 0f, 16f, 260f), Color.WHITE)
             check(rendered.getPixel(1, 127) == source.getPixel(1, 127))
             check(rendered.getPixel(8, 128) != source.getPixel(8, 128))
+            val stored = Photos.storeMask(draft, source.width, source.height)
+            val loaded = checkNotNull(source.copy(source.config!!, true))
+            try {
+                Photos.applyMask(loaded, stored, Color.TRANSPARENT)
+                for (y in 0 until source.height) {
+                    BitmapPixels.readRow(output, y, expected)
+                    BitmapPixels.readRow(loaded, y, actual)
+                    check(actual.indices.all { abs(actual[it] - expected[it]) < 0.002f })
+                }
+                val snapshot = stored.pixels.clone()
+                Photos.applyMask(loaded, stored, Color.TRANSPARENT, listOf(keep))
+                check(stored.pixels.contentEquals(snapshot))
+            } finally { loaded.recycle() }
             check(pixels(source).contentEquals(original))
         } finally {
             source.recycle()
@@ -137,7 +150,10 @@ internal class PhotoRegression(
 
     suspend fun colorEditing() {
         val capture = listOf(ExifInterface.TAG_SOFTWARE to "Color fixture")
-        val mask = FloatArray(ImageMath.SIZE * ImageMath.SIZE) { (it % ImageMath.SIZE).toFloat() }
+        val mask = CutoutMask.Inferred(
+            FloatArray(ImageMath.SIZE * ImageMath.SIZE) { (it % ImageMath.SIZE).toFloat() },
+            BackgroundModel.RMBG14,
+        )
         for ((named, config) in listOf(
             ColorSpace.Named.DISPLAY_P3 to Bitmap.Config.ARGB_8888,
             ColorSpace.Named.ADOBE_RGB to Bitmap.Config.RGBA_F16,
@@ -351,7 +367,8 @@ internal class PhotoRegression(
             val expected = pixels(bitmap)
             val space = bitmap.colorSpace
             val first = PhotoFrame(null, Photos.rasterInfo(bitmap), bitmap)
-            val history = PhotoHistory(directory, first, bitmap.allocationByteCount.toLong())
+            val retained = bitmap.allocationByteCount.toLong()
+            val history = PhotoHistory(directory, first, retained * 2, retainedBytes = { retained })
             val secondBitmap =
                 checkNotNull(bitmap.copy(config, true)).apply { eraseColor(Color.WHITE) }
             val second = PhotoFrame(null, Photos.rasterInfo(secondBitmap), secondBitmap)
@@ -618,9 +635,9 @@ internal class PhotoRegression(
             }
             idle(model)
             val draft = checkNotNull(model.state.value.photo.editor)
-            val mask = FloatArray(ImageMath.SIZE * ImageMath.SIZE) { 0.5f }
-            val maskPreview = Photos.maskPreview(mask, reference.width, reference.height, BackgroundModel.RMBG20)
-            val cutout = CutoutDraft(mask, BackgroundModel.RMBG20, model.state.value.photo.preview!!, maskPreview)
+            val mask = CutoutMask.Inferred(FloatArray(ImageMath.SIZE * ImageMath.SIZE) { 0.5f }, BackgroundModel.RMBG20)
+            val maskPreview = Photos.maskPreview(mask, reference.width, reference.height)
+            val cutout = CutoutDraft(mask, model.state.value.photo.preview!!, maskPreview)
             instrumentation.runOnMainSync {
                 check(draft.backgroundModel == BackgroundModel.RMBG14)
                 draft.cutout = cutout
@@ -660,6 +677,14 @@ internal class PhotoRegression(
                 answer(model, confirmation, false)
                 check(draft.cutout === cutout && cutout.history.value.isEmpty())
             }
+            instrumentation.runOnMainSync { model.storeMask() }
+            idle(model)
+            val stored = checkNotNull(model.state.value.storedMask)
+            check(stored.width == reference.width && stored.height == reference.height)
+            check(model.state.value.notice?.message == R.string.mask_stored)
+            instrumentation.runOnMainSync { model.loadMask() }
+            answer(model, Confirmation.LOAD_MASK, false)
+            check(draft.cutout === cutout)
             instrumentation.runOnMainSync { model.discardBackground() }
             answer(model, Confirmation.DISCARD_MASK, true)
             check(draft.cutout == null && model.state.value.photo.backgroundElapsedMs == null)
@@ -675,6 +700,15 @@ internal class PhotoRegression(
             check(applied.resize.width == 16 && applied.resize.height == 16 && applied.export == draft.export)
             check(applied.backgroundModel == BackgroundModel.RMBG20)
             checkCapture(checkNotNull(model.state.value.photo.frame?.source))
+            instrumentation.runOnMainSync { model.loadMask() }
+            answer(model, Confirmation.RESIZE_MASK, false)
+            check(applied.cutout == null)
+            instrumentation.runOnMainSync { model.loadMask() }
+            answer(model, Confirmation.RESIZE_MASK, true)
+            check(applied.cutout?.mask === stored && applied.cutout?.showMask == true)
+            check(model.state.value.maskBytes == stored.bytes)
+            instrumentation.runOnMainSync { model.discardBackground() }
+            answer(model, Confirmation.DISCARD_MASK, true)
             for (direction in listOf(-1, 1)) {
                 val before = model.state.value.photo
                 val editor = checkNotNull(before.editor)
@@ -840,6 +874,12 @@ internal class PhotoRegression(
             instrumentation.runOnMainSync { model.undo(1) }
             idle(model)
             check(model.state.value.photo.frame === cut)
+            instrumentation.runOnMainSync { model.open(Uri.fromFile(input), ImportType.IMAGE) }
+            answer(model, Confirmation.IMAGE, true)
+            check(model.state.value.storedMask === stored)
+            instrumentation.runOnMainSync { model.loadMask() }
+            idle(model)
+            check(model.state.value.photo.editor!!.cutout?.mask === stored)
         } finally {
             reference.recycle()
             instrumentation.runOnMainSync { store.clear() }

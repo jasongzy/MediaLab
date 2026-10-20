@@ -40,6 +40,7 @@ internal class PhotoHistory(
     private val directory: File,
     first: PhotoFrame,
     private val memoryBudget: Long = Runtime.getRuntime().maxMemory() / 3,
+    private val retainedBytes: () -> Long = { 0 },
 ) {
     var frames = listOf(first)
         private set
@@ -52,11 +53,12 @@ internal class PhotoHistory(
 
     suspend fun reserve(bytes: Long, keep: PhotoFrame? = current) {
         require(bytes >= 0)
+        val retained = retainedBytes()
         for (frame in frames.distinct()) {
-            if (residentBytes + bytes <= memoryBudget) break
+            if (residentBytes + retained + bytes <= memoryBudget) break
             if (frame !== keep) detach(frame)?.recycle()
         }
-        if (residentBytes + bytes >= Runtime.getRuntime().maxMemory() * 0.7)
+        if (residentBytes + retained + bytes >= Runtime.getRuntime().maxMemory() * 0.7)
             throw OutOfMemoryError("Image operation exceeds the memory budget")
     }
 
@@ -105,7 +107,7 @@ internal class PhotoHistory(
         }
         val source = bitmap()
         if (width == source.width && height == source.height && source.isMutable &&
-            source.allocationByteCount.toLong() * 2 > memoryBudget
+            source.allocationByteCount.toLong() * 2 + retainedBytes() > memoryBudget
         ) {
             reserve(0)
             return checkNotNull(detach(frame))

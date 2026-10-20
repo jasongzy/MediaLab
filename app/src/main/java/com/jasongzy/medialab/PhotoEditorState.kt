@@ -24,8 +24,7 @@ internal enum class PhotoTool(val label: Int, val icon: Int) {
 internal data class FrameSelection(val bounds: Rect, val ratio: Float = 0f)
 
 internal class CutoutDraft(
-    val mask: FloatArray,
-    val model: BackgroundModel,
+    val mask: CutoutMask,
     val sourcePreview: Bitmap,
     val maskPreview: Bitmap,
 ) {

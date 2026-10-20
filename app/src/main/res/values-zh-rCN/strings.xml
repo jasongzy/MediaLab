@@ -152,6 +152,11 @@
     <string name="mask_remove">去除</string>
     <string name="mask_hint">红色标记将被去除的区域。</string>
     <string name="mask_result_hint">被去除的区域将填充为所选颜色</string>
+    <string name="store_mask">暂存蒙版</string>
+    <string name="load_mask">加载蒙版</string>
+    <string name="mask_stored">已暂存蒙版</string>
+    <string name="load_mask_message">加载暂存蒙版将替换当前蒙版和手工修整，是否继续？</string>
+    <string name="resize_mask_message">暂存的蒙版与当前图片尺寸不同，是否缩放蒙版以匹配当前图片？</string>
     <string name="reset_mask">重置蒙版</string>
     <string name="discard_mask">放弃蒙版？</string>
     <string name="discard_mask_message">当前蒙版和手工修整将被丢弃。</string>

@@ -126,7 +126,14 @@ internal object ImageMath {
         require(mask.size == SIZE * SIZE && mask.all { it.isFinite() }) { "Invalid model output" }
         require(width > 0 && height > 0 && normalizationWidth > 0 && normalizationHeight > 0)
         if (model == BackgroundModel.RMBG20) {
-            resizeAlpha(mask, width, height, checkCancelled, writeRow)
+            // RMBG 2.0 uses ToPILImage before resizing, so quantization precedes interpolation.
+            resizeAlpha(
+                SIZE, SIZE, width, height, checkCancelled, bicubic = true,
+                readRow = { y, row ->
+                    for (x in row.indices) row[x] = (mask[y * SIZE + x] * 255).toInt().coerceIn(0, 255)
+                },
+                writeRow = writeRow,
+            )
             return
         }
         val xScale = SIZE.toFloat() / width
@@ -168,43 +175,51 @@ internal object ImageMath {
         }
     }
 
-    private fun resizeAlpha(
-        mask: FloatArray,
+    fun resizeAlpha(
         width: Int,
         height: Int,
-        checkCancelled: () -> Unit,
+        outWidth: Int,
+        outHeight: Int,
+        checkCancelled: () -> Unit = {},
+        bicubic: Boolean = false,
+        readRow: (Int, IntArray) -> Unit,
         writeRow: (Int, IntArray) -> Unit,
     ) {
-        val horizontal = kernels(SIZE, width, bicubic = true)
-        val vertical = kernels(SIZE, height, bicubic = true)
-        val intermediate = ByteArray(Math.multiplyExact(width, SIZE))
-        val sourceRow = IntArray(SIZE)
-        // RMBG 2.0 uses ToPILImage before resizing, so quantization precedes interpolation.
-        for (y in 0 until SIZE) {
+        val horizontal = kernels(width, outWidth, bicubic)
+        val vertical = kernels(height, outHeight, bicubic)
+        val sourceRow = IntArray(width)
+        // Four rows cover the bicubic neighborhood when enlarging.
+        val rows = Array(minOf(4, height)) { ByteArray(outWidth) }
+        val rowNumbers = IntArray(rows.size) { -1 }
+        fun resizedRow(y: Int): ByteArray {
+            val slot = y % rows.size
+            val row = rows[slot]
+            if (rowNumbers[slot] == y) return row
             checkCancelled()
-            for (x in sourceRow.indices) {
-                sourceRow[x] = (mask[y * SIZE + x] * 255).toInt().coerceIn(0, 255)
-            }
-            for (x in 0 until width) {
+            readRow(y, sourceRow)
+            for (x in row.indices) {
                 val kernel = horizontal[x]
                 var value = UNIT / 2
                 for (i in kernel.weights.indices) {
                     value += sourceRow[kernel.start + i] * kernel.weights[i]
                 }
-                intermediate[y * width + x] = (value shr PRECISION).coerceIn(0, 255).toByte()
+                row[x] = (value shr PRECISION).coerceIn(0, 255).toByte()
             }
+            rowNumbers[slot] = y
+            return row
         }
-        val row = IntArray(width)
-        for (y in 0 until height) {
+        val row = IntArray(outWidth)
+        for (y in 0 until outHeight) {
             checkCancelled()
             val kernel = vertical[y]
-            for (x in row.indices) {
-                var value = UNIT / 2
-                for (i in kernel.weights.indices) {
-                    value += (intermediate[(kernel.start + i) * width + x].toInt() and 255) * kernel.weights[i]
+            row.fill(UNIT / 2)
+            for (i in kernel.weights.indices) {
+                val source = resizedRow(kernel.start + i)
+                for (x in row.indices) {
+                    row[x] += (source[x].toInt() and 255) * kernel.weights[i]
                 }
-                row[x] = (value shr PRECISION).coerceIn(0, 255)
             }
+            for (x in row.indices) row[x] = (row[x] shr PRECISION).coerceIn(0, 255)
             writeRow(y, row)
         }
     }

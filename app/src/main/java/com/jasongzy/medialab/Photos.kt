@@ -471,18 +471,17 @@ internal object Photos {
     }
 
     suspend fun maskPreview(
-        mask: FloatArray,
+        mask: CutoutMask,
         width: Int,
         height: Int,
-        model: BackgroundModel,
         sourceWidth: Int = width,
         sourceHeight: Int = height,
     ): Bitmap {
         val preview = createBitmap(width, height)
         val coroutine = currentCoroutineContext()
         try {
-            ImageMath.alpha(
-                mask, width, height, { coroutine.ensureActive() }, model, sourceWidth, sourceHeight,
+            mask.alpha(
+                width, height, { coroutine.ensureActive() }, sourceWidth, sourceHeight,
             ) { y, row ->
                 for (x in row.indices) row[x] = (row[x] shl 24) or 0x00ffffff
                 preview.setPixels(row, 0, width, 0, y, width, 1)
@@ -514,40 +513,60 @@ internal object Photos {
 
     suspend fun applyMask(
         bitmap: Bitmap,
-        mask: FloatArray,
+        mask: CutoutMask,
         background: Int,
-        model: BackgroundModel = BackgroundModel.RMBG14,
         strokes: List<Stroke> = emptyList(),
     ) {
         require(background ushr 24 == 0 || background ushr 24 == 255)
-        val coroutine = currentCoroutineContext()
         val opaque = !bitmap.hasAlpha()
         bitmap.setHasAlpha(bitmap.hasAlpha() || background ushr 24 == 0)
         val fill = Color.valueOf(background).convert(bitmap.colorSpace!!).components
         val row = FloatArray(bitmap.width * 4)
+        maskRows(mask, bitmap.width, bitmap.height, strokes) { y, coverage ->
+            BitmapPixels.readRow(bitmap, y, row)
+            for (x in coverage.indices) {
+                val a = (if (opaque) 1f else row[x * 4 + 3]) * coverage[x]
+                for (c in 0..2)
+                    row[x * 4 + c] = row[x * 4 + c] * coverage[x] + fill[c] * fill[3] * (1f - a)
+                row[x * 4 + 3] = a + fill[3] * (1f - a)
+            }
+            BitmapPixels.writeRow(bitmap, y, row)
+        }
+    }
+
+    suspend fun storeMask(draft: CutoutDraft, width: Int, height: Int): CutoutMask.Stored {
+        val pixels = ByteArray(Math.multiplyExact(width, height))
+        maskRows(draft.mask, width, height, draft.history.value) { y, row ->
+            for (x in row.indices) pixels[y * width + x] = (row[x] * 255).roundToInt().toByte()
+        }
+        return CutoutMask.Stored(width, height, pixels, draft.mask.model)
+    }
+
+    private suspend fun maskRows(
+        mask: CutoutMask,
+        width: Int,
+        height: Int,
+        strokes: List<Stroke>,
+        writeRow: (Int, FloatArray) -> Unit,
+    ) {
+        val coroutine = currentCoroutineContext()
+        val row = FloatArray(width)
         // Opaque black/white strokes encode removal/retention; tile alpha records brush coverage.
         val edits = strokes.map { it.copy(color = if (it.clearsPixels) Color.BLACK else Color.WHITE) }
         val tile = if (edits.isEmpty()) null else createBitmap(
-            bitmap.width, minOf(bitmap.height, 128, maxOf(1, 256 * 1024 / bitmap.width)),
+            width, minOf(height, 128, maxOf(1, 256 * 1024 / width)),
         )
         try {
             val canvas = tile?.let(::Canvas)
-            val brush = if (tile == null) null else IntArray(bitmap.width)
-            ImageMath.alpha(
-                mask,
-                bitmap.width,
-                bitmap.height,
-                { coroutine.ensureActive() },
-                model,
-            ) { y, alpha ->
+            val brush = if (tile == null) null else IntArray(width)
+            mask.alpha(width, height, { coroutine.ensureActive() }) { y, alpha ->
                 if (tile != null && canvas != null && brush != null) {
                     if (y % tile.height == 0) {
                         tile.eraseColor(Color.TRANSPARENT)
                         canvas.withTranslation(0f, -y.toFloat()) { cover(this, edits) }
                     }
-                    tile.getPixels(brush, 0, bitmap.width, 0, y % tile.height, bitmap.width, 1)
+                    tile.getPixels(brush, 0, width, 0, y % tile.height, width, 1)
                 }
-                BitmapPixels.readRow(bitmap, y, row)
                 for (x in alpha.indices) {
                     var coverage = alpha[x] / 255f
                     if (brush != null) {
@@ -555,12 +574,9 @@ internal object Photos {
                         val strength = (stroke ushr 24) / 255f
                         coverage = coverage * (1f - strength) + Color.red(stroke) / 255f * strength
                     }
-                    val a = (if (opaque) 1f else row[x * 4 + 3]) * coverage
-                    for (c in 0..2)
-                        row[x * 4 + c] = row[x * 4 + c] * coverage + fill[c] * fill[3] * (1f - a)
-                    row[x * 4 + 3] = a + fill[3] * (1f - a)
+                    row[x] = coverage
                 }
-                BitmapPixels.writeRow(bitmap, y, row)
+                writeRow(y, row)
             }
         } finally {
             tile?.recycle()
