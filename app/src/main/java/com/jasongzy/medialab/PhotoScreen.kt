@@ -771,6 +771,16 @@ private fun BrushSize(width: Float, info: PhotoInfo, change: (Float) -> Unit) {
 }
 
 @Composable
+private fun snapGuideAlpha(target: Int?): State<Float> {
+    val alpha = remember { Animatable(0f) }
+    LaunchedEffect(target) {
+        if (target != null) alpha.snapTo(1f)
+        alpha.animateTo(0f, tween(if (target == null) 120 else 500))
+    }
+    return alpha.asState()
+}
+
+@Composable
 private fun PhotoCanvas(
     photo: PhotoState,
     modifier: Modifier,
@@ -817,6 +827,13 @@ private fun PhotoCanvas(
     val frameColor = if (expanding) MaterialTheme.colorScheme.primary.toArgb() else android.graphics.Color.WHITE
     val imageBorderColor = MaterialTheme.colorScheme.outline.toArgb()
     val guideColor = if (expanding) android.graphics.Color.WHITE else MaterialTheme.colorScheme.primary.toArgb()
+    val snapColor = MaterialTheme.colorScheme.primary.toArgb()
+    var snapGuides by remember(photo.frame, tool, dropper, showOriginal) {
+        mutableStateOf<Pair<Int?, Int?>>(null to null)
+    }
+    val (verticalHighlight, horizontalHighlight) = key(photo.frame, tool, dropper, showOriginal) {
+        snapGuideAlpha(snapGuides.first) to snapGuideAlpha(snapGuides.second)
+    }
     val initialScale = if (expanding) 0.6f else if (rotation != null) 0.8f else 0.9f
     var viewport by remember(photo.frame, expanding, tool == PhotoTool.ROTATE) { mutableStateOf(ImageViewport(initialScale)) }
     var canvasSize by remember { mutableStateOf(Size.Zero) }
@@ -982,6 +999,7 @@ private fun PhotoCanvas(
                                 if (event.changes.any { it.isConsumed }) break
                                 val pointers = event.changes.count { it.pressed }
                                 if (pointers >= 2) {
+                                    snapGuides = null to null
                                     if (!transformed && rotationDrag != null) {
                                         rotationHistory?.cancel()
                                         rotationDragging = false
@@ -1012,8 +1030,13 @@ private fun PhotoCanvas(
                                             if (rotationDragging) {
                                                 val previous = rotationDrag.snapAngle
                                                 rotationHistory?.preview(rotationDrag.update(position))
-                                                if (rotationDrag.snapAngle != null && rotationDrag.snapAngle != previous)
-                                                    haptics.performHapticFeedback(HapticFeedbackType.SegmentTick)
+                                                val snapped = rotationDrag.snapAngle
+                                                if (snapped != previous) {
+                                                    snapGuides = snapped?.takeIf { it % 180 == 0 } to
+                                                        snapped?.takeIf { it % 180 != 0 }
+                                                    if (snapped != null)
+                                                        haptics.performHapticFeedback(HapticFeedbackType.SegmentFrequentTick)
+                                                }
                                             }
                                         }
                                         painting -> {
@@ -1057,8 +1080,13 @@ private fun PhotoCanvas(
                                                     )
                                                 if (!r.isEmpty && r.width() > 0 && r.height() > 0) {
                                                     setCrop(r)
-                                                    if (cropDrag.snapped.any { it !in previous })
-                                                        haptics.performHapticFeedback(HapticFeedbackType.SegmentTick)
+                                                    val entered = cropDrag.snapped - previous
+                                                    snapGuides = cropDrag.snapped.firstOrNull { it < 3 }
+                                                        ?.takeIf { it == snapGuides.first || it in entered } to
+                                                        cropDrag.snapped.firstOrNull { it >= 3 }
+                                                            ?.takeIf { it == snapGuides.second || it in entered }
+                                                    if (entered.isNotEmpty())
+                                                        haptics.performHapticFeedback(HapticFeedbackType.SegmentFrequentTick)
                                                 }
                                             }
                                         }
@@ -1079,6 +1107,7 @@ private fun PhotoCanvas(
                                 event.changes.forEach { it.consume() }
                             } while (event.changes.any { it.pressed })
                         } finally {
+                            snapGuides = null to null
                             selection = null
                             brushPoint = null
                             rotationDragging = false
@@ -1189,8 +1218,21 @@ private fun PhotoCanvas(
                             canvas.drawLine(left, y, right, y, paint)
                     }
                 }
-                paint.alpha = 255
                 paint.pathEffect = null
+                if (!grid || rotation != null) {
+                    for (vertical in listOf(true, false)) {
+                        val alpha = if (vertical) verticalHighlight.value else horizontalHighlight.value
+                        if (alpha <= 0f) continue
+                        for (outline in listOf(true, false)) {
+                            paint.color = if (outline) android.graphics.Color.BLACK else snapColor
+                            paint.alpha = ((if (outline) 150 else 255) * alpha).roundToInt()
+                            paint.strokeWidth = (if (outline) 4 else 2).dp.toPx() / fit
+                            if (vertical) canvas.drawLine(rect.centerX(), top, rect.centerX(), bottom, paint)
+                            else canvas.drawLine(left, rect.centerY(), right, rect.centerY(), paint)
+                        }
+                    }
+                }
+                paint.alpha = 255
             }
             if (rotation != null && !dropper) guides(destination, android.graphics.Color.WHITE, grid = true)
             brushPoint?.let { point ->

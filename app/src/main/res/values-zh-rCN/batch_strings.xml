@@ -41,7 +41,7 @@
     <string name="batch_remove_selected">从列表移除所选文件</string>
     <string name="batch_output">输出文件夹</string>
     <string name="batch_change">更改</string>
-    <string name="batch_reset_output">默认</string>
+    <string name="batch_reset_output">恢复默认</string>
     <string name="batch_empty">选择 NCM 文件或文件夹以解锁</string>
     <string name="batch_selected">已选 %1$d / %2$d 项</string>
     <string name="batch_failures">仅失败</string>

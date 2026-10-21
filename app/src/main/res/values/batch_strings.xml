@@ -42,7 +42,7 @@
     <string name="batch_remove_selected">Remove selected files from list</string>
     <string name="batch_output">Output folder</string>
     <string name="batch_change">Change</string>
-    <string name="batch_reset_output">Default</string>
+    <string name="batch_reset_output">Restore default</string>
     <string name="batch_empty">Choose NCM files or a folder to unlock</string>
     <string name="batch_selected">Selected: %1$d / %2$d</string>
     <string name="batch_failures">Failed only</string>
