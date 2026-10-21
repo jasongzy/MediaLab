@@ -21,6 +21,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.withLock
@@ -74,6 +75,7 @@ internal data class LabState(
     val batchPage: Boolean = false,
     val audio: AudioDocument? = null,
     val confirmation: Confirmation? = null,
+    val colorLosses: List<Int> = emptyList(),
     val busy: Boolean = false,
     val refreshingMedia: Boolean = false,
     val stage: Int = R.string.loading_photo,
@@ -242,20 +244,32 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
         )
     }
 
-    private suspend fun confirm(action: Confirmation): Boolean {
+    private suspend fun confirm(action: Confirmation, colorLosses: List<Int> = emptyList()): Boolean {
         val answer = CompletableDeferred<Boolean>()
         confirmationAnswer = answer
-        mutable.update { it.copy(confirmation = action) }
+        mutable.update { it.copy(confirmation = action, colorLosses = colorLosses) }
         return try {
             answer.await()
         } finally {
             confirmationAnswer = null
-            mutable.update { it.copy(confirmation = null) }
+            mutable.update { it.copy(confirmation = null, colorLosses = emptyList()) }
         }
+    }
+
+    private suspend fun confirmColor(forceSrgb: Boolean = false): Boolean {
+        val losses = checkNotNull(state.value.photo.info).color.losses(forceSrgb)
+        return losses.isEmpty() || confirm(Confirmation.CONVERT_COLOR, losses)
     }
 
     private suspend fun canApply(tool: PhotoTool): Boolean =
         state.value.photo.pending.none { it != tool } || confirm(Confirmation.APPLY)
+
+    fun receive(uri: Uri) {
+        viewModelScope.launch {
+            state.first { !it.busy }
+            open(uri, if (uri.scheme == "http") ImportType.IMAGE else null)
+        }
+    }
 
     fun open(uri: Uri, type: ImportType?) =
         work(
@@ -424,6 +438,7 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
 
     fun crop(rect: Rect, lossless: Boolean) =
         work(R.string.preparing_image) {
+            if (!lossless && !confirmColor()) return@work
             if (!canApply(PhotoTool.CROP)) return@work
             if (lossless) {
                 val photo = state.value.photo
@@ -457,6 +472,7 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
 
     fun expand(bounds: Rect, color: Int) =
         work(R.string.preparing_image) {
+            if (!confirmColor()) return@work
             if (!canApply(PhotoTool.EXPAND)) return@work
             discardResize()
             val history = checkNotNull(history)
@@ -478,6 +494,7 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
 
     fun rotate(selection: RotationSelection, color: Int) =
         work(R.string.preparing_image) {
+            if (!confirmColor()) return@work
             if (!selection.changed || !canApply(PhotoTool.ROTATE)) return@work
             discardResize()
             val history = checkNotNull(history)
@@ -496,6 +513,7 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
 
     fun resize(width: Int, height: Int, method: Int) =
         work(R.string.preparing_image) {
+            if (!confirmColor()) return@work
             if (!canApply(PhotoTool.RESIZE)) return@work
             val result = resized(width, height, method)
             push(result.bitmap, result.preview)
@@ -548,6 +566,7 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
 
     fun cover(strokes: List<Stroke>) =
         work(R.string.preparing_image) {
+            if (!confirmColor()) return@work
             if (!canApply(PhotoTool.COVER)) return@work
             bitmapEdit {
                 Photos.cover(it, strokes)
@@ -565,7 +584,7 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
             if (Photos.hasFullyTransparentPixels(bitmap) && !confirm(Confirmation.TRANSPARENT_INPUT))
                 return@work
             val converts = checkNotNull(photo.info).color.losses().isNotEmpty()
-            if (converts && !confirm(Confirmation.CONVERT_COLOR)) return@work
+            if (!confirmColor()) return@work
             val started = SystemClock.elapsedRealtime()
             val values = Photos.inferMask(context, bitmap, model) { stage ->
                 mutable.update { it.copy(stage = stage) }
@@ -602,7 +621,7 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
         if ((mask.width != info.width || mask.height != info.height) && !confirm(Confirmation.RESIZE_MASK))
             return@work
         val converts = info.color.losses().isNotEmpty()
-        if (converts && !confirm(Confirmation.CONVERT_COLOR)) return@work
+        if (!confirmColor()) return@work
         discardResize()
         val preview =
             if (converts) Photos.preview(checkNotNull(history).bitmap()) else checkNotNull(photo.preview)
@@ -686,6 +705,8 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
         work(R.string.preparing_image) {
             val photo = state.value.photo
             val frame = checkNotNull(photo.frame)
+            val options = ExportOptions(metadata = metadata, static = static, flatten = flatten, keepColor = keepColor)
+            if (!options.preservesSource(frame.info) && !confirmColor(forceSrgb = !keepColor)) return@work
             val convert = !keepColor && frame.info.colorSpace?.isSrgb == false
             if (frame.source == null && !convert && (!metadata || frame.info.metadata.isEmpty())) {
                 mutable.update { it.copy(notice = Notice(R.string.changes_applied)) }
@@ -710,13 +731,6 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
                 return@work
             }
             discardResize()
-            val options =
-                ExportOptions(
-                    metadata = metadata,
-                    static = static,
-                    flatten = flatten,
-                    keepColor = keepColor,
-                )
             val target = Photos.export(workspace.work, frame.source, frame.info, options)
             try {
                 push(target)

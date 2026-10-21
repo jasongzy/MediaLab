@@ -15,6 +15,7 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
@@ -59,7 +60,7 @@ internal fun AudioScreen(model: LabViewModel, state: LabState, active: Boolean) 
     }
     val editor = audio.editor
     val history = editor.history
-    var menu by remember(editor) { mutableStateOf(false) }
+    var menu by rememberSaveable(editor) { mutableStateOf(false) }
     var editTag by editor::tag
     var editPicture by editor::picture
     val coverPicker =

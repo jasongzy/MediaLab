@@ -40,6 +40,7 @@ internal class ResizeSelection(width: Int, height: Int) {
     var height by mutableIntStateOf(height)
     var lock by mutableStateOf(true)
     var method by mutableIntStateOf(2)
+    var preview by mutableStateOf<Bitmap?>(null)
 }
 
 internal class PhotoEditorState(info: PhotoInfo, hasAlpha: Boolean, previous: PhotoEditorState? = null) {
@@ -64,6 +65,8 @@ internal class PhotoEditorState(info: PhotoInfo, hasAlpha: Boolean, previous: Ph
     var pixelX by mutableIntStateOf(info.width / 2)
     var pixelY by mutableIntStateOf(info.height / 2)
     var export: ExportOptions by mutableStateOf(previous?.export ?: ExportOptions())
+    var exportPreviewOptions by mutableStateOf<ExportOptions?>(null)
+    var showExportPreview by mutableStateOf(false)
 
     fun pending(info: PhotoInfo, hasSource: Boolean): List<PhotoTool> = buildList {
         val fullBounds = Rect(0, 0, info.width, info.height)

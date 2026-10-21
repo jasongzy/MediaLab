@@ -16,6 +16,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -25,23 +26,32 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 
+private enum class NotificationAction { CONVERT, RETRY, CLEANUP }
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun NcmScreen(model: LabViewModel, state: BatchState) {
     val context = LocalContext.current
-    var options by remember { mutableStateOf(false) }
-    var menu by remember { mutableStateOf(false) }
-    var addMenu by remember { mutableStateOf(false) }
-    var failures by remember { mutableStateOf(false) }
-    var confirm by remember { mutableStateOf<Boolean?>(null) }
-    var notificationAction by remember { mutableStateOf<(() -> Unit)?>(null) }
-    var askedNotification by remember { mutableStateOf(false) }
+    var options by rememberSaveable { mutableStateOf(false) }
+    var menu by rememberSaveable { mutableStateOf(false) }
+    var addMenu by rememberSaveable { mutableStateOf(false) }
+    var failures by rememberSaveable { mutableStateOf(false) }
+    var confirm by rememberSaveable { mutableStateOf<Boolean?>(null) }
+    var notificationAction by rememberSaveable { mutableStateOf<NotificationAction?>(null) }
+    var askedNotification by rememberSaveable { mutableStateOf(false) }
+    fun perform(action: NotificationAction) {
+        when (action) {
+            NotificationAction.CONVERT -> NcmBatch.convert(context, false)
+            NotificationAction.RETRY -> NcmBatch.convert(context, true)
+            NotificationAction.CLEANUP -> NcmBatch.inspectCleanup(context)
+        }
+    }
     val permission =
         rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
-            notificationAction?.invoke()
+            notificationAction?.let(::perform)
             notificationAction = null
         }
-    val notifyThen: (() -> Unit) -> Unit = { action ->
+    val notifyThen: (NotificationAction) -> Unit = { action ->
         if (
             Build.VERSION.SDK_INT >= 33 &&
                 !askedNotification &&
@@ -51,7 +61,7 @@ internal fun NcmScreen(model: LabViewModel, state: BatchState) {
             askedNotification = true
             notificationAction = action
             permission.launch(Manifest.permission.POST_NOTIFICATIONS)
-        } else action()
+        } else perform(action)
     }
     val files =
         rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) {
@@ -68,7 +78,7 @@ internal fun NcmScreen(model: LabViewModel, state: BatchState) {
     val start: (Boolean) -> Unit = { retry ->
         if (state.options.deleteOriginal || state.options.conflict == ConflictPolicy.OVERWRITE)
             confirm = retry
-        else notifyThen { NcmBatch.convert(context, retry) }
+        else notifyThen(if (retry) NotificationAction.RETRY else NotificationAction.CONVERT)
     }
     Column(Modifier.fillMaxSize()) {
         Row(
@@ -124,7 +134,7 @@ internal fun NcmScreen(model: LabViewModel, state: BatchState) {
                             state.items.any { it.selected && it.file.ncm && !it.sourceDeleted },
                         onClick = {
                             menu = false
-                            notifyThen { NcmBatch.inspectCleanup(context) }
+                            notifyThen(NotificationAction.CLEANUP)
                         },
                     )
                     DropdownMenuItem(
@@ -417,7 +427,7 @@ internal fun NcmScreen(model: LabViewModel, state: BatchState) {
             confirmButton = {
                 TextButton({
                     confirm = null
-                    notifyThen { NcmBatch.convert(context, retry) }
+                    notifyThen(if (retry) NotificationAction.RETRY else NotificationAction.CONVERT)
                 }) {
                     Text(
                         stringResource(R.string.batch_start),

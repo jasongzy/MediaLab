@@ -25,6 +25,8 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.listSaver
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
@@ -41,6 +43,7 @@ import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
@@ -62,11 +65,21 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
+
+private val viewportSaver = listSaver<ImageViewport, Float>(
+    save = { listOf(it.scale, it.offset.x, it.offset.y) },
+    restore = { ImageViewport(it[0], Offset(it[1], it[2])) },
+)
+private val canvasSizeSaver = listSaver<Size, Float>(
+    save = { listOf(it.width, it.height) },
+    restore = { Size(it[0], it[1]) },
+)
 
 @Composable
 internal fun PhotoScreen(model: LabViewModel, state: LabState) {
@@ -96,7 +109,7 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
     }
     val info = photo.info
     val editor = checkNotNull(photo.editor)
-    var menu by remember(editor) { mutableStateOf(false) }
+    var menu by rememberSaveable(editor) { mutableStateOf(false) }
     var tool by editor::tool
     val toolScroll = key(photo.history.first()) { rememberLazyListState() }
     val panelScroll = key(photo.history.first()) { rememberScrollState() }
@@ -137,15 +150,6 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
     var dropper by editor::dropper
     var pixelX by editor::pixelX
     var pixelY by editor::pixelY
-    var pixelAction by remember { mutableStateOf<(() -> Unit)?>(null) }
-    var pixelLosses by remember { mutableStateOf(emptyList<Int>()) }
-    fun edit(forceSrgb: Boolean = false, action: () -> Unit) {
-        val losses = info.color.losses(forceSrgb)
-        if (losses.isNotEmpty()) {
-            pixelLosses = losses
-            pixelAction = action
-        } else action()
-    }
     LaunchedEffect(photo.picked, dropper, tool) {
         if (dropper && photo.picked != null) {
             val picked = photo.picked or (255 shl 24)
@@ -284,7 +288,7 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
                     when (tool) {
                         PhotoTool.CROP, PhotoTool.EXPAND -> {
                             var lossless by editor::lossless
-                            var inputRevision by remember(frameHistory) { mutableIntStateOf(0) }
+                            var inputRevision by rememberSaveable(frameHistory) { mutableIntStateOf(0) }
                             var inputValid by remember(frameHistory, inputRevision) { mutableStateOf(true) }
                             val ratios =
                                 listOf(
@@ -372,7 +376,7 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
                                 }
                                 Button(
                                     onClick = {
-                                        if (expanding) edit { model.expand(Rect(bounds), background) }
+                                        if (expanding) model.expand(Rect(bounds), background)
                                         else if (lossless && canLossless) {
                                             val aligned =
                                                 Rect(bounds).apply {
@@ -381,7 +385,7 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
                                                 }
                                             setBounds(aligned)
                                             model.crop(aligned, true)
-                                        } else edit { model.crop(bounds, false) }
+                                        } else model.crop(bounds, false)
                                     },
                                     enabled = inputValid && (!expanding || bounds != Rect(0, 0, info.width, info.height)),
                                 ) {
@@ -390,7 +394,7 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
                             }
                         }
                         PhotoTool.ROTATE -> RotationPanel(editor) { selection ->
-                            edit { model.rotate(selection, rotationBackground) }
+                            model.rotate(selection, rotationBackground)
                         }
                         PhotoTool.BACKGROUND -> BackgroundPanel(model, photo, state.storedMask != null)
                         PhotoTool.COVER -> {
@@ -451,7 +455,7 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
                                     Text(stringResource(R.string.clear_cover))
                                 }
                                 Button(
-                                    { edit { model.cover(strokes) } },
+                                    { model.cover(strokes) },
                                     enabled = strokes.isNotEmpty(),
                                 ) {
                                     Text(stringResource(R.string.apply))
@@ -460,7 +464,7 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
                         }
                         PhotoTool.RESIZE ->
                             ResizePanel(model, info, resize) { w, h, method ->
-                                edit { model.resize(w, h, method) }
+                                model.resize(w, h, method)
                             }
                         PhotoTool.COLORS -> {
                             Text(
@@ -515,17 +519,12 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
                             CleanupOptions(info, cleanup) { cleanup = it }
                             Button(
                                 {
-                                    val action = {
-                                        model.clean(
-                                            cleanup.static,
-                                            cleanup.flatten,
-                                            cleanup.metadata,
-                                            cleanup.keepColor,
-                                        )
-                                    }
-                                    if (!cleanup.preservesSource(info))
-                                        edit(forceSrgb = !cleanup.keepColor, action = action)
-                                    else action()
+                                    model.clean(
+                                        cleanup.static,
+                                        cleanup.flatten,
+                                        cleanup.metadata,
+                                        cleanup.keepColor,
+                                    )
                                 },
                                 Modifier.align(Alignment.End),
                             ) {
@@ -599,35 +598,29 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
                 }
             }
 
-            if (wide) {
-                Row(Modifier.weight(1f)) {
-                    preview(Modifier.weight(1f).fillMaxHeight().padding(horizontal = 12.dp))
-                    Column(Modifier.weight(1f).fillMaxHeight()) { controls() }
+            Layout(
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+                content = {
+                    preview(Modifier.padding(horizontal = 12.dp))
+                    Column { controls() }
+                },
+            ) { children, constraints ->
+                val width = constraints.maxWidth
+                val height = constraints.maxHeight
+                val panelWidth = if (wide) width - width / 2 else width
+                val panelHeight = if (wide) height else panelHeight.roundToPx().coerceAtMost(height)
+                val canvas = children[0].measure(Constraints.fixed(
+                    if (wide) width - panelWidth else width,
+                    if (wide) height else height - panelHeight,
+                ))
+                val panel = children[1].measure(Constraints.fixed(panelWidth, panelHeight))
+                layout(width, height) {
+                    canvas.placeRelative(0, 0)
+                    panel.placeRelative(if (wide) canvas.width else 0, if (wide) 0 else canvas.height)
                 }
-            } else {
-                preview(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 12.dp))
-                Column(Modifier.fillMaxWidth().height(panelHeight)) { controls() }
             }
         }
     }
-    if (pixelAction != null)
-        AlertDialog(
-            onDismissRequest = { pixelAction = null },
-            title = { Text(stringResource(R.string.convert_color)) },
-            text = { Text(stringResource(R.string.convert_color_message, colorLosses(pixelLosses))) },
-            confirmButton = {
-                TextButton({
-                    val action = pixelAction
-                    pixelAction = null
-                    action?.invoke()
-                }) {
-                    Text(stringResource(R.string.convert_and_apply))
-                }
-            },
-            dismissButton = {
-                TextButton({ pixelAction = null }) { Text(stringResource(R.string.cancel)) }
-            },
-        )
 }
 
 @Composable
@@ -835,8 +828,11 @@ private fun PhotoCanvas(
         snapGuideAlpha(snapGuides.first) to snapGuideAlpha(snapGuides.second)
     }
     val initialScale = if (expanding) 0.6f else if (rotation != null) 0.8f else 0.9f
-    var viewport by remember(photo.frame, expanding, tool == PhotoTool.ROTATE) { mutableStateOf(ImageViewport(initialScale)) }
-    var canvasSize by remember { mutableStateOf(Size.Zero) }
+    var viewport by rememberSaveable(photo.frame, expanding, tool == PhotoTool.ROTATE, stateSaver = viewportSaver) {
+        mutableStateOf(ImageViewport(initialScale))
+    }
+    var fittedRatio by rememberSaveable(photo.frame, expanding) { mutableStateOf<Float?>(null) }
+    var canvasSize by rememberSaveable(stateSaver = canvasSizeSaver) { mutableStateOf(Size.Zero) }
     var toolbarSize by remember { mutableStateOf(IntSize.Zero) }
     var rotationDragging by remember(photo.frame, tool) { mutableStateOf(false) }
     val focus = LocalFocusManager.current
@@ -849,8 +845,11 @@ private fun PhotoCanvas(
         FloatRect(bounds.left.toFloat(), bounds.top.toFloat(), bounds.right.toFloat(), bounds.bottom.toFloat()),
     )
     LaunchedEffect(photo.frame, expanding, ratio, canvasSize, minScale, imageSize, rotationDragging) {
-        if (!canvasSize.isEmpty() && !rotationDragging) viewport = if (expanding) fitted()
-            else viewport.constrained(canvasSize, imageSize, minScale = minScale)
+        if (!canvasSize.isEmpty() && !rotationDragging) {
+            viewport = if (expanding && fittedRatio != ratio) fitted()
+                else viewport.constrained(canvasSize, imageSize, outside = expanding, minScale = minScale)
+            fittedRatio = ratio
+        }
     }
     val rotationHandle = if (rotationMatrix != null && !dropper && !showOriginal && !canvasSize.isEmpty()) {
         val point = floatArrayOf(info.width / 2f, 0f)
@@ -886,7 +885,13 @@ private fun PhotoCanvas(
         modifier
             .clipToBounds()
             .onSizeChanged {
-                canvasSize = Size(it.width.toFloat(), it.height.toFloat())
+                val next = Size(it.width.toFloat(), it.height.toFloat())
+                if (!canvasSize.isEmpty() && !next.isEmpty()) {
+                    val previousFit = minOf(canvasSize.width / imageSize.width, canvasSize.height / imageSize.height)
+                    val nextFit = minOf(next.width / imageSize.width, next.height / imageSize.height)
+                    viewport = viewport.copy(offset = viewport.offset * (nextFit / previousFit))
+                }
+                canvasSize = next
             }
             .background(MaterialTheme.colorScheme.surfaceContainer)
     ) {
@@ -1485,7 +1490,7 @@ private fun RotationPanel(editor: PhotoEditorState, apply: (RotationSelection) -
     val selection = history.value
     val focus = LocalFocusManager.current
     var dragging by remember(history) { mutableStateOf(false) }
-    var inputRevision by remember(history) { mutableIntStateOf(0) }
+    var inputRevision by rememberSaveable(history) { mutableIntStateOf(0) }
     var hasDraft by remember(history, inputRevision) { mutableStateOf(false) }
     var inputValid by remember(history, inputRevision) { mutableStateOf(true) }
     fun finishInput() {
@@ -1580,8 +1585,8 @@ private fun ResizePanel(
     val width = selection.width
     val height = selection.height
     val method = selection.method
-    var preview by remember(info) { mutableStateOf<android.graphics.Bitmap?>(null) }
-    var inputRevision by remember(selection) { mutableIntStateOf(0) }
+    var preview by selection::preview
+    var inputRevision by rememberSaveable(selection) { mutableIntStateOf(0) }
     var widthHasDraft by remember(selection, width, inputRevision) { mutableStateOf(false) }
     var heightHasDraft by remember(selection, height, inputRevision) { mutableStateOf(false) }
     var widthValid by remember(selection, inputRevision) { mutableStateOf(true) }
@@ -1679,7 +1684,7 @@ private fun ColorField(
     pick: (() -> Unit)? = null,
     change: (Int) -> Unit,
 ) {
-    var hex by remember(color) { mutableStateOf("%06X".format(color and 0xffffff)) }
+    var hex by rememberSaveable(color) { mutableStateOf("%06X".format(color and 0xffffff)) }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -1766,9 +1771,10 @@ private fun ColorSwatch(color: Int, modifier: Modifier = Modifier) {
 @Composable
 private fun ExportPanel(model: LabViewModel, state: LabState) {
     val info = checkNotNull(state.photo.info)
-    var options by checkNotNull(state.photo.editor)::export
-    var previewOptions by remember { mutableStateOf<ExportOptions?>(null) }
-    var showPreview by remember { mutableStateOf(false) }
+    val editor = checkNotNull(state.photo.editor)
+    var options by editor::export
+    var previewOptions by editor::exportPreviewOptions
+    var showPreview by editor::showExportPreview
     LaunchedEffect(state.error) { if (state.error != null) showPreview = false }
     val context = LocalContext.current
     ChoiceChips(

@@ -40,8 +40,6 @@ import androidx.compose.ui.window.Dialog
 import androidx.core.content.IntentCompat
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.lifecycle.lifecycleScope
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 class MainActivity : AppCompatActivity() {
@@ -67,22 +65,14 @@ class MainActivity : AppCompatActivity() {
                 if (isSystemInDarkTheme()) dynamicDarkColorScheme(context)
                 else dynamicLightColorScheme(context)
             MaterialTheme(colorScheme = colors) { LabApp(model, state, ::finish) }
-            LaunchedEffect(Unit) {
-                if (savedInstanceState == null) {
-                    model.state.first { !it.busy }
-                    receive(intent)
-                }
-            }
         }
+        if (savedInstanceState == null) receive(intent)
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        lifecycleScope.launch {
-            model.state.first { !it.busy }
-            receive(intent)
-        }
+        receive(intent)
     }
 
     private fun receive(intent: Intent) {
@@ -94,7 +84,7 @@ class MainActivity : AppCompatActivity() {
                 Intent.ACTION_VIEW -> intent.data
                 else -> null
             }
-        if (uri != null) model.open(uri, if (uri.scheme == "http") ImportType.IMAGE else null)
+        if (uri != null) model.receive(uri)
     }
 }
 
@@ -104,8 +94,8 @@ private fun LabApp(model: LabViewModel, state: LabState, exit: () -> Unit) {
     val batch by NcmBatch.state.collectAsStateWithLifecycle()
     var settings by rememberSaveable { mutableStateOf(false) }
     val clearingCache = state.busy && state.stage == R.string.clearing_cache
-    var confirmExit by remember { mutableStateOf(false) }
-    var stopAndExit by remember { mutableStateOf(false) }
+    var confirmExit by rememberSaveable { mutableStateOf(false) }
+    var stopAndExit by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(stopAndExit, batch.busy) {
         if (stopAndExit && !batch.busy) {
             NcmBatch.clear()
@@ -217,7 +207,7 @@ private fun LabApp(model: LabViewModel, state: LabState, exit: () -> Unit) {
             text = {
                 Text(
                     if (action == Confirmation.CONVERT_COLOR)
-                        stringResource(action.message, colorLosses(checkNotNull(state.photo.info).color.losses()))
+                        stringResource(action.message, colorLosses(state.colorLosses))
                     else stringResource(action.message)
                 )
             },
@@ -349,7 +339,7 @@ internal fun FileName(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val openWith = stringResource(R.string.open_with)
-    var details by remember(name, sourceUri) { mutableStateOf(false) }
+    var details by rememberSaveable(name, sourceUri) { mutableStateOf(false) }
     Text(
         name,
         modifier.combinedClickable(
@@ -458,7 +448,7 @@ internal fun EmptyWorkspace(
     extraAction: @Composable () -> Unit = {},
 ) {
     Column(
-        Modifier.fillMaxSize().padding(32.dp),
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(32.dp),
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally,
     ) {

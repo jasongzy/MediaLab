@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.pointer.pointerInput
@@ -59,7 +60,8 @@ internal fun NumberField(
     parse: (String) -> Int? = String::toIntOrNull,
     change: (Int) -> Unit,
 ) {
-    var text by remember { mutableStateOf(value.toString()) }
+    var text by rememberSaveable { mutableStateOf(value.toString()) }
+    var previousValue by rememberSaveable { mutableIntStateOf(value) }
     var dragging by remember { mutableStateOf(false) }
     val currentValue by rememberUpdatedState(value)
     val currentRange by rememberUpdatedState(range)
@@ -79,7 +81,8 @@ internal fun NumberField(
     val valid = parse(text) in range
     SideEffect { onValidityChanged(valid) }
     LaunchedEffect(value) {
-        if (parse(text) != value) text = value.toString()
+        if (previousValue != value && parse(text) != value) text = value.toString()
+        previousValue = value
         onDraftChanged(text != value.toString())
     }
     OutlinedTextField(

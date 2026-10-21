@@ -110,7 +110,6 @@
     <string name="open">Open</string>
     <string name="convert_color">Convert image to continue editing?</string>
     <string name="convert_color_message">This edit converts the image. The following features will be lost:\n%1$s</string>
-    <string name="convert_and_apply">Convert and apply</string>
     <string name="transparent_input">Continue removing the background?</string>
     <string name="transparent_input_message">Fully transparent areas will appear black to the model, which may affect the result. Continue?</string>
     <string name="continue_action">Continue</string>
