@@ -135,7 +135,9 @@ internal object Containers {
     fun inspect(file: File): PhotoContainer? {
         file.inputStream().use { if (it.read() != 255 || it.read() != 216) return null }
         val layout = jpeg(file)
-        var video: ByteRange? = null
+        var motion: Boolean? = null
+        var videoLength: Long? = null
+        var microVideoLength: Long? = null
         var edit: ByteRange? = null
         var gainmap: ByteRange? = null
         for (part in layout.parts) {
@@ -152,19 +154,12 @@ internal object Containers {
                             "Unsupported Xiaomi edit version"
                         }
                     }
-                    if (element.getAttributeNS(ITEM, "Semantic") == "MotionPhoto") {
-                        video =
-                            checkedRange(
-                                file,
-                                file.length() - element.getAttributeNS(ITEM, "Length").toLong(),
-                                element.getAttributeNS(ITEM, "Length").toLong(),
-                                layout.end,
-                            )
-                    }
-                    if (video == null && element.hasAttributeNS(CAMERA, "MicroVideoOffset")) {
-                        val length = element.getAttributeNS(CAMERA, "MicroVideoOffset").toLong()
-                        video = checkedRange(file, file.length() - length, length, layout.end)
-                    }
+                    if (element.hasAttributeNS(CAMERA, "MotionPhoto"))
+                        motion = element.getAttributeNS(CAMERA, "MotionPhoto") == "1"
+                    if (element.getAttributeNS(ITEM, "Semantic") == "MotionPhoto")
+                        videoLength = element.getAttributeNS(ITEM, "Length").toLongOrNull()
+                    if (element.hasAttributeNS(CAMERA, "MicroVideoOffset"))
+                        microVideoLength = element.getAttributeNS(CAMERA, "MicroVideoOffset").toLongOrNull()
                 }
             }
             if (part.marker == 0xe2 && part.payload.startsWith("MPF\u0000".toByteArray())) {
@@ -190,13 +185,16 @@ internal object Containers {
                 }
             }
         }
-        video?.let { range ->
+        var video: ByteRange? = null
+        val length = videoLength ?: microVideoLength
+        // Editors may retain Motion Photo XMP after stripping the appended video.
+        if (motion != false && length != null && length in 8..(file.length() - (gainmap?.end ?: layout.end))) {
+            val start = file.length() - length
             RandomAccessFile(file, "r").use { input ->
-                input.seek(range.start)
+                input.seek(start)
                 val size = input.readInt().toLong() and 0xffffffffL
-                require(size in 8..range.length && input.readInt() == 0x66747970) {
-                    "Invalid motion video container"
-                }
+                if (size in 8..length && input.readInt() == 0x66747970)
+                    video = ByteRange(start, length)
             }
         }
         edit?.let {
@@ -206,9 +204,6 @@ internal object Containers {
             ) {
                 "Overlapping image attachments"
             }
-        }
-        video?.let {
-            require(it.start >= (gainmap?.end ?: layout.end)) { "Overlapping motion video" }
         }
         return PhotoContainer(layout, gainmap, video, edit)
     }

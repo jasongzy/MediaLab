@@ -83,6 +83,34 @@ class MediaCoreTest {
     }
 
     @Test
+    fun motionMetadataRequiresAnEnabledAndPresentVideo() {
+        val image = BufferedImage(3, 2, BufferedImage.TYPE_INT_RGB)
+        val jpeg = ByteArrayOutputStream().also { ImageIO.write(image, "jpeg", it) }.toByteArray()
+        val video = ByteBuffer.allocate(24).putInt(24).put("ftypmp42".toByteArray()).array()
+        for ((flag, offset, append) in listOf(
+            Triple("0", 0, false), Triple("0", 24, true),
+            Triple("1", 24, false), Triple("1", 24, true), Triple("", 24, true),
+        )) {
+            val attributes = "xmlns:GCamera=\"http://ns.google.com/photos/1.0/camera/\" " +
+                (if (flag.isEmpty()) "" else "GCamera:MotionPhoto=\"$flag\" ") + "GCamera:MicroVideoOffset=\"$offset\""
+            val source = folder.newFile()
+            source.writeBytes(jpeg.take(2).toByteArray() + segment(0xe1, xmp(attributes)) +
+                jpeg.drop(2).toByteArray() + if (append) video else byteArrayOf())
+            assertEquals(append && flag != "0", Containers.inspect(source)!!.video != null)
+            val output = folder.newFile()
+            Containers.clean(source, output, true, true, true)
+            assertNull(Containers.inspect(output)!!.video)
+            assertEquals(jpeg.size.toLong(), output.length())
+        }
+        val source = folder.newFile()
+        source.writeBytes(jpeg.take(2).toByteArray() + segment(0xe1, xmp(
+            "xmlns:GCamera=\"http://ns.google.com/photos/1.0/camera/\" GCamera:MotionPhoto=\"1\" GCamera:MicroVideoOffset=\"0\"",
+            "<Item:Item xmlns:Item=\"http://ns.google.com/photos/1.0/container/item/\" Item:Semantic=\"MotionPhoto\" Item:Length=\"24\"/>",
+        )) + jpeg.drop(2).toByteArray() + video)
+        assertEquals(24L, Containers.inspect(source)!!.video!!.length)
+    }
+
+    @Test
     fun invalidAttachmentsAndCancelledCopiesFailClosed() {
         val source = compoundPhoto()
         val broken = folder.newFile("broken.jpg")
