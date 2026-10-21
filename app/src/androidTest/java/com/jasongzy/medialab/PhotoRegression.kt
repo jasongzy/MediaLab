@@ -156,7 +156,7 @@ internal class PhotoRegression(
                             else source.getColor(x, y).alpha()
                         check(abs(hardenedOutput.getColor(x, y).alpha() - alpha) < 0.002f)
                         val previewAlpha = rendered.getColor(x, y).alpha()
-                        check(previewAlpha == 0f || abs(previewAlpha - source.getColor(x, y).alpha()) < 0.002f)
+                        check(abs(previewAlpha - alpha) < 0.002f)
                     }
                     check(rendered.getColor(8, 128).alpha() == 0f)
                     check(abs(rendered.getColor(1, 127).alpha() - source.getColor(1, 127).alpha()) < 0.002f)

@@ -561,40 +561,38 @@ internal object Photos {
     ) {
         val coroutine = currentCoroutineContext()
         val row = FloatArray(width)
-        val groups = mutableListOf(mutableListOf<Stroke>())
-        for (edit in edits) when (edit) {
-            // Opaque black/white strokes encode removal/retention; alpha records brush coverage.
-            is Stroke -> groups.last().add(edit.copy(color = if (edit.clearsPixels) Color.BLACK else Color.WHITE))
-            MaskEdit.Harden -> groups.add(mutableListOf())
-        }
         val tileHeight = if (edits.isEmpty()) 1 else minOf(height, 128, maxOf(1, 256 * 1024 / width))
-        val coverage = FloatArray(width * tileHeight)
-        val tile = if (groups.any { it.isNotEmpty() }) createBitmap(width, tileHeight) else null
+        val pixels = IntArray(width * tileHeight)
+        // Match the floating-point preview layers while blending overlapping soft strokes.
+        val tile = if (edits.isEmpty()) null else createBitmap(width, tileHeight, Bitmap.Config.RGBA_F16)
         try {
             val canvas = tile?.let(::Canvas)
-            val brush = if (tile == null) null else IntArray(coverage.size)
             mask.alpha(width, height, { coroutine.ensureActive() }) { y, alpha ->
                 val tileRow = y % tileHeight
-                for (x in alpha.indices) coverage[tileRow * width + x] = alpha[x] / 255f
+                for (x in alpha.indices) pixels[tileRow * width + x] = (alpha[x] shl 24) or 0x00ffffff
                 if (tileRow == tileHeight - 1 || y == height - 1) {
                     val rows = tileRow + 1
                     val startY = y - tileRow
-                    for ((index, strokes) in groups.withIndex()) {
-                        coroutine.ensureActive()
-                        if (index > 0)
-                            for (i in 0 until rows * width) coverage[i] = if (coverage[i] >= 0.5f) 1f else 0f
-                        if (strokes.isNotEmpty() && tile != null && canvas != null && brush != null) {
-                            tile.eraseColor(Color.TRANSPARENT)
-                            canvas.withTranslation(0f, -startY.toFloat()) { cover(this, strokes) }
-                            tile.getPixels(brush, 0, width, 0, 0, width, rows)
-                            for (i in 0 until rows * width) {
-                                val strength = (brush[i] ushr 24) / 255f
-                                coverage[i] = coverage[i] * (1f - strength) + Color.red(brush[i]) / 255f * strength
+                    if (tile != null && canvas != null) {
+                        tile.setPixels(pixels, 0, width, 0, 0, width, rows)
+                        canvas.withTranslation(0f, -startY.toFloat()) {
+                            for (edit in edits) {
+                                coroutine.ensureActive()
+                                when (edit) {
+                                    is Stroke -> cover(this, listOf(edit))
+                                    MaskEdit.Harden -> {
+                                        tile.getPixels(pixels, 0, width, 0, 0, width, rows)
+                                        for (i in 0 until rows * width)
+                                            pixels[i] = if (pixels[i] ushr 24 >= 128) Color.WHITE else Color.TRANSPARENT
+                                        tile.setPixels(pixels, 0, width, 0, 0, width, rows)
+                                    }
+                                }
                             }
                         }
+                        tile.getPixels(pixels, 0, width, 0, 0, width, rows)
                     }
                     for (i in 0 until rows) {
-                        coverage.copyInto(row, 0, i * width, (i + 1) * width)
+                        for (x in row.indices) row[x] = (pixels[i * width + x] ushr 24) / 255f
                         writeRow(startY + i, row)
                     }
                 }
