@@ -53,6 +53,7 @@ internal fun NumberField(
     modifier: Modifier,
     range: IntRange = 1..100000,
     onDraftChanged: (Boolean) -> Unit = {},
+    onValidityChanged: (Boolean) -> Unit = {},
     onDragStarted: () -> Unit = {},
     onDragFinished: (Boolean) -> Unit = {},
     parse: (String) -> Int? = String::toIntOrNull,
@@ -75,6 +76,8 @@ internal fun NumberField(
     val hint = stringResource(R.string.drag_to_adjust)
     val description = stringResource(R.string.adjust_value, stringResource(label))
     val adjustable = range.first < range.last
+    val valid = parse(text) in range
+    SideEffect { onValidityChanged(valid) }
     LaunchedEffect(value) {
         if (parse(text) != value) text = value.toString()
         onDraftChanged(text != value.toString())
@@ -97,7 +100,7 @@ internal fun NumberField(
         },
         label = { Text(stringResource(label)) },
         singleLine = true,
-        isError = parse(text) !in range,
+        isError = !valid,
         keyboardOptions = KeyboardOptions(keyboardType = if (range.first < 0) KeyboardType.Ascii else KeyboardType.Number),
         trailingIcon = {
             TooltipBox(

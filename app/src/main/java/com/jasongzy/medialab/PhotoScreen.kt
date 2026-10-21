@@ -284,6 +284,8 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
                     when (tool) {
                         PhotoTool.CROP, PhotoTool.EXPAND -> {
                             var lossless by editor::lossless
+                            var inputRevision by remember(frameHistory) { mutableIntStateOf(0) }
+                            var inputValid by remember(frameHistory, inputRevision) { mutableStateOf(true) }
                             val ratios =
                                 listOf(
                                     0f to stringResource(R.string.free_ratio),
@@ -311,10 +313,13 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
                                         ))
                                     }
                                 }
-                                HistoryButtons(frameHistory) { dropper = false }
+                                HistoryButtons(frameHistory) {
+                                    dropper = false
+                                    inputRevision++
+                                }
                             }
-                            key(frameHistory) {
-                                FrameFields(frameHistory, info, expanding)
+                            key(frameHistory, inputRevision) {
+                                FrameFields(frameHistory, info, expanding) { inputValid = it }
                             }
                             if (expanding) {
                                 ColorField(background, allowTransparent = true, pick = { dropper = !dropper }) {
@@ -357,8 +362,11 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
                                 }
                                 val initialFrame = FrameSelection(Rect(0, 0, info.width, info.height))
                                 TextButton(
-                                    { frameHistory.change(initialFrame) },
-                                    enabled = frameHistory.value != initialFrame,
+                                    {
+                                        inputRevision++
+                                        frameHistory.change(initialFrame)
+                                    },
+                                    enabled = frameHistory.value != initialFrame || !inputValid,
                                 ) {
                                     Text(stringResource(if (expanding) R.string.reset_canvas else R.string.reset_crop))
                                 }
@@ -375,7 +383,7 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
                                             model.crop(aligned, true)
                                         } else edit { model.crop(bounds, false) }
                                     },
-                                    enabled = !expanding || bounds != Rect(0, 0, info.width, info.height),
+                                    enabled = inputValid && (!expanding || bounds != Rect(0, 0, info.width, info.height)),
                                 ) {
                                     Text(stringResource(R.string.apply))
                                 }
@@ -1351,11 +1359,22 @@ private fun HistoryButtons(history: ToolHistory<*>, beforeChange: () -> Unit) {
 }
 
 @Composable
-private fun FrameFields(history: ToolHistory<FrameSelection>, info: PhotoInfo, expand: Boolean) {
+private fun FrameFields(
+    history: ToolHistory<FrameSelection>,
+    info: PhotoInfo,
+    expand: Boolean,
+    onValidityChanged: (Boolean) -> Unit,
+) {
     val selection = history.value
     val bounds = selection.bounds
     val ratio = selection.ratio
     var dragging by remember { mutableStateOf(false) }
+    var widthValid by remember { mutableStateOf(true) }
+    var heightValid by remember { mutableStateOf(true) }
+    var leftValid by remember { mutableStateOf(true) }
+    var topValid by remember { mutableStateOf(true) }
+    val valid = widthValid && heightValid && leftValid && topValid
+    SideEffect { onValidityChanged(valid) }
     val startDrag = { dragging = true }
     val finishDrag: (Boolean) -> Unit = { commit ->
         dragging = false
@@ -1375,6 +1394,7 @@ private fun FrameFields(history: ToolHistory<FrameSelection>, info: PhotoInfo, e
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         NumberField(
             R.string.width, frame.width, Modifier.weight(1f), minimum.width..maximum.width,
+            onValidityChanged = { widthValid = it },
             onDragStarted = startDrag, onDragFinished = finishDrag,
         ) { width ->
             val height = if (ratio > 0 && width != frame.width) (width / ratio).roundToInt().coerceIn(
@@ -1384,6 +1404,7 @@ private fun FrameFields(history: ToolHistory<FrameSelection>, info: PhotoInfo, e
         }
         NumberField(
             R.string.height, frame.height, Modifier.weight(1f), minimum.height..maximum.height,
+            onValidityChanged = { heightValid = it },
             onDragStarted = startDrag, onDragFinished = finishDrag,
         ) { height ->
             val width = if (ratio > 0 && height != frame.height) (height * ratio).roundToInt().coerceIn(
@@ -1398,6 +1419,7 @@ private fun FrameFields(history: ToolHistory<FrameSelection>, info: PhotoInfo, e
             if (expand) -frame.left else frame.left,
             Modifier.weight(1f),
             0..if (expand) maximum.width - image.width else image.width - 1,
+            onValidityChanged = { leftValid = it },
             onDragStarted = startDrag, onDragFinished = finishDrag,
         ) { left ->
             update(positionedBounds(frame, image, if (expand) -left else left, frame.top, ratio, expand))
@@ -1407,6 +1429,7 @@ private fun FrameFields(history: ToolHistory<FrameSelection>, info: PhotoInfo, e
             if (expand) -frame.top else frame.top,
             Modifier.weight(1f),
             0..if (expand) maximum.height - image.height else image.height - 1,
+            onValidityChanged = { topValid = it },
             onDragStarted = startDrag, onDragFinished = finishDrag,
         ) { top ->
             update(positionedBounds(frame, image, frame.left, if (expand) -top else top, ratio, expand))
@@ -1422,6 +1445,7 @@ private fun RotationPanel(editor: PhotoEditorState, apply: (RotationSelection) -
     var dragging by remember(history) { mutableStateOf(false) }
     var inputRevision by remember(history) { mutableIntStateOf(0) }
     var hasDraft by remember(history, inputRevision) { mutableStateOf(false) }
+    var inputValid by remember(history, inputRevision) { mutableStateOf(true) }
     fun finishInput() {
         focus.clearFocus()
         editor.dropper = false
@@ -1434,6 +1458,7 @@ private fun RotationPanel(editor: PhotoEditorState, apply: (RotationSelection) -
             NumberField(
                 R.string.rotation_angle, selection.angle, Modifier.weight(1f), -180..180,
                 onDraftChanged = { hasDraft = it },
+                onValidityChanged = { inputValid = it },
                 onDragStarted = {
                     dragging = true
                     editor.dropper = false
@@ -1498,7 +1523,7 @@ private fun RotationPanel(editor: PhotoEditorState, apply: (RotationSelection) -
                 finishInput()
                 apply(selection)
             },
-            enabled = selection.changed,
+            enabled = selection.changed && inputValid,
         ) { Text(stringResource(R.string.apply)) }
     }
 }
@@ -1517,15 +1542,23 @@ private fun ResizePanel(
     var inputRevision by remember(selection) { mutableIntStateOf(0) }
     var widthHasDraft by remember(selection, width, inputRevision) { mutableStateOf(false) }
     var heightHasDraft by remember(selection, height, inputRevision) { mutableStateOf(false) }
+    var widthValid by remember(selection, inputRevision) { mutableStateOf(true) }
+    var heightValid by remember(selection, inputRevision) { mutableStateOf(true) }
     key(selection, inputRevision) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            NumberField(R.string.width, width, Modifier.weight(1f), onDraftChanged = { widthHasDraft = it }) {
+            NumberField(
+                R.string.width, width, Modifier.weight(1f),
+                onDraftChanged = { widthHasDraft = it }, onValidityChanged = { widthValid = it },
+            ) {
                 selection.width = it
                 if (selection.lock)
                     selection.height = if (it == width) height
                         else (it.toDouble() * info.height / info.width).roundToInt().coerceAtLeast(1)
             }
-            NumberField(R.string.height, height, Modifier.weight(1f), onDraftChanged = { heightHasDraft = it }) {
+            NumberField(
+                R.string.height, height, Modifier.weight(1f),
+                onDraftChanged = { heightHasDraft = it }, onValidityChanged = { heightValid = it },
+            ) {
                 selection.height = it
                 if (selection.lock)
                     selection.width = if (it == height) width
@@ -1560,10 +1593,12 @@ private fun ResizePanel(
         ) {
             Text(stringResource(R.string.reset_resize))
         }
-        TextButton({ model.previewResize(width, height, method) { preview = it } }) {
+        TextButton({ model.previewResize(width, height, method) { preview = it } }, enabled = widthValid && heightValid) {
             Text(stringResource(R.string.preview))
         }
-        Button({ apply(width, height, method) }) { Text(stringResource(R.string.apply)) }
+        Button({ apply(width, height, method) }, enabled = widthValid && heightValid) {
+            Text(stringResource(R.string.apply))
+        }
     }
     preview?.let { bitmap ->
         AlertDialog(
