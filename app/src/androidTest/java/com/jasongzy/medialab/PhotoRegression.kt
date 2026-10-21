@@ -655,7 +655,7 @@ internal class PhotoRegression(
             model = LabViewModel(app)
             store.put("photo-test", model)
         }
-        val input = File(app.cacheDir, "fixture.jpg")
+        val input = File(app.filesDir, "fixture.jpg")
         val generated = fixture()
         try {
             input.outputStream().use {

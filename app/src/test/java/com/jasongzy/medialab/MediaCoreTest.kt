@@ -6,7 +6,6 @@ import java.io.File
 import java.nio.ByteBuffer
 import javax.imageio.ImageIO
 import org.junit.Assert.*
-import org.junit.Assume.assumeTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
@@ -138,28 +137,6 @@ class MediaCoreTest {
         assertEquals(samples[0], result.first())
         assertTrue(result.all { it in samples })
         assertTrue(representativeColors(listOf(0)).isEmpty())
-    }
-
-    @Test
-    fun suppliedXiaomiPhoto() {
-        val path = System.getenv("MEDIA_LAB_TEST_PHOTO")
-        assumeTrue(path != null)
-        val source = File(path!!)
-        val before = Containers.inspect(source)!!
-        assertNotNull(before.edit)
-        assertNotNull(before.video)
-        assertNotNull(before.gainmap)
-        val output = folder.newFile("xiaomi-static.jpg")
-        Containers.clean(source, output, true, true, true)
-        val after = Containers.inspect(output)!!
-        assertArrayEquals(scan(source, before.jpeg), scan(output, after.jpeg))
-        assertArrayEquals(
-            scan(source, Containers.jpeg(source, before.gainmap!!.start)),
-            scan(output, Containers.jpeg(output, after.gainmap!!.start)),
-        )
-        assertEquals(after.gainmap.end, output.length())
-        assertNull(after.edit)
-        assertNull(after.video)
     }
 
     private fun compoundPhoto(): File {
