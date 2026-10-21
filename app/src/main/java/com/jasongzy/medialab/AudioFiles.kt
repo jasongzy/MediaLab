@@ -53,6 +53,9 @@ internal object AudioFiles {
             TagLib.getMetadata(fd(file))
                 ?: throw UnsupportedMediaException(R.string.select_audio_only)
         val properties = TagLib.getAudioProperties(fd(file))
+        val propertyKeys = if (properties == null) emptySet() else setOf(
+            MediaFormat.KEY_DURATION, MediaFormat.KEY_BIT_RATE, MediaFormat.KEY_SAMPLE_RATE, MediaFormat.KEY_CHANNEL_COUNT,
+        )
         val extractor = MediaExtractor()
         val technical = mutableListOf<Pair<String, String>>()
         try {
@@ -61,7 +64,7 @@ internal object AudioFiles {
                 val format = extractor.getTrackFormat(i)
                 if (format.getString(MediaFormat.KEY_MIME)?.startsWith("audio/") == true) {
                     for (key in format.keys.sorted()) {
-                        if (key.startsWith("csd-")) continue
+                        if (key.startsWith("csd-") || key in propertyKeys) continue
                         val value =
                             when (format.getValueTypeForKey(key)) {
                                 MediaFormat.TYPE_INTEGER -> format.getInteger(key).toString()
