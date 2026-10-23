@@ -8,6 +8,7 @@
     <string name="playback_position">播放进度</string>
     <string name="playback_time">%1$s，共 %2$s</string>
     <string name="unknown_time">—:—</string>
+    <string name="playback_focus_unavailable">暂时无法使用音频，请稍后重试播放</string>
     <string name="playback_error">无法播放此音频（%1$s）</string>
     <string name="pick_photo">选择图片</string>
     <string name="choose_audio">选择音频</string>

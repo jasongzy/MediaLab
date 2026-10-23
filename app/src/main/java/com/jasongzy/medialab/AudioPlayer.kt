@@ -1,5 +1,8 @@
 package com.jasongzy.medialab
 
+import android.media.AudioFocusRequest
+import android.media.AudioManager
+import android.widget.Toast
 import android.net.Uri
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
@@ -16,6 +19,7 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.Player
+import androidx.media3.common.util.ExperimentalApi
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import java.io.File
@@ -23,7 +27,7 @@ import java.util.Locale
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 
-@androidx.annotation.OptIn(UnstableApi::class)
+@androidx.annotation.OptIn(UnstableApi::class, ExperimentalApi::class)
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun AudioPlayer(
@@ -33,6 +37,8 @@ internal fun AudioPlayer(
     rememberPosition: (Long) -> Unit,
 ) {
     val context = LocalContext.current
+    val savePosition by rememberUpdatedState(rememberPosition)
+    var play by remember(file) { mutableStateOf<(() -> Unit)?>(null) }
     var player by remember(file) { mutableStateOf<ExoPlayer?>(null) }
     var position by remember(file) { mutableLongStateOf(initialPosition) }
     var duration by remember(file) { mutableLongStateOf(0) }
@@ -45,14 +51,56 @@ internal fun AudioPlayer(
 
     if (active)
         LifecycleResumeEffect(file) {
-            val current = ExoPlayer.Builder(context.applicationContext).build()
+            val current =
+                ExoPlayer.Builder(context.applicationContext)
+                    // Keep the visible playhead current even when audio is fully buffered.
+                    .experimentalSetDynamicSchedulingEnabled(false)
+                    .build()
+            val audio = context.getSystemService(AudioManager::class.java)
+            val attributes =
+                AudioAttributes.Builder()
+                    .setUsage(C.USAGE_MEDIA)
+                    .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
+                    .build()
+            var focused = false
+            val focus =
+                AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
+                    .setAudioAttributes(attributes.audioAttributesV21.audioAttributes)
+                    .setOnAudioFocusChangeListener { change ->
+                        if (focused && change < 0) current.pause()
+                    }
+                    .build()
+            fun releaseFocus() {
+                if (focused) {
+                    focused = false
+                    audio.abandonAudioFocusRequest(focus)
+                }
+            }
+            fun requestFocus(): Boolean {
+                if (!focused)
+                    focused =
+                        audio.requestAudioFocus(focus) ==
+                            AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+                if (!focused)
+                    Toast.makeText(
+                            context,
+                            R.string.playback_focus_unavailable,
+                            Toast.LENGTH_SHORT,
+                        )
+                        .show()
+                return focused
+            }
             val listener =
                 object : Player.Listener {
                     override fun onEvents(player: Player, events: Player.Events) {
                         if (player.playbackState == Player.STATE_ENDED && player.playWhenReady)
                             player.pause()
+                        if (!player.playWhenReady || player.playerError != null) releaseFocus()
                         duration = player.duration.coerceAtLeast(0)
-                        position = player.currentPosition.coerceAtLeast(0)
+                        if (dragging == null) {
+                            position = player.currentPosition.coerceAtLeast(0)
+                            savePosition(position)
+                        }
                         playing =
                             player.playWhenReady &&
                                 player.playbackState != Player.STATE_ENDED &&
@@ -63,13 +111,7 @@ internal fun AudioPlayer(
                     }
                 }
             current.addListener(listener)
-            current.setAudioAttributes(
-                AudioAttributes.Builder()
-                    .setUsage(C.USAGE_MEDIA)
-                    .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
-                    .build(),
-                true,
-            )
+            current.setAudioAttributes(attributes, false)
             current.setHandleAudioBecomingNoisy(true)
             current.setMediaItem(
                 androidx.media3.common.MediaItem.fromUri(Uri.fromFile(file)),
@@ -77,12 +119,18 @@ internal fun AudioPlayer(
             )
             current.prepare()
             player = current
+            play = {
+                if (current.playbackState == Player.STATE_ENDED) current.seekTo(0)
+                if (requestFocus()) current.play()
+            }
             onPauseOrDispose {
                 position = current.currentPosition.coerceAtLeast(0)
-                rememberPosition(position)
+                savePosition(position)
                 current.removeListener(listener)
+                releaseFocus()
                 current.release()
                 player = null
+                play = null
                 playing = false
                 dragging = null
             }
@@ -94,11 +142,17 @@ internal fun AudioPlayer(
             showBuffering = true
         }
     }
-    LaunchedEffect(player, playing) {
+    LaunchedEffect(player, playing, dragging != null) {
         val current = player ?: return@LaunchedEffect
-        while (isActive && playing) {
-            position = current.currentPosition.coerceAtLeast(0)
-            delay(200)
+        var lastSaved = 0L
+        while (isActive && playing && dragging == null) {
+            withFrameNanos { time ->
+                position = current.currentPosition.coerceAtLeast(0)
+                if (time - lastSaved >= 200_000_000L) {
+                    savePosition(position)
+                    lastSaved = time
+                }
+            }
         }
     }
 
@@ -121,13 +175,7 @@ internal fun AudioPlayer(
                     if (playing) R.string.pause else R.string.play,
                     enabled = player != null && error == null,
                 ) {
-                    player?.let { current ->
-                        if (playing) current.pause()
-                        else {
-                            if (current.playbackState == Player.STATE_ENDED) current.seekTo(0)
-                            current.play()
-                        }
-                    }
+                    if (playing) player?.pause() else play?.invoke()
                 }
                 Column(Modifier.weight(1f).padding(horizontal = 8.dp)) {
                     Slider(
@@ -140,6 +188,7 @@ internal fun AudioPlayer(
                             dragging?.let {
                                 position = it.toLong().coerceIn(0, duration)
                                 player?.seekTo(position)
+                                savePosition(position)
                             }
                             dragging = null
                         },

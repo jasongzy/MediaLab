@@ -8,6 +8,7 @@
     <string name="playback_position">Playback position</string>
     <string name="playback_time">%1$s of %2$s</string>
     <string name="unknown_time">—:—</string>
+    <string name="playback_focus_unavailable">Audio is currently unavailable; try playing again</string>
     <string name="playback_error">Unable to play this audio (%1$s)</string>
     <string name="pick_photo">Choose image</string>
     <string name="choose_audio">Choose audio</string>
