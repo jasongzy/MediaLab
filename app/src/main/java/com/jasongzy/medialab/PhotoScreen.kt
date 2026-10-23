@@ -807,8 +807,9 @@ private fun PhotoCanvas(
     val flipY = key(photo.frame, tool) {
         animateFloatAsState(if (rotation?.flipVertical == true) -1f else 1f, tween(180), label = "flipY")
     }
-    val rotatedSize = rotation?.size(info.width, info.height)
-    val imageSize = Size((rotatedSize?.width ?: info.width).toFloat(), (rotatedSize?.height ?: info.height).toFloat())
+    val previewSize = if (tool == PhotoTool.RESIZE) photo.editor?.resize?.let { IntSize(it.width, it.height) }
+        else rotation?.size(info.width, info.height)
+    val imageSize = Size((previewSize?.width ?: info.width).toFloat(), (previewSize?.height ?: info.height).toFloat())
     val rotationMatrix = remember(rotation, info.width, info.height) {
         rotation?.let { android.graphics.Matrix().apply { setValues(it.matrixValues(info.width, info.height)) } }
     }
@@ -1591,6 +1592,11 @@ private fun ResizePanel(
     var heightHasDraft by remember(selection, height, inputRevision) { mutableStateOf(false) }
     var widthValid by remember(selection, inputRevision) { mutableStateOf(true) }
     var heightValid by remember(selection, inputRevision) { mutableStateOf(true) }
+    ResizePresetChips(IntSize(width, height), IntSize(info.width, info.height)) {
+        selection.width = it.width
+        selection.height = it.height
+        inputRevision++
+    }
     key(selection, inputRevision) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             NumberField(

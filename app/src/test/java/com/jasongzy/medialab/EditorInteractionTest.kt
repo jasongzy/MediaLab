@@ -4,12 +4,22 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.geometry.center
+import androidx.compose.ui.unit.IntSize
 import com.kyant.taglib.Picture
 import java.io.File
 import org.junit.Assert.*
 import org.junit.Test
 
 class EditorInteractionTest {
+    @Test
+    fun resolutionPresetsFitTheFrameAndKeepTheOrientation() {
+        assertEquals(IntSize(854, 480), resizePresetSize(IntSize(1920, 1080), 480))
+        assertEquals(IntSize(720, 1280), resizePresetSize(IntSize(1080, 1920), 720))
+        assertEquals(IntSize(1440, 1080), resizePresetSize(IntSize(4000, 3000), 1080))
+        assertEquals(IntSize(2560, 1440), resizePresetSize(IntSize(1920, 1080), 1440))
+        assertEquals(IntSize(3840, 1646), resizePresetSize(IntSize(7000, 3000), 2160))
+    }
+
     @Test
     fun colorWarningsFollowCurrentFeaturesAndActualExportPath() {
         val p3 = PhotoColor("Display P3", "RGB", true, false)
