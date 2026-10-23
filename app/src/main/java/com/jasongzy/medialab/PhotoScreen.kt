@@ -130,7 +130,10 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
     val frameHistory = if (expanding) canvasHistory else cropHistory
     val bounds = frameHistory.value.bounds
     val ratio = frameHistory.value.ratio
-    fun setBounds(value: Rect) = frameHistory.change(frameHistory.value.copy(bounds = value))
+    fun setBounds(value: Rect) {
+        editor.dropper = false
+        frameHistory.change(frameHistory.value.copy(bounds = value))
+    }
     var background by editor::background
     var rotationBackground by editor::rotationBackground
     var cutoutBackground by editor::cutoutBackground
@@ -307,6 +310,7 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
                                     ) { i ->
                                         val nextRatio = ratios[i].first
                                         if (nextRatio == ratio) return@ChoiceChips
+                                        dropper = false
                                         val next = ratioBounds(
                                             IntRect(bounds.left, bounds.top, bounds.right, bounds.bottom),
                                             nextRatio,
@@ -323,7 +327,7 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
                                 }
                             }
                             key(frameHistory, inputRevision) {
-                                FrameFields(frameHistory, info, expanding) { inputValid = it }
+                                FrameFields(frameHistory, info, expanding, { dropper = false }) { inputValid = it }
                             }
                             if (expanding) {
                                 ColorField(background, allowTransparent = true, pick = { dropper = !dropper }) {
@@ -367,6 +371,7 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
                                 val initialFrame = FrameSelection(Rect(0, 0, info.width, info.height))
                                 TextButton(
                                     {
+                                        dropper = false
                                         inputRevision++
                                         frameHistory.change(initialFrame)
                                     },
@@ -376,6 +381,7 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
                                 }
                                 Button(
                                     onClick = {
+                                        dropper = false
                                         if (expanding) model.expand(Rect(bounds), background)
                                         else if (lossless && canLossless) {
                                             val aligned =
@@ -1411,6 +1417,7 @@ private fun FrameFields(
     history: ToolHistory<FrameSelection>,
     info: PhotoInfo,
     expand: Boolean,
+    beforeChange: () -> Unit,
     onValidityChanged: (Boolean) -> Unit,
 ) {
     val selection = history.value
@@ -1436,6 +1443,7 @@ private fun FrameFields(
         maxOf(100000, frame.height, minimum.height),
     ) else croppedSize(image.width, image.height, ratio)
     fun update(next: IntRect) {
+        beforeChange()
         val value = selection.copy(bounds = Rect(next.left, next.top, next.right, next.bottom))
         if (dragging) history.preview(value) else history.change(value)
     }
