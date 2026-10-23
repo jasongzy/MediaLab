@@ -1,7 +1,6 @@
 package com.jasongzy.medialab
 
 import android.content.ClipData
-import android.content.Intent
 import android.graphics.Rect
 import android.text.format.Formatter
 import android.widget.Toast
@@ -25,13 +24,11 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect as FloatRect
 import androidx.compose.ui.geometry.Size
@@ -43,7 +40,6 @@ import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
@@ -59,27 +55,13 @@ import androidx.compose.ui.semantics.progressBarRangeInfo
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.setProgress
 import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.IntSize
-import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
-import androidx.core.content.FileProvider
-import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
-
-private val viewportSaver = listSaver<ImageViewport, Float>(
-    save = { listOf(it.scale, it.offset.x, it.offset.y) },
-    restore = { ImageViewport(it[0], Offset(it[1], it[2])) },
-)
-private val canvasSizeSaver = listSaver<Size, Float>(
-    save = { listOf(it.width, it.height) },
-    restore = { Size(it[0], it[1]) },
-)
 
 @Composable
 internal fun PhotoScreen(model: LabViewModel, state: LabState) {
@@ -167,9 +149,7 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
     LaunchedEffect(photo.frame, tool, dropper) {
         if (tool == PhotoTool.COLORS || dropper) model.pick(pixelX, pixelY)
     }
-    BoxWithConstraints(Modifier.fillMaxSize()) {
-        val wide = maxWidth > maxHeight
-        val panelHeight = minOf(288.dp, maxHeight * 0.46f)
+    Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {
             Row(
                 Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp),
@@ -293,23 +273,9 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
                             var lossless by editor::lossless
                             var inputRevision by rememberSaveable(frameHistory) { mutableIntStateOf(0) }
                             var inputValid by remember(frameHistory, inputRevision) { mutableStateOf(true) }
-                            val ratios =
-                                listOf(
-                                    0f to stringResource(R.string.free_ratio),
-                                    1f to "1:1",
-                                    4f / 3 to "4:3",
-                                    3f / 2 to "3:2",
-                                    16f / 9 to "16:9",
-                                    9f / 16 to "9:16",
-                                )
                             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
                                 Box(Modifier.weight(1f)) {
-                                    ChoiceChips(
-                                        ratios.mapIndexed { i, pair -> i to pair.second },
-                                        ratios.indexOfFirst { it.first == ratio },
-                                    ) { i ->
-                                        val nextRatio = ratios[i].first
-                                        if (nextRatio == ratio) return@ChoiceChips
+                                    FrameRatioChips(ratio) { nextRatio ->
                                         dropper = false
                                         val next = ratioBounds(
                                             IntRect(bounds.left, bounds.top, bounds.right, bounds.bottom),
@@ -327,7 +293,13 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
                                 }
                             }
                             key(frameHistory, inputRevision) {
-                                FrameFields(frameHistory, info, expanding, { dropper = false }) { inputValid = it }
+                                FrameFields(
+                                    frameHistory.value, IntSize(info.width, info.height), expanding,
+                                    { inputValid = it },
+                                    { dropper = false; frameHistory.preview(it) },
+                                    { dropper = false; frameHistory.change(it) },
+                                    { if (it) frameHistory.commit() else frameHistory.cancel() },
+                                )
                             }
                             if (expanding) {
                                 ColorField(background, allowTransparent = true, pick = { dropper = !dropper }) {
@@ -404,41 +376,11 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
                         }
                         PhotoTool.BACKGROUND -> BackgroundPanel(model, photo, state.storedMask != null)
                         PhotoTool.COVER -> {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            ) {
-                                FilterChip(
-                                    fill,
-                                    {
-                                        fill = true
-                                        dropper = false
-                                    },
-                                    label = { Text(stringResource(R.string.fill)) },
-                                )
-                                FilterChip(
-                                    !fill,
-                                    {
-                                        fill = false
-                                        dropper = false
-                                    },
-                                    label = { Text(stringResource(R.string.brush)) },
-                                )
-                                Spacer(Modifier.weight(1f))
-                                HistoryButtons(coverHistory) { dropper = false }
-                            }
-                            if (fill)
-                                ChoiceChips(
-                                    CoverShape.entries
-                                        .filter { it != CoverShape.BRUSH }
-                                        .map {
-                                            it.ordinal to stringResource(it.label)
-                                        },
-                                    fillShape.ordinal,
-                                ) {
-                                    fillShape = CoverShape.entries[it]
-                                    dropper = false
-                                }
+                            CoverTools(
+                                fill, fillShape,
+                                { fill = it; dropper = false },
+                                { fillShape = it; dropper = false },
+                            ) { HistoryButtons(coverHistory) { dropper = false } }
                             ColorField(color, allowTransparent = true, pick = { dropper = !dropper }) {
                                 color = it
                                 dropper = false
@@ -448,7 +390,7 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
                                     stringResource(R.string.tap_color),
                                     style = MaterialTheme.typography.bodySmall,
                                 )
-                            if (!fill) BrushSize(brushWidth, info) { brushWidth = it }
+                            if (!fill) BrushSize(brushWidth, IntSize(info.width, info.height)) { brushWidth = it }
                             FlowRow(
                                 Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
@@ -556,11 +498,11 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
                                         Text(stringResource(R.string.motion_photo))
                                     if (info.container?.edit != null)
                                         Text(stringResource(R.string.editable_photo))
-                                    PhotoDetail(
+                                    MediaDetail(
                                         stringResource(R.string.color_space),
                                         info.color.space ?: stringResource(R.string.unknown),
                                     )
-                                    PhotoDetail(
+                                    MediaDetail(
                                         stringResource(R.string.wide_gamut),
                                         stringResource(when (info.color.wide) {
                                             true -> R.string.yes
@@ -569,12 +511,12 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
                                         }),
                                     )
                                     info.color.model?.let { model ->
-                                        PhotoDetail(
+                                        MediaDetail(
                                             stringResource(R.string.color_model),
                                             if (model == "Gray") stringResource(R.string.grayscale) else model,
                                         )
                                     }
-                                    PhotoDetail(
+                                    MediaDetail(
                                         stringResource(R.string.dynamic_range),
                                         stringResource(when (info.color.hdr) {
                                             true -> R.string.hdr
@@ -586,7 +528,7 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
                                         (key == "ColorSpace" && info.color.space != null) ||
                                             (key == "PhotometricInterpretation" && info.color.model != null)
                                     }
-                                        .forEach { (key, value) -> PhotoDetail(key, value.take(8192)) }
+                                        .forEach { (key, value) -> MediaDetail(key, value.take(8192)) }
                                 }
                             }
                         PhotoTool.EXPORT -> {
@@ -604,41 +546,12 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
                 }
             }
 
-            Layout(
-                modifier = Modifier.weight(1f).fillMaxWidth(),
-                content = {
-                    preview(Modifier.padding(horizontal = 12.dp))
-                    Column { controls() }
-                },
-            ) { children, constraints ->
-                val width = constraints.maxWidth
-                val height = constraints.maxHeight
-                val panelWidth = if (wide) width - width / 2 else width
-                val panelHeight = if (wide) height else panelHeight.roundToPx().coerceAtMost(height)
-                val canvas = children[0].measure(Constraints.fixed(
-                    if (wide) width - panelWidth else width,
-                    if (wide) height else height - panelHeight,
-                ))
-                val panel = children[1].measure(Constraints.fixed(panelWidth, panelHeight))
-                layout(width, height) {
-                    canvas.placeRelative(0, 0)
-                    panel.placeRelative(if (wide) canvas.width else 0, if (wide) 0 else canvas.height)
-                }
-            }
+            EditorLayout(
+                Modifier.weight(1f).fillMaxWidth(),
+                preview = { preview(Modifier.padding(horizontal = 12.dp)) },
+                controls = { Column { controls() } },
+            )
         }
-    }
-}
-
-@Composable
-private fun PhotoDetail(label: String, value: String) {
-    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        Text(
-            label,
-            style = MaterialTheme.typography.labelMedium,
-            fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.primary,
-        )
-        Text(value, style = MaterialTheme.typography.bodyMedium)
     }
 }
 
@@ -723,7 +636,7 @@ private fun BackgroundPanel(model: LabViewModel, photo: PhotoState, hasStoredMas
                 Text(stringResource(R.string.reset_mask))
             }
         }
-        BrushSize(editor.brushWidth, checkNotNull(photo.info)) { editor.brushWidth = it; editor.dropper = false }
+        BrushSize(editor.brushWidth, IntSize(photo.info!!.width, photo.info.height)) { editor.brushWidth = it; editor.dropper = false }
         Toggle(R.string.soft_edges, draft.softEdges) { draft.softEdges = it; editor.dropper = false }
     }
     FlowRow(
@@ -758,25 +671,6 @@ private fun BackgroundPanel(model: LabViewModel, photo: PhotoState, hasStoredMas
         TextButton({ editor.dropper = false; model.discardBackground() }) { Text(stringResource(R.string.discard)) }
         Button({ editor.dropper = false; model.applyBackground() }) { Text(stringResource(R.string.apply)) }
     }
-}
-
-@Composable
-private fun BrushSize(width: Float, info: PhotoInfo, change: (Float) -> Unit) {
-    Text(
-        "${stringResource(R.string.brush_size)} · ${width.roundToInt()} px",
-        style = MaterialTheme.typography.labelMedium,
-    )
-    ValueSlider(width, 1f..maxOf(100f, minOf(info.width, info.height) / 3f), change)
-}
-
-@Composable
-private fun snapGuideAlpha(target: Int?): State<Float> {
-    val alpha = remember { Animatable(0f) }
-    LaunchedEffect(target) {
-        if (target != null) alpha.snapTo(1f)
-        alpha.animateTo(0f, tween(if (target == null) 120 else 500))
-    }
-    return alpha.asState()
 }
 
 @Composable
@@ -996,7 +890,7 @@ private fun PhotoCanvas(
                                 snapTolerance = 6.dp.toPx() / fit,
                             )
                         var cropDragging = false
-                        var points = listOf(start.x to start.y)
+                        val strokeDrag = StrokeDrag(start, color, width, shape, softEdges)
                         val before = currentStrokes
                         val beforeMask = cutout?.history?.value.orEmpty()
                         fun brush(stroke: Stroke? = null) {
@@ -1053,14 +947,7 @@ private fun PhotoCanvas(
                                         }
                                         painting -> {
                                             if (shape == CoverShape.BRUSH) brushPoint = at
-                                            if (
-                                                shape == CoverShape.RECTANGLE ||
-                                                    shape == CoverShape.ELLIPSE
-                                            )
-                                                points = listOf(points.first(), at.x to at.y)
-                                            else if (points.last() != (at.x to at.y))
-                                                points = points + (at.x to at.y)
-                                            val stroke = Stroke(points, color, width, shape, softEdges)
+                                            val stroke = strokeDrag.update(at)
                                             if (stroke.fill) {
                                                 selection = stroke.takeIf { pointers > 0 }
                                                 if (pointers == 0 && stroke.isDrawable)
@@ -1092,13 +979,9 @@ private fun PhotoCanvas(
                                                     )
                                                 if (!r.isEmpty && r.width() > 0 && r.height() > 0) {
                                                     setCrop(r)
-                                                    val entered = cropDrag.snapped - previous
-                                                    snapGuides = cropDrag.snapped.firstOrNull { it < 3 }
-                                                        ?.takeIf { it == snapGuides.first || it in entered } to
-                                                        cropDrag.snapped.firstOrNull { it >= 3 }
-                                                            ?.takeIf { it == snapGuides.second || it in entered }
-                                                    if (entered.isNotEmpty())
+                                                    snapGuides = frameSnapFeedback(previous, cropDrag.snapped, snapGuides) {
                                                         haptics.performHapticFeedback(HapticFeedbackType.SegmentFrequentTick)
+                                                    }
                                                 }
                                             }
                                         }
@@ -1192,61 +1075,13 @@ private fun PhotoCanvas(
                 Photos.cover(canvas, coverStrokes)
                 canvas.restoreToCount(imageLayer)
             }
-            paint.style = android.graphics.Paint.Style.STROKE
-            paint.strokeWidth = 1.dp.toPx() / fit
-            paint.color = imageBorderColor
-            paint.pathEffect = android.graphics.DashPathEffect(floatArrayOf(4.dp.toPx() / fit, 3.dp.toPx() / fit), 0f)
-            canvas.drawRect(destination, paint)
-            paint.pathEffect = null
+            val imageBounds = FloatRect(origin, displaySize * fit)
             if (original != null) {
                 canvas.restore()
+                drawImageBorder(imageBounds, Color(imageBorderColor))
                 return@Canvas
             }
-            fun guides(rect: android.graphics.RectF, tint: Int, grid: Boolean) {
-                paint.style = android.graphics.Paint.Style.STROKE
-                val left = if (grid) rect.left else minOf(rect.left, bounds.left.toFloat())
-                val top = if (grid) rect.top else minOf(rect.top, bounds.top.toFloat())
-                val right = if (grid) rect.right else maxOf(rect.right, bounds.right.toFloat())
-                val bottom = if (grid) rect.bottom else maxOf(rect.bottom, bounds.bottom.toFloat())
-                val fractions = when {
-                    !grid -> listOf(0.5f)
-                    rotation != null -> listOf(0.25f, 0.5f, 0.75f)
-                    else -> frameGuideFractions
-                }
-                for (fraction in fractions) {
-                    val center = fraction == 0.5f
-                    paint.pathEffect = android.graphics.DashPathEffect(
-                        floatArrayOf((if (center) 6 else 3).dp.toPx() / fit, 5.dp.toPx() / fit), 0f,
-                    )
-                    val x = rect.left + rect.width() * fraction
-                    val y = rect.top + rect.height() * fraction
-                    for (outline in listOf(true, false)) {
-                        paint.color = if (outline) android.graphics.Color.BLACK else tint
-                        paint.alpha = if (outline) 45 else if (center) 145 else 100
-                        paint.strokeWidth = (if (outline) 2 else 1).dp.toPx() / fit
-                        if (!framing || !grid || abs(x - destination.centerX()) * fit > 1)
-                            canvas.drawLine(x, top, x, bottom, paint)
-                        if (!framing || !grid || abs(y - destination.centerY()) * fit > 1)
-                            canvas.drawLine(left, y, right, y, paint)
-                    }
-                }
-                paint.pathEffect = null
-                if (!grid || rotation != null) {
-                    for (vertical in listOf(true, false)) {
-                        val alpha = if (vertical) verticalHighlight.value else horizontalHighlight.value
-                        if (alpha <= 0f) continue
-                        for (outline in listOf(true, false)) {
-                            paint.color = if (outline) android.graphics.Color.BLACK else snapColor
-                            paint.alpha = ((if (outline) 150 else 255) * alpha).roundToInt()
-                            paint.strokeWidth = (if (outline) 4 else 2).dp.toPx() / fit
-                            if (vertical) canvas.drawLine(rect.centerX(), top, rect.centerX(), bottom, paint)
-                            else canvas.drawLine(left, rect.centerY(), right, rect.centerY(), paint)
-                        }
-                    }
-                }
-                paint.alpha = 255
-            }
-            if (rotation != null && !dropper) guides(destination, android.graphics.Color.WHITE, grid = true)
+            paint.style = android.graphics.Paint.Style.STROKE
             brushPoint?.let { point ->
                 paint.color = android.graphics.Color.BLACK
                 paint.strokeWidth = 3.dp.toPx() / fit
@@ -1267,34 +1102,21 @@ private fun PhotoCanvas(
                     paint.color = android.graphics.Color.WHITE
                     canvas.drawPath(path, paint)
                 }
-            if (framing) {
-                paint.style = android.graphics.Paint.Style.FILL
-                paint.color = 0x80000000.toInt()
-                canvas.save()
-                if (!expanding) canvas.clipRect(destination)
-                canvas.clipOutRect(bounds)
-                canvas.drawPaint(paint)
-                canvas.restore()
-                if (!dropper) {
-                    guides(destination, guideColor, grid = false)
-                    guides(android.graphics.RectF(bounds), frameColor, grid = true)
-                }
-                paint.style = android.graphics.Paint.Style.STROKE
-                paint.color = android.graphics.Color.BLACK
-                paint.strokeWidth = 4.dp.toPx() / fit
-                canvas.drawRect(bounds, paint)
-                paint.color = frameColor
-                paint.strokeWidth = 2.dp.toPx() / fit
-                canvas.drawRect(bounds, paint)
-                for (x in listOf(bounds.left, bounds.right)) for (y in listOf(bounds.top, bounds.bottom)) {
-                    paint.style = android.graphics.Paint.Style.FILL
-                    paint.color = android.graphics.Color.BLACK
-                    canvas.drawCircle(x.toFloat(), y.toFloat(), 7.dp.toPx() / fit, paint)
-                    paint.color = frameColor
-                    canvas.drawCircle(x.toFloat(), y.toFloat(), 5.dp.toPx() / fit, paint)
-                }
-            }
             canvas.restore()
+            drawImageBorder(imageBounds, Color(imageBorderColor))
+            val highlights = Offset(verticalHighlight.value, horizontalHighlight.value)
+            if (rotation != null && !dropper)
+                drawGuides(imageBounds, Color.White, listOf(0.25f, 0.5f, 0.75f), highlight = highlights, snapColor = Color(snapColor))
+            if (framing)
+                drawFrameOverlay(
+                    imageBounds,
+                    FloatRect(
+                        origin + Offset(bounds.left * fit, bounds.top * fit),
+                        Size(bounds.width() * fit, bounds.height() * fit),
+                    ),
+                    expanding, Color(frameColor), Color(guideColor), Color(snapColor), highlights,
+                    showGuides = !dropper,
+                )
             rotationHandle?.let { (edge, handle) ->
                 drawLine(Color.Black.copy(alpha = 0.6f), edge, handle, 3.dp.toPx())
                 drawLine(Color.White, edge, handle, 1.dp.toPx())
@@ -1303,30 +1125,7 @@ private fun PhotoCanvas(
                 val pixel = floatArrayOf(pixelX + 0.5f, pixelY + 0.5f)
                 rotationMatrix?.mapPoints(pixel)
                 val center = origin + Offset(pixel[0] * fit, pixel[1] * fit)
-                val radius = 9.dp.toPx()
-                for ((markerColor, thickness) in
-                    listOf(Color.Black to 4.dp.toPx(), Color.White to 2.dp.toPx())) {
-                    drawCircle(
-                        markerColor,
-                        radius,
-                        center,
-                        style = androidx.compose.ui.graphics.drawscope.Stroke(thickness),
-                    )
-                    for (direction in
-                        listOf(
-                            Offset(1f, 0f),
-                            Offset(-1f, 0f),
-                            Offset(0f, 1f),
-                            Offset(0f, -1f),
-                        )) drawLine(
-                        markerColor,
-                        center + direction * (radius + 2.dp.toPx()),
-                        center + direction * (radius + 7.dp.toPx()),
-                        thickness,
-                    )
-                }
-                drawCircle(Color.Black, 2.dp.toPx(), center)
-                drawCircle(Color.White, 1.dp.toPx(), center)
+                drawColorPicker(center)
             }
         }
         rotationHandle?.let { (_, handle) ->
@@ -1355,140 +1154,25 @@ private fun PhotoCanvas(
                 )
             }
         }
-        Row(
-            Modifier.align(Alignment.TopEnd)
-                .onSizeChanged { toolbarSize = it }
-                .background(
-                    MaterialTheme.colorScheme.surface.copy(alpha = 0.65f),
-                    MaterialTheme.shapes.large,
+        val initialView = if (expanding) fitted() else ImageViewport(initialScale)
+        ViewportToolbar(
+            viewport, initialView, minScale,
+            Modifier.align(Alignment.TopEnd).onSizeChanged { toolbarSize = it },
+            enabled = !showOriginal,
+            zoom = { factor ->
+                viewport = viewport.transformed(
+                    factor, Offset.Zero, canvasSize.center, canvasSize, imageSize,
+                    outside = expanding, minScale = minScale,
                 )
+            },
+            reset = { viewport = initialView },
         ) {
-            ToolButton(
-                R.drawable.ic_zoom_out,
-                R.string.zoom_out,
-                !showOriginal && viewport.scale > minScale,
-            ) {
-                viewport =
-                    viewport.transformed(
-                        0.5f,
-                        Offset.Zero,
-                        canvasSize.center,
-                        canvasSize,
-                        imageSize,
-                        outside = expanding,
-                        minScale = minScale,
-                    )
-            }
-            ToolButton(
-                R.drawable.ic_zoom_in,
-                R.string.zoom_in,
-                !showOriginal && viewport.scale < ImageViewport.MAX_SCALE,
-            ) {
-                viewport =
-                    viewport.transformed(
-                        2f, Offset.Zero, canvasSize.center, canvasSize, imageSize,
-                        outside = expanding, minScale = minScale,
-                    )
-            }
-            val initialView = if (expanding) fitted() else ImageViewport(initialScale)
-            ToolButton(R.drawable.ic_reset, R.string.reset_view, !showOriginal && viewport != initialView) {
-                viewport = initialView
-            }
             IconButton(onClick = {}, interactionSource = previewInteraction) {
                 Icon(
                     painterResource(R.drawable.ic_visibility),
                     stringResource(R.string.hold_original),
                 )
             }
-        }
-    }
-}
-
-@Composable
-private fun HistoryButtons(history: ToolHistory<*>, beforeChange: () -> Unit) {
-    Row {
-        ToolButton(R.drawable.ic_undo, R.string.undo, history.canUndo) { beforeChange(); history.undo() }
-        ToolButton(R.drawable.ic_redo, R.string.redo, history.canRedo) { beforeChange(); history.redo() }
-    }
-}
-
-@Composable
-private fun FrameFields(
-    history: ToolHistory<FrameSelection>,
-    info: PhotoInfo,
-    expand: Boolean,
-    beforeChange: () -> Unit,
-    onValidityChanged: (Boolean) -> Unit,
-) {
-    val selection = history.value
-    val bounds = selection.bounds
-    val ratio = selection.ratio
-    var dragging by remember { mutableStateOf(false) }
-    var widthValid by remember { mutableStateOf(true) }
-    var heightValid by remember { mutableStateOf(true) }
-    var leftValid by remember { mutableStateOf(true) }
-    var topValid by remember { mutableStateOf(true) }
-    val valid = widthValid && heightValid && leftValid && topValid
-    SideEffect { onValidityChanged(valid) }
-    val startDrag = { dragging = true }
-    val finishDrag: (Boolean) -> Unit = { commit ->
-        dragging = false
-        if (commit) history.commit() else history.cancel()
-    }
-    val frame = IntRect(bounds.left, bounds.top, bounds.right, bounds.bottom)
-    val image = IntSize(info.width, info.height)
-    val minimum = if (expand) expandedSize(image.width, image.height, ratio) else IntSize(1, 1)
-    val maximum = if (expand) IntSize(
-        maxOf(100000, frame.width, minimum.width),
-        maxOf(100000, frame.height, minimum.height),
-    ) else croppedSize(image.width, image.height, ratio)
-    fun update(next: IntRect) {
-        beforeChange()
-        val value = selection.copy(bounds = Rect(next.left, next.top, next.right, next.bottom))
-        if (dragging) history.preview(value) else history.change(value)
-    }
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        NumberField(
-            R.string.width, frame.width, Modifier.weight(1f), minimum.width..maximum.width,
-            onValidityChanged = { widthValid = it },
-            onDragStarted = startDrag, onDragFinished = finishDrag,
-        ) { width ->
-            val height = if (ratio > 0 && width != frame.width) (width / ratio).roundToInt().coerceIn(
-                minimum.height, if (expand) Int.MAX_VALUE else image.height,
-            ) else frame.height
-            update(resizedBounds(frame, image, IntSize(width, height), expand))
-        }
-        NumberField(
-            R.string.height, frame.height, Modifier.weight(1f), minimum.height..maximum.height,
-            onValidityChanged = { heightValid = it },
-            onDragStarted = startDrag, onDragFinished = finishDrag,
-        ) { height ->
-            val width = if (ratio > 0 && height != frame.height) (height * ratio).roundToInt().coerceIn(
-                minimum.width, if (expand) Int.MAX_VALUE else image.width,
-            ) else frame.width
-            update(resizedBounds(frame, image, IntSize(width, height), expand))
-        }
-    }
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        NumberField(
-            if (expand) R.string.left_padding else R.string.left,
-            if (expand) -frame.left else frame.left,
-            Modifier.weight(1f),
-            0..if (expand) maximum.width - image.width else image.width - 1,
-            onValidityChanged = { leftValid = it },
-            onDragStarted = startDrag, onDragFinished = finishDrag,
-        ) { left ->
-            update(positionedBounds(frame, image, if (expand) -left else left, frame.top, ratio, expand))
-        }
-        NumberField(
-            if (expand) R.string.top_padding else R.string.top,
-            if (expand) -frame.top else frame.top,
-            Modifier.weight(1f),
-            0..if (expand) maximum.height - image.height else image.height - 1,
-            onValidityChanged = { topValid = it },
-            onDragStarted = startDrag, onDragFinished = finishDrag,
-        ) { top ->
-            update(positionedBounds(frame, image, frame.left, if (expand) -top else top, ratio, expand))
         }
     }
 }
@@ -1537,7 +1221,8 @@ private fun RotationPanel(editor: PhotoEditorState, apply: (RotationSelection) -
     }
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         for (vertical in listOf(true, false)) {
-            FilterChip(
+            FlipChip(
+                vertical = vertical,
                 selected = if (vertical) selection.flipVertical else selection.flipHorizontal,
                 onClick = {
                     finishInput()
@@ -1545,10 +1230,6 @@ private fun RotationPanel(editor: PhotoEditorState, apply: (RotationSelection) -
                         if (vertical) selection.copy(flipVertical = !selection.flipVertical)
                         else selection.copy(flipHorizontal = !selection.flipHorizontal)
                     )
-                },
-                label = { Text(stringResource(if (vertical) R.string.flip_vertical else R.string.flip_horizontal)) },
-                leadingIcon = {
-                    Icon(painterResource(R.drawable.ic_flip), null, Modifier.size(18.dp).rotate(if (vertical) 90f else 0f))
                 },
             )
         }
@@ -1596,35 +1277,20 @@ private fun ResizePanel(
     val method = selection.method
     var preview by selection::preview
     var inputRevision by rememberSaveable(selection) { mutableIntStateOf(0) }
-    var widthHasDraft by remember(selection, width, inputRevision) { mutableStateOf(false) }
-    var heightHasDraft by remember(selection, height, inputRevision) { mutableStateOf(false) }
-    var widthValid by remember(selection, inputRevision) { mutableStateOf(true) }
-    var heightValid by remember(selection, inputRevision) { mutableStateOf(true) }
+    var hasDraft by remember(selection, inputRevision) { mutableStateOf(false) }
+    var inputValid by remember(selection, inputRevision) { mutableStateOf(true) }
     ResizePresetChips(IntSize(width, height), IntSize(info.width, info.height)) {
         selection.width = it.width
         selection.height = it.height
         inputRevision++
     }
     key(selection, inputRevision) {
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            NumberField(
-                R.string.width, width, Modifier.weight(1f),
-                onDraftChanged = { widthHasDraft = it }, onValidityChanged = { widthValid = it },
-            ) {
-                selection.width = it
-                if (selection.lock)
-                    selection.height = if (it == width) height
-                        else (it.toDouble() * info.height / info.width).roundToInt().coerceAtLeast(1)
-            }
-            NumberField(
-                R.string.height, height, Modifier.weight(1f),
-                onDraftChanged = { heightHasDraft = it }, onValidityChanged = { heightValid = it },
-            ) {
-                selection.height = it
-                if (selection.lock)
-                    selection.width = if (it == height) width
-                        else (it.toDouble() * info.width / info.height).roundToInt().coerceAtLeast(1)
-            }
+        ResizeFields(
+            IntSize(width, height), IntSize(info.width, info.height), selection.lock,
+            onValidityChanged = { inputValid = it }, onDraftChanged = { hasDraft = it },
+        ) {
+            selection.width = it.width
+            selection.height = it.height
         }
     }
     Toggle(R.string.keep_ratio, selection.lock) { selection.lock = it }
@@ -1650,14 +1316,14 @@ private fun ResizePanel(
                 // Also reset incomplete text that has not changed the numeric values.
                 inputRevision++
             },
-            enabled = width != info.width || height != info.height || widthHasDraft || heightHasDraft,
+            enabled = width != info.width || height != info.height || hasDraft,
         ) {
             Text(stringResource(R.string.reset_resize))
         }
-        TextButton({ model.previewResize(width, height, method) { preview = it } }, enabled = widthValid && heightValid) {
+        TextButton({ model.previewResize(width, height, method) { preview = it } }, enabled = inputValid) {
             Text(stringResource(R.string.preview))
         }
-        Button({ apply(width, height, method) }, enabled = widthValid && heightValid) {
+        Button({ apply(width, height, method) }, enabled = inputValid) {
             Text(stringResource(R.string.apply))
         }
     }
@@ -1687,63 +1353,6 @@ private fun ResizePanel(
                 TextButton({ preview = null }) { Text(stringResource(R.string.close)) }
             },
         )
-    }
-}
-
-@Composable
-private fun ColorField(
-    color: Int,
-    label: Int = R.string.color_code,
-    allowTransparent: Boolean = false,
-    pick: (() -> Unit)? = null,
-    change: (Int) -> Unit,
-) {
-    var hex by rememberSaveable(color) { mutableStateOf("%06X".format(color and 0xffffff)) }
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Box(Modifier.weight(1f)) {
-                ChoiceChips(
-                    listOf(
-                            android.graphics.Color.WHITE to R.string.white,
-                            android.graphics.Color.BLACK to R.string.black,
-                            android.graphics.Color.TRANSPARENT to R.string.transparent,
-                        )
-                        .filter { allowTransparent || it.first != android.graphics.Color.TRANSPARENT }
-                        .map { it.first to stringResource(it.second) },
-                    color,
-                    change,
-                )
-            }
-            if (pick != null) ToolButton(R.drawable.ic_dropper, R.string.pick_from_image, action = pick)
-        }
-        if (color ushr 24 != 0)
-            OutlinedTextField(
-                hex,
-                { value ->
-                    if (
-                        value.length <= 6 &&
-                            value.all { it.isDigit() || it.lowercaseChar() in 'a'..'f' }
-                    ) {
-                        hex = value
-                        if (value.length == 6) change(value.toInt(16) or (255 shl 24))
-                    }
-                },
-                Modifier.fillMaxWidth(),
-                label = { Text(stringResource(label)) },
-                prefix = { Text("#") },
-                leadingIcon = {
-                    Surface(
-                        Modifier.size(20.dp),
-                        color = Color(color),
-                        shape = MaterialTheme.shapes.small,
-                    ) {}
-                },
-                singleLine = true,
-                isError = hex.length != 6,
-            )
     }
 }
 
@@ -1821,32 +1430,15 @@ private fun ExportPanel(model: LabViewModel, state: LabState) {
             (state.photo.frame?.source == null || !options.preservesSource(info))
     )
         Text(stringResource(R.string.pixel_export_note, colorLosses(losses)), style = MaterialTheme.typography.bodySmall)
-    Row(
-        Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        TextButton({
+    ExportActions(
+        preview = {
             previewOptions = options
             showPreview = false
             model.previewExport(options) { showPreview = true }
-        }) {
-            Text(stringResource(R.string.preview))
-        }
-        ToolButton(R.drawable.ic_share, R.string.share) {
-            model.shareImage(options) { file ->
-                val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", file)
-                val intent =
-                    Intent(Intent.ACTION_SEND)
-                        .setType(MediaFiles.mime(file))
-                        .putExtra(Intent.EXTRA_STREAM, uri)
-                        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                        .apply { clipData = ClipData.newRawUri(file.name, uri) }
-                context.startActivity(Intent.createChooser(intent, null))
-            }
-        }
-        Button({ model.saveImage(options) }) { Text(stringResource(R.string.save_copy)) }
-    }
+        },
+        share = { model.shareImage(options) { MediaFiles.share(context, it) } },
+        save = { model.saveImage(options) },
+    )
     if (showPreview && !state.busy && state.exportPreview != null && previewOptions == options)
         AlertDialog(
             onDismissRequest = { showPreview = false },
@@ -1870,23 +1462,6 @@ private fun ExportPanel(model: LabViewModel, state: LabState) {
                 TextButton({ showPreview = false }) { Text(stringResource(R.string.close)) }
             },
         )
-}
-
-@Composable
-private fun ValueSlider(
-    value: Float,
-    range: ClosedFloatingPointRange<Float>,
-    change: (Float) -> Unit,
-) {
-    val state = rememberSliderState(value, trackRange = range)
-    state.value = value
-    Slider(
-        state = state,
-        onValueChange = {
-            state.value = it
-            change(it)
-        },
-    )
 }
 
 @Composable

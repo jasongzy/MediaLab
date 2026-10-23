@@ -1,13 +1,9 @@
 package com.jasongzy.medialab
 
-import android.content.ActivityNotFoundException
 import android.content.ClipData
-import android.content.ComponentName
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
-import android.os.FileUriExposedException
-import android.text.format.Formatter
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -17,7 +13,6 @@ import androidx.appcompat.app.AppCompatDelegate
 import androidx.compose.animation.*
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -34,7 +29,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.core.content.IntentCompat
@@ -324,153 +318,4 @@ private fun pageTransition(forward: Boolean): ContentTransform {
             animationSpec = spring(Spring.DampingRatioNoBouncy, Spring.StiffnessMediumLow),
             targetOffsetX = { -it * direction },
         )
-}
-
-@Composable
-internal fun FileName(
-    name: String,
-    sourceUri: Uri?,
-    sourceMime: String,
-    sourceBytes: Long?,
-    sourceDetail: Pair<Int, String>,
-    modifier: Modifier = Modifier,
-) {
-    val clipboard = LocalClipboard.current
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    val openWith = stringResource(R.string.open_with)
-    var details by rememberSaveable(name, sourceUri) { mutableStateOf(false) }
-    Text(
-        name,
-        modifier.combinedClickable(
-            onClick = { details = true },
-            onClickLabel = stringResource(R.string.file_details),
-            onLongClickLabel = stringResource(R.string.copy),
-            onLongClick = {
-                scope.launch {
-                    clipboard.setClipEntry(ClipEntry(ClipData.newPlainText("", name)))
-                    Toast.makeText(context, R.string.filename_copied, Toast.LENGTH_SHORT).show()
-                }
-            },
-        ),
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis,
-        style = MaterialTheme.typography.titleSmall,
-    )
-    if (details) AlertDialog(
-        onDismissRequest = { details = false },
-        title = { Text(stringResource(R.string.file_details)) },
-        text = {
-            SelectionContainer {
-                Column(
-                    Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    listOfNotNull(
-                        R.string.filename to name,
-                        sourceBytes?.let { R.string.original_file_size to Formatter.formatFileSize(context, it) },
-                        sourceDetail,
-                        sourceUri?.let { R.string.source_address to it.toString() },
-                    ).forEach { (label, value) ->
-                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                            Text(
-                                stringResource(label),
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.primary,
-                            )
-                            Text(value, style = MaterialTheme.typography.bodyMedium)
-                        }
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            TextButton({ details = false }) { Text(stringResource(R.string.close)) }
-        },
-        dismissButton = {
-            if (sourceUri != null) TextButton({
-                val error = try {
-                    val intent = Intent(Intent.ACTION_VIEW)
-                        .setDataAndType(sourceUri, sourceMime)
-                        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                        .apply { clipData = ClipData.newRawUri(name, sourceUri) }
-                    val chooser = Intent.createChooser(intent, openWith)
-                        .putExtra(Intent.EXTRA_EXCLUDE_COMPONENTS, arrayOf(ComponentName(context, MainActivity::class.java)))
-                    context.startActivity(chooser)
-                    null
-                } catch (_: ActivityNotFoundException) {
-                    R.string.no_file_viewer
-                } catch (_: SecurityException) {
-                    R.string.source_open_failed
-                } catch (_: FileUriExposedException) {
-                    R.string.source_open_failed
-                }
-                error?.let { Toast.makeText(context, it, Toast.LENGTH_SHORT).show() }
-            }) {
-                Text(openWith)
-            }
-        },
-    )
-}
-
-@Composable
-internal fun ChoiceChips(choices: List<Pair<Int, String>>, selected: Int, choose: (Int) -> Unit) {
-    androidx.compose.foundation.lazy.LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        items(choices.size) { i ->
-            val (key, label) = choices[i]
-            FilterChip(selected == key, { choose(key) }, label = { Text(label) })
-        }
-    }
-}
-
-@Composable
-internal fun Toggle(label: Int, value: Boolean, enabled: Boolean = true, set: (Boolean) -> Unit) {
-    Row(
-        Modifier.fillMaxWidth(),
-        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
-    ) {
-        Text(
-            stringResource(label),
-            Modifier.weight(1f),
-            style = MaterialTheme.typography.bodyMedium,
-        )
-        Switch(value, set, enabled = enabled)
-    }
-}
-
-@Composable
-internal fun EmptyWorkspace(
-    icon: Int,
-    title: Int,
-    action: Int,
-    open: () -> Unit,
-    extraAction: @Composable () -> Unit = {},
-) {
-    Column(
-        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(32.dp),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally,
-    ) {
-        Surface(
-            shape = MaterialTheme.shapes.extraLarge,
-            color = MaterialTheme.colorScheme.secondaryContainer,
-        ) {
-            Icon(
-                painterResource(icon),
-                null,
-                Modifier.padding(24.dp).size(48.dp),
-                tint = MaterialTheme.colorScheme.onSecondaryContainer,
-            )
-        }
-        Spacer(Modifier.height(24.dp))
-        Text(
-            stringResource(title),
-            style = MaterialTheme.typography.headlineSmall,
-            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-        )
-        Spacer(Modifier.height(24.dp))
-        Button(open) { Text(stringResource(action)) }
-        extraAction()
-    }
 }

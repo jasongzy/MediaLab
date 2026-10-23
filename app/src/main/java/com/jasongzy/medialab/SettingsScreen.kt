@@ -156,21 +156,6 @@ internal fun SettingsScreen(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-internal fun ToolButton(icon: Int, label: Int, enabled: Boolean = true, action: () -> Unit) {
-    TooltipBox(
-        positionProvider =
-            TooltipDefaults.rememberTooltipPositionProvider(TooltipAnchorPosition.Above),
-        tooltip = { PlainTooltip { Text(stringResource(label)) } },
-        state = rememberTooltipState(),
-    ) {
-        IconButton(onClick = action, enabled = enabled) {
-            Icon(painterResource(icon), stringResource(label))
-        }
-    }
-}
-
 @Composable
 private fun ChoiceDialog(
     title: Int,

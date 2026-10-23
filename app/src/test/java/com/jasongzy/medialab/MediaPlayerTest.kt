@@ -3,7 +3,7 @@ package com.jasongzy.medialab
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
-class AudioPlayerTest {
+class MediaPlayerTest {
     @Test
     fun playbackTimeHandlesUnknownDurationAndHourBoundary() {
         assertEquals("0:00", playbackTime(Long.MIN_VALUE))

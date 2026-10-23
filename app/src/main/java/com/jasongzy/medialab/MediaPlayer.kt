@@ -30,7 +30,7 @@ import kotlinx.coroutines.isActive
 @androidx.annotation.OptIn(UnstableApi::class, ExperimentalApi::class)
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun AudioPlayer(
+internal fun MediaPlayer(
     file: File,
     active: Boolean,
     initialPosition: Long,

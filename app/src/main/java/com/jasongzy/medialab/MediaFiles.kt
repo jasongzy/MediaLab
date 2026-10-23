@@ -2,6 +2,9 @@ package com.jasongzy.medialab
 
 import android.content.ContentValues
 import android.content.Context
+import androidx.core.content.FileProvider
+import android.content.Intent
+import android.content.ClipData
 import android.media.MediaScannerConnection
 import android.net.Uri
 import android.os.Environment
@@ -36,6 +39,16 @@ import kotlinx.coroutines.withTimeoutOrNull
 internal class UnsupportedMediaException(val messageRes: Int) : Exception()
 
 internal object MediaFiles {
+    fun share(context: Context, file: File) {
+        val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", file)
+        val intent = Intent(Intent.ACTION_SEND)
+            .setType(mime(file))
+            .putExtra(Intent.EXTRA_STREAM, uri)
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            .apply { clipData = ClipData.newRawUri(file.name, uri) }
+        context.startActivity(Intent.createChooser(intent, null))
+    }
+
     private val cacheCleanup = Mutex()
 
     suspend fun refreshMediaIndex(context: Context): Boolean {

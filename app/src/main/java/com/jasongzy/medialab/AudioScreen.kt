@@ -131,7 +131,7 @@ internal fun AudioScreen(model: LabViewModel, state: LabState, active: Boolean) 
                 }
             }
         }
-        AudioPlayer(audio.file, active, model.playbackPosition(audio.file)) {
+        MediaPlayer(audio.file, active, model.playbackPosition(audio.file)) {
             model.rememberPlaybackPosition(audio.file, it)
         }
         val common =

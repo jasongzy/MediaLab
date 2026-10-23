@@ -22,8 +22,6 @@ internal enum class PhotoTool(val label: Int, val icon: Int) {
     EXPORT(R.string.export, R.drawable.ic_save),
 }
 
-internal data class FrameSelection(val bounds: Rect, val ratio: Float = 0f)
-
 internal class CutoutDraft(
     val mask: CutoutMask,
     val sourcePreview: Bitmap,
