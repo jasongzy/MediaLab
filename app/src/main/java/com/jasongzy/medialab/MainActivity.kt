@@ -122,7 +122,7 @@ private fun LabApp(model: LabViewModel, state: LabState, exit: () -> Unit) {
         }
     }
     BackHandler(enabled = settings) { settings = false }
-    BackHandler(enabled = !settings && state.tab == 1 && state.batchPage) { model.showBatch(false) }
+    BackHandler(enabled = !settings && state.tab == ImportType.AUDIO.ordinal && state.batchPage) { model.showBatch(false) }
     AnimatedContent(
         targetState = settings,
         modifier = Modifier.fillMaxSize().clipToBounds(),
@@ -150,7 +150,7 @@ private fun LabApp(model: LabViewModel, state: LabState, exit: () -> Unit) {
                             Text(stringResource(R.string.app_name), fontWeight = FontWeight.Bold)
                         },
                         actions = {
-                            if (batch.busy && !(state.tab == 1 && state.batchPage))
+                            if (batch.busy && !(state.tab == ImportType.AUDIO.ordinal && state.batchPage))
                                 TextButton({ model.showBatch(true) }) {
                                     Text(stringResource(R.string.unlock))
                                 }
@@ -201,7 +201,7 @@ private fun LabApp(model: LabViewModel, state: LabState, exit: () -> Unit) {
                                         AudioScreen(
                                             model,
                                             state,
-                                            active = !settings && state.tab == 1 && !state.batchPage,
+                                            active = !settings && state.tab == ImportType.AUDIO.ordinal && !state.batchPage,
                                         )
                                     }
                                 }

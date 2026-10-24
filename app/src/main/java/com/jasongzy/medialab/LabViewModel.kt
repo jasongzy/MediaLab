@@ -28,11 +28,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
-internal enum class ImportType {
-    IMAGE,
-    AUDIO,
-}
-
 internal enum class Confirmation(val title: Int, val message: Int, val confirm: Int = R.string.discard) {
     IMAGE(R.string.replace_image, R.string.replace_message),
     AUDIO(R.string.replace_audio, R.string.replace_audio_message),
@@ -176,7 +171,7 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
     }
 
     fun showBatch(show: Boolean) {
-        mutable.update { it.copy(batchPage = show, tab = 1) }
+        mutable.update { it.copy(batchPage = show, tab = ImportType.AUDIO.ordinal) }
     }
 
     fun playbackPosition(file: File): Long =
@@ -911,7 +906,7 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
                 context,
                 file,
                 MediaFiles.outputName(state.value.photo.name, file.extension),
-                true,
+                ImportType.IMAGE,
             )
             mutable.update { it.copy(notice = Notice(R.string.file_saved, path)) }
         }
@@ -1053,7 +1048,7 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
         val preview = prepareAudio() ?: return@work
         val audio = checkNotNull(state.value.audio)
         val path = MediaFiles.save(
-            context, preview.file, MediaFiles.outputName(audio.name, preview.file.extension), false,
+            context, preview.file, MediaFiles.outputName(audio.name, preview.file.extension), ImportType.AUDIO,
         )
         mutable.update { it.copy(audio = audio.copy(saved = preview.frame), notice = Notice(R.string.file_saved, path)) }
     }
@@ -1095,7 +1090,7 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
             try {
                 file.writeBytes(picture.data)
                 val name = MediaFiles.outputName(state.value.audio!!.name, file.extension, "cover")
-                val path = MediaFiles.save(context, file, name, true)
+                val path = MediaFiles.save(context, file, name, ImportType.IMAGE)
                 mutable.update { it.copy(notice = Notice(R.string.file_saved, path)) }
             } finally {
                 file.delete()

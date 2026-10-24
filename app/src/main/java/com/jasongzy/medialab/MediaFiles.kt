@@ -36,6 +36,8 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 
+internal enum class ImportType { IMAGE, AUDIO }
+
 internal class UnsupportedMediaException(val messageRes: Int) : Exception()
 
 internal object MediaFiles {
@@ -140,7 +142,7 @@ internal object MediaFiles {
         val file = temporary(directory, name.substringAfterLast('.', "bin").lowercase().take(10))
         try {
             file.outputStream().buffered().use { output ->
-                if (uri.scheme == "http") copyLocalImage(uri.toString(), output)
+                if (uri.scheme == "http") copyLocalStream(uri.toString(), output)
                 else
                     checkNotNull(context.contentResolver.openInputStream(uri)).use {
                         copy(it, output)
@@ -154,10 +156,10 @@ internal object MediaFiles {
         }
     }
 
-    suspend fun copyLocalImage(source: String, output: OutputStream) {
+    suspend fun copyLocalStream(source: String, output: OutputStream) {
         val uri = URI(source)
         if (uri.scheme != "http" || uri.host != "127.0.0.1" || uri.userInfo != null)
-            throw UnsupportedMediaException(R.string.image_stream_unavailable)
+            throw UnsupportedMediaException(R.string.media_stream_unavailable)
         currentCoroutineContext().ensureActive()
         val connection = uri.toURL().openConnection(Proxy.NO_PROXY) as HttpURLConnection
         try {
@@ -173,10 +175,10 @@ internal object MediaFiles {
             val expected = connection.contentLengthLong
             var copied = 0L
             connection.inputStream.use { copy(it, output) { count -> copied = count } }
-            if (expected >= 0 && copied != expected) throw EOFException("Incomplete image stream")
+            if (expected >= 0 && copied != expected) throw EOFException("Incomplete media stream")
         } catch (error: IOException) {
             currentCoroutineContext().ensureActive()
-            throw UnsupportedMediaException(R.string.image_stream_unavailable).apply {
+            throw UnsupportedMediaException(R.string.media_stream_unavailable).apply {
                 initCause(error)
             }
         } finally {
@@ -294,12 +296,12 @@ internal object MediaFiles {
         return files
     }
 
-    suspend fun save(context: Context, file: File, name: String, image: Boolean): String {
+    suspend fun save(context: Context, file: File, name: String, type: ImportType): String {
         val resolver = context.contentResolver
         val collection =
-            if (image) MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+            if (type == ImportType.IMAGE) MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
             else MediaStore.Audio.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-        val relativePath = if (image) "Pictures/MediaLab/" else "Music/MediaLab/"
+        val relativePath = if (type == ImportType.IMAGE) "Pictures/MediaLab/" else "Music/MediaLab/"
         val existing = indexedFiles(context, collection, relativePath)
         val values =
             ContentValues().apply {

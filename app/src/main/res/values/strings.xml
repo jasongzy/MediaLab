@@ -239,7 +239,7 @@
     <string name="exit_message">Exiting will clear the current workspace. Unsaved changes will be lost.</string>
     <string name="exit">Exit</string>
     <string name="select_image_only">Choose a supported image file.</string>
-    <string name="image_stream_unavailable">Could not read the image. Extract or save it to your device, then open it again.</string>
+    <string name="media_stream_unavailable">Could not read the file. Extract or save it to your device, then open it again.</string>
     <string name="select_audio_only">Please choose a supported audio file.</string>
     <string name="select_media_only">Please choose a supported image or audio file</string>
     <string name="empty_media_file">The file is empty</string>

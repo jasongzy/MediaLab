@@ -65,7 +65,7 @@ class MediaFilesTest {
         try {
             val base = "http://127.0.0.1:${server.address.port}"
             val output = ByteArrayOutputStream()
-            MediaFiles.copyLocalImage("$base/image.webp", output)
+            MediaFiles.copyLocalStream("$base/image.webp", output)
             assertArrayEquals(bytes, output.toByteArray())
             for (source in
                 listOf(
@@ -77,10 +77,10 @@ class MediaFilesTest {
                 )) {
                 val rejected = ByteArrayOutputStream()
                 try {
-                    MediaFiles.copyLocalImage(source, rejected)
+                    MediaFiles.copyLocalStream(source, rejected)
                     fail(source)
                 } catch (error: UnsupportedMediaException) {
-                    assertEquals(R.string.image_stream_unavailable, error.messageRes)
+                    assertEquals(R.string.media_stream_unavailable, error.messageRes)
                     assertEquals(0, rejected.size())
                 }
             }
