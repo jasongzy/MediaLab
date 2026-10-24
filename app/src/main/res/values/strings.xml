@@ -1,4 +1,7 @@
 <resources>
+    <string name="import_raw">Import RAW</string>
+    <string name="loading_raw">Developing RAW image…</string>
+    <string name="raw_unsupported">Unable to read this RAW file. Please select a supported, complete RAW image</string>
     <string name="artwork_not_saved">This artwork information could not be preserved. Try a different description or picture type.</string>
     <string name="app_name">Media Lab</string>
     <string name="image_tab">Images</string>

@@ -59,6 +59,8 @@ internal data class PhotoState(
     val backgroundElapsedMs: Long? = null,
     val editor: PhotoEditorState? = info?.let { PhotoEditorState(it, preview?.hasAlpha() == true) },
     val sourceUri: Uri? = null,
+    val sourceMime: String = info?.mime ?: "image/*",
+    val sourceBytes: Long? = info?.bytes,
 ) {
     val frame
         get() = history.getOrNull(position)
@@ -305,24 +307,7 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
                 if (isImage) {
                     val preview = Photos.preview(file)
                     val info = Photos.info(file, preview)
-                    val next =
-                        PhotoHistory(workspace.work, PhotoFrame(file, info), retainedBytes = { state.value.maskBytes })
-                    val photo = PhotoState(name, next.frames, 0, preview, preview, info, sourceUri = uri)
-                    currentCoroutineContext().ensureActive()
-                    val old = history
-                    val oldExport = state.value.exportFile
-                    discardResize()
-                    history = next
-                    mutable.update {
-                        it.copy(
-                            photo = photo,
-                            tab = 0,
-                            exportFile = null,
-                            exportPreview = null,
-                        )
-                    }
-                    old?.close()
-                    oldExport?.delete()
+                    acceptPhoto(PhotoFrame(file, info), preview, name, uri)
                 } else {
                     val document = AudioFiles.read(file, name).copy(sourceUri = uri, sourceBytes = file.length())
                     currentCoroutineContext().ensureActive()
@@ -340,6 +325,54 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
                 if (file !in state.value.workingFiles) file.delete()
             }
         }
+
+    fun openRaw(uri: Uri) = work(R.string.loading_raw) {
+        val (source, name) = MediaFiles.import(context, uri, workspace.work)
+        try {
+            if (!canReplace(ImportType.IMAGE)) return@work
+            history?.reserve(Runtime.getRuntime().maxMemory() / 3, keep = null)
+            val frame = RawPhotos.decode(context, source)
+            var preview: Bitmap? = null
+            try {
+                preview = Photos.preview(checkNotNull(frame.pixels))
+                acceptPhoto(frame, preview, name, uri,
+                    context.contentResolver.getType(uri) ?: "application/octet-stream", source.length())
+            } finally {
+                if (frame !== state.value.photo.frame) {
+                    preview?.recycle()
+                    frame.release()
+                }
+            }
+        } finally {
+            source.delete()
+        }
+    }
+
+    private suspend fun acceptPhoto(
+        frame: PhotoFrame,
+        preview: Bitmap,
+        name: String,
+        uri: Uri?,
+        sourceMime: String? = null,
+        sourceBytes: Long? = frame.info.bytes,
+    ) {
+        val info = frame.info
+        val next = PhotoHistory(workspace.work, frame, retainedBytes = { state.value.maskBytes })
+        val photo = PhotoState(
+            name, next.frames, 0, preview, preview, info, sourceUri = uri,
+            sourceMime = sourceMime ?: info.mime, sourceBytes = sourceBytes,
+        )
+        currentCoroutineContext().ensureActive()
+        val old = history
+        val oldExport = state.value.exportFile
+        discardResize()
+        history = next
+        mutable.update {
+            it.copy(photo = photo, tab = ImportType.IMAGE.ordinal, exportFile = null, exportPreview = null)
+        }
+        old?.close()
+        oldExport?.delete()
+    }
 
     private fun discardResize(retained: Bitmap? = null) {
         resizePreview?.bitmap?.takeIf { it !== retained }?.recycle()
@@ -360,6 +393,8 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
                 history.current.info,
                 editor = PhotoEditorState(history.current.info, preview.hasAlpha(), old.editor),
                 sourceUri = old.sourceUri,
+                sourceMime = old.sourceMime,
+                sourceBytes = old.sourceBytes,
             )
         mutable.update {
             it.copy(

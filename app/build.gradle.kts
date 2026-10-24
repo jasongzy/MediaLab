@@ -37,7 +37,11 @@ android {
         ndk { abiFilters += "arm64-v8a" }
         externalNativeBuild { cmake {
             cppFlags += "-std=c++17"
-            arguments += listOf("-DMNN_VERSION=${libs.versions.mnn.get()}", "-DANDROID_STL=c++_shared")
+            arguments += listOf(
+                "-DMNN_VERSION=${libs.versions.mnn.get()}",
+                "-DLIBRAW_VERSION=${libs.versions.libraw.get()}",
+                "-DANDROID_STL=c++_shared",
+            )
         } }
         buildConfigField("String", "MNN_VERSION", "\"${libs.versions.mnn.get()}\"")
     }

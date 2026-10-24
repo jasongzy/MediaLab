@@ -13,6 +13,7 @@ junit = "4.13.2"
 exifinterface = "1.4.2"
 taglib = "1.0.6"
 media3 = "1.11.1"
+libraw = "0.22.2"
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

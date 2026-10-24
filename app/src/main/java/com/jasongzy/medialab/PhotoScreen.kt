@@ -80,13 +80,19 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
             if (it != null) model.open(it, ImportType.IMAGE)
         }
     val open = { picker.launch(arrayOf("image/*")) }
+    val rawPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) {
+        if (it != null) model.openRaw(it)
+    }
+    val importRaw = { rawPicker.launch(arrayOf("*/*")) }
     if (photo.preview == null || photo.info == null) {
         EmptyWorkspace(
             R.drawable.ic_photo,
             R.string.image_empty,
             R.string.pick_photo,
             open,
-        )
+        ) {
+            TextButton(importRaw) { Text(stringResource(R.string.import_raw)) }
+        }
         return
     }
     val info = photo.info
@@ -158,7 +164,7 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
                 Column(Modifier.weight(1f)) {
                     val source = photo.history.first().info
                     FileName(
-                        photo.name, photo.sourceUri, source.mime, source.bytes,
+                        photo.name, photo.sourceUri, photo.sourceMime, photo.sourceBytes,
                         R.string.original_dimensions to "${source.width} × ${source.height} px",
                     )
                     Text(
@@ -196,6 +202,13 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
                             onClick = {
                                 menu = false
                                 open()
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = { Text(stringResource(R.string.import_raw)) },
+                            onClick = {
+                                menu = false
+                                importRaw()
                             },
                         )
                     }

@@ -40,6 +40,7 @@ class RegressionTests : Instrumentation() {
                     "expansion" to { photos.expansion() },
                     "photoWorkflow" to { photos.workflow() },
                     "imports" to { photos.imports() },
+                    "raw" to { photos.raw() },
                     "publication" to { media.publication() },
                     "artwork" to { media.artwork() },
                     "modelStorage" to { ModelStorageRegression.run(targetContext) },

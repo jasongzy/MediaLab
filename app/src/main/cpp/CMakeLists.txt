@@ -33,6 +33,20 @@ set(BUILD_TESTING OFF)
 set(VISIBILITY_HIDDEN ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(THIRD_PARTY "${CMAKE_CURRENT_SOURCE_DIR}/../../../../third_party")
+FetchContent_Declare(libraw
+    URL "${THIRD_PARTY}/LibRaw-${LIBRAW_VERSION}.tar.gz"
+    URL_HASH SHA256=de86b035655accff8d4010f1a221fdf50d353cb7b1422ba26f14a0db92612cfa)
+FetchContent_MakeAvailable(libraw)
+file(READ "${libraw_SOURCE_DIR}/Makefile.am" LIBRAW_MAKEFILE)
+string(REGEX MATCHALL "src/[a-zA-Z0-9_/]+\\.cpp" LIBRAW_SOURCES "${LIBRAW_MAKEFILE}")
+list(TRANSFORM LIBRAW_SOURCES PREPEND "${libraw_SOURCE_DIR}/")
+add_library(medialab_raw SHARED raw.cpp ${LIBRAW_SOURCES})
+add_dependencies(medialab_raw jpeg)
+target_include_directories(medialab_raw PRIVATE "${libraw_SOURCE_DIR}" "${JPEG_SOURCE}/src" "${JPEG_BINARY}")
+target_compile_definitions(medialab_raw PRIVATE LIBRAW_NODLL USE_JPEG USE_JPEG8 USE_ZLIB)
+target_link_libraries(medialab_raw PRIVATE turbojpeg jnigraphics z)
+set_target_properties(medialab_raw PROPERTIES CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN YES)
+
 FetchContent_Declare(taglib_core
     URL "${THIRD_PARTY}/taglib-2.3.tar.gz"
     URL_HASH SHA256=7349f6fd942418bc7009ebe743eb7c9d055f02921ec56fa436ec25007c47fd38)

@@ -25,6 +25,8 @@
 
 支持 JPEG、PNG、WebP、BMP 等静态图片，以及设备支持的 HEIF/AVIF。编辑与导出保留受支持的 SDR 色彩空间，包括 Display P3、Adobe RGB。像素编辑和格式转换会将 HDR 转为 SDR；JPEG、WebP 导出使用 8 位色深。编辑和格式转换默认保留拍摄时间、相机信息等仍有效的 EXIF。
 
+支持导入手机 DNG 和 LibRaw 支持的相机 RAW 文件，显影为全分辨率 sRGB 图像后进行编辑。
+
 ### 音频
 
 - 单文件音频编辑，支持播放试听、信息查看以及标签和封面编辑
@@ -49,4 +51,5 @@ APK 内置神经网络模型，首次使用时会在设备端完成准备工作�
 - [RMBG 2.0](https://huggingface.co/briaai/RMBG-2.0)
 - [LiteRT](https://github.com/google-ai-edge/LiteRT)
 - [MNN](https://github.com/alibaba/MNN)
+- [LibRaw](https://www.libraw.org/)
 - [DeNcm](https://github.com/Pacoshao/DeNcm)

@@ -4,6 +4,17 @@ import androidx.exifinterface.media.ExifInterface
 import java.io.File
 
 internal object PhotoMetadata {
+    fun read(exif: ExifInterface): List<Pair<String, String>> {
+        return ExifInterface::class.java.fields
+            .filter { it.name.startsWith("TAG_") && it.type == String::class.java }
+            .mapNotNull { field ->
+                val tag = field.get(null) as String
+                exif.getAttribute(tag)?.let { tag to it }
+            }
+            .distinctBy { it.first }
+            .sortedBy { it.first }
+    }
+
     private val captureTags = setOf(
         ExifInterface.TAG_DATETIME,
         ExifInterface.TAG_DATETIME_ORIGINAL,

@@ -103,7 +103,7 @@ internal object MediaFiles {
 
     fun name(context: Context, uri: Uri): String {
         val name =
-            if (uri.scheme == "http") uri.lastPathSegment
+            if (uri.scheme == "http" || uri.scheme == "file") uri.lastPathSegment
             else
                 context.contentResolver
                     .query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)

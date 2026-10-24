@@ -17,6 +17,7 @@ import androidx.exifinterface.media.ExifInterface
 import androidx.lifecycle.ViewModelStore
 import java.io.File
 import java.nio.ByteBuffer
+import kotlin.coroutines.CoroutineContext
 import kotlin.math.abs
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -542,6 +543,98 @@ internal class PhotoRegression(
             }
         }
         check(model.state.value.error == null) { model.state.value.error.orEmpty() }
+    }
+
+    suspend fun raw() {
+        val store = ViewModelStore()
+        lateinit var model: LabViewModel
+        val input = File(app.filesDir, "mosaic.dng")
+        instrumentation.context.assets.open(input.name).use { source ->
+            input.outputStream().use { source.copyTo(it) }
+        }
+        try {
+            instrumentation.runOnMainSync {
+                model = LabViewModel(app)
+                store.put("raw-test", model)
+                model.openRaw(Uri.fromFile(input))
+            }
+            idle(model)
+            val photo = model.state.value.photo
+            val frame = checkNotNull(photo.frame)
+            val pixels = checkNotNull(frame.pixels)
+            check(frame.source == null && frame.files.isEmpty())
+            val info = checkNotNull(photo.info)
+            check(photo.name == input.name && photo.sourceUri == Uri.fromFile(input))
+            check(photo.sourceBytes == input.length() && photo.sourceMime != "image/png")
+            check(info.width == 64 && info.height == 96 && info.orientation == 1)
+            check(
+                info.mime == "image/png" &&
+                    info.colorSpace in
+                        listOf(
+                            ColorSpace.get(ColorSpace.Named.SRGB),
+                            ColorSpace.get(ColorSpace.Named.EXTENDED_SRGB),
+                        )
+            ) {
+                "Unexpected RAW color: ${info.color}"
+            }
+            check(info.metadata.contains(ExifInterface.TAG_MAKE to "MediaLab"))
+            val file = Photos.export(app.filesDir, pixels, info, ExportOptions(format = ImageFormat.PNG))
+            check(info.config == Bitmap.Config.RGBA_F16 && file.readBytes()[24].toInt() == 16) {
+                "RAW depth: ${info.config}, PNG ${file.readBytes()[24]}"
+            }
+            check(ExifInterface(file).getAttribute(ExifInterface.TAG_MAKE) == "MediaLab")
+            val decoded = Photos.decode(file, Photos.info(file))
+            try {
+                check(!decoded.hasAlpha())
+                check(decoded.getColor(32, 20) != decoded.getColor(32, 70))
+            } finally {
+                decoded.recycle()
+            }
+            instrumentation.runOnMainSync { model.clearCache() }
+            idle(model)
+            check(!pixels.isRecycled && model.state.value.photo.frame === frame)
+            instrumentation.runOnMainSync { model.crop(Rect(2, 3, 32, 43), false) }
+            idle(model)
+            check(model.state.value.photo.info?.width == 30)
+            check(model.state.value.photo.sourceBytes == input.length())
+            val work = File(app.cacheDir, "work").listFiles()!!.single { it.isDirectory }
+            val files = work.listFiles()!!.toSet()
+            instrumentation.runOnMainSync { model.openRaw(Uri.fromFile(input)) }
+            answer(model, Confirmation.IMAGE, false)
+            check(work.listFiles()!!.toSet() == files && model.state.value.photo.position == 1)
+            instrumentation.runOnMainSync { model.undo(-1) }
+            idle(model)
+            check(model.state.value.photo.frame === photo.frame)
+            val invalid = File(app.cacheDir, "invalid.raw").apply { writeText("not a RAW image") }
+            instrumentation.runOnMainSync { model.openRaw(Uri.fromFile(invalid)) }
+            answer(model, Confirmation.IMAGE, true)
+            check(model.state.value.notice?.message == R.string.raw_unsupported)
+            check(model.state.value.photo.frame === photo.frame)
+            check(work.listFiles()!!.all { it in model.state.value.workingFiles })
+            instrumentation.runOnMainSync { model.undo(1) }
+            idle(model)
+            check(model.state.value.photo.info?.width == 30)
+            var checks = 0
+            var cancelAt = Int.MAX_VALUE
+            val cancelled = Job()
+            val cancellation = object : CoroutineContext by cancelled {
+                override fun <E : CoroutineContext.Element> get(key: CoroutineContext.Key<E>): E? {
+                    if (key == Job && ++checks == cancelAt) cancelled.cancel()
+                    return cancelled[key]
+                }
+            }
+            val decoder = RawDecoder(cancellation)
+            checkNotNull(decoder.decode(input.path, 64L * 1024 * 1024)).recycle()
+            // The final checks occur while the output bitmap's pixels are locked.
+            cancelAt = checks - 1
+            checks = 0
+            try {
+                decoder.decode(input.path, 64L * 1024 * 1024)
+                error("Cancelled RAW decoding succeeded")
+            } catch (_: kotlinx.coroutines.CancellationException) {}
+        } finally {
+            instrumentation.runOnMainSync { store.clear() }
+        }
     }
 
     suspend fun imports() {

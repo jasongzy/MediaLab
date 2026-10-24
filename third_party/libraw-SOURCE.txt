@@ -1,0 +1,7 @@
+LibRaw 0.22.2
+https://www.libraw.org/data/LibRaw-0.22.2.tar.gz
+
+The unmodified official source archive includes COPYRIGHT and LICENSE.CDDL.
+Media Lab uses LibRaw under CDDL 1.0. Sources are distributed in this repository;
+the archive SHA-256 is checked in app/src/main/cpp/CMakeLists.txt.
+Built with JPEG and zlib support, using LibRaw's built-in camera color conversion.

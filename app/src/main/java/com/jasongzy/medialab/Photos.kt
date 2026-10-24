@@ -157,19 +157,7 @@ internal object Photos {
         val exif = ExifInterface(file)
         val orientation = exif.getAttributeInt(ExifInterface.TAG_ORIENTATION, 1).coerceIn(1, 8)
         val swapped = orientation in 5..8
-        val metadata =
-            ExifInterface::class
-                .java
-                .fields
-                .filter {
-                    it.name.startsWith("TAG_") && it.type == String::class.java
-                }
-                .mapNotNull { field ->
-                    val tag = field.get(null) as String
-                    exif.getAttribute(tag)?.let { tag to it }
-                }
-                .distinctBy { it.first }
-                .sortedBy { it.first }
+        val metadata = PhotoMetadata.read(exif)
         val container = Containers.inspect(file)
         val mime = options.outMimeType ?: "image/*"
         return PhotoInfo(

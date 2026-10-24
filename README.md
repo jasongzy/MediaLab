@@ -25,6 +25,8 @@ A native Android media toolbox
 
 Supports static JPEG, PNG, WebP, BMP, and device-supported HEIF/AVIF images. Editing and export preserve supported SDR color spaces, including Display P3 and Adobe RGB. Pixel editing and format conversion reduce HDR to SDR; JPEG and WebP export use 8-bit channels. Editing and format conversion preserve relevant EXIF metadata, such as capture dates and camera details, by default.
 
+Supports importing phone DNG and LibRaw-supported camera RAW files, developed into full-resolution sRGB images for editing.
+
 ### Audio
 
 - Edit one audio file at a time: preview playback, inspect file information, and edit tags and cover artwork
@@ -49,4 +51,5 @@ The APK includes neural network models. First use prepares the selected model on
 - [RMBG 2.0](https://huggingface.co/briaai/RMBG-2.0)
 - [LiteRT](https://github.com/google-ai-edge/LiteRT)
 - [MNN](https://github.com/alibaba/MNN)
+- [LibRaw](https://www.libraw.org/)
 - [DeNcm](https://github.com/Pacoshao/DeNcm)
