@@ -127,7 +127,6 @@
     <string name="unlock">解锁 NCM</string>
     <string name="tags">标签</string>
     <string name="artwork">封面</string>
-    <string name="technical">技术信息</string>
     <string name="add_tag">添加标签</string>
     <string name="tag_key">字段</string>
     <string name="tag_values">值（每行一项）</string>

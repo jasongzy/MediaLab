@@ -1,0 +1,27 @@
+<resources>
+    <string name="audio_channels">Channels</string>
+    <string name="audio_channel_number">Channel %1$d</string>
+    <string name="audio_left">Left channel</string>
+    <string name="audio_right">Right channel</string>
+    <string name="audio_channel_hint">Select channels to listen to or process</string>
+    <string name="audio_audition">Play only selected channels</string>
+    <string name="audio_audition_status">Playing only: %1$s</string>
+    <string name="audio_merge_hint">Merging averages the selected channels into one; other channels keep their order</string>
+    <string name="audio_delete_channels">Delete selected</string>
+    <string name="audio_merge_channels">Merge selected</string>
+    <string name="audio_silence_hint">The intro and outro are filled with silence</string>
+    <string name="audio_duration_unavailable">Could not read the audio duration, so editing is unavailable</string>
+    <string name="audio_channels_unavailable">Could not identify the audio channels, so editing is unavailable</string>
+    <string name="audio_channels_unsupported">This audio has %1$d channels; editing supports up to 8</string>
+    <string name="audio_export_pending">Some edits have not been applied. Export the current audio anyway?</string>
+    <string name="processing_audio">Processing audio</string>
+    <string name="audio_bitrate">Bitrate (kb/s)</string>
+    <string name="audio_bitrate_hint">Higher bitrates generally improve sound quality and increase file size</string>
+    <string name="audio_compression">Compression level: %1$d</string>
+    <string name="audio_flac_hint">Higher levels reduce file size but take longer to encode; audio quality stays lossless</string>
+    <string name="audio_bit_depth">Bit depth</string>
+    <string name="audio_m4a_artwork_hint">M4A can preserve artwork images, but their types and descriptions will be lost</string>
+    <string name="audio_copy_hint">The original audio encoding is preserved; only applied tags and artwork are written</string>
+    <string name="audio_original_unavailable">The original format cannot be encoded after editing; choose another export format</string>
+    <string name="audio_mp3_channels">MP3 supports up to two channels; merge or delete channels, or choose another format</string>
+</resources>

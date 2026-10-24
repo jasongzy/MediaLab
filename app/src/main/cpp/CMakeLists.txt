@@ -59,12 +59,12 @@ set(TAGLIB_JNI "${CMAKE_CURRENT_BINARY_DIR}/taglib-jni")
 foreach(file taglib.cpp utils.h fileref_ext.cpp fileref_ext.h)
     configure_file("${taglib_android_SOURCE_DIR}/${file}" "${TAGLIB_JNI}/${file}" COPYONLY)
 endforeach()
-set(TAGLIB_PATCH "${THIRD_PARTY}/taglib-android-unicode.patch")
-set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${TAGLIB_PATCH}")
+set(TAGLIB_PATCHES "${THIRD_PARTY}/taglib-android-unicode.patch" "${THIRD_PARTY}/taglib-android-format.patch")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${TAGLIB_PATCHES})
 find_package(Git REQUIRED)
 # Apply independently of the enclosing repository so generated paths are included.
 execute_process(COMMAND "${CMAKE_COMMAND}" -E env "GIT_CEILING_DIRECTORIES=${CMAKE_CURRENT_BINARY_DIR}"
-    "${GIT_EXECUTABLE}" apply -p2 "${TAGLIB_PATCH}"
+    "${GIT_EXECUTABLE}" apply -p2 ${TAGLIB_PATCHES}
     WORKING_DIRECTORY "${TAGLIB_JNI}" COMMAND_ERROR_IS_FATAL ANY)
 
 add_library(taglib SHARED "${TAGLIB_JNI}/taglib.cpp" "${TAGLIB_JNI}/fileref_ext.cpp")

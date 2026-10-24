@@ -1,0 +1,27 @@
+<resources>
+    <string name="audio_channels">声道</string>
+    <string name="audio_channel_number">声道 %1$d</string>
+    <string name="audio_left">左声道</string>
+    <string name="audio_right">右声道</string>
+    <string name="audio_channel_hint">选择要试听或处理的声道</string>
+    <string name="audio_audition">仅播放所选声道</string>
+    <string name="audio_audition_status">仅播放：%1$s</string>
+    <string name="audio_merge_hint">合并时将所选声道平均混合为一个声道，其余声道保持原有顺序</string>
+    <string name="audio_delete_channels">删除所选</string>
+    <string name="audio_merge_channels">合并所选</string>
+    <string name="audio_silence_hint">片头和片尾填充静音</string>
+    <string name="audio_duration_unavailable">无法读取音频时长，暂时无法剪辑</string>
+    <string name="audio_channels_unavailable">无法识别声道，暂时无法剪辑</string>
+    <string name="audio_channels_unsupported">此音频有 %1$d 个声道，目前最多支持编辑 8 个声道</string>
+    <string name="audio_export_pending">部分修改尚未应用，仍要导出当前音频吗？</string>
+    <string name="processing_audio">正在处理音频</string>
+    <string name="audio_bitrate">码率（kb/s）</string>
+    <string name="audio_bitrate_hint">码率越高，通常音质越好，文件也越大</string>
+    <string name="audio_compression">压缩等级：%1$d</string>
+    <string name="audio_flac_hint">等级越高，文件越小，编码耗时越长；音质始终无损</string>
+    <string name="audio_bit_depth">位深</string>
+    <string name="audio_m4a_artwork_hint">M4A 能保留封面图像，但会丢失封面类型和说明</string>
+    <string name="audio_copy_hint">保留原音频编码，仅写入已应用的标签和封面</string>
+    <string name="audio_original_unavailable">编辑后无法编码为原格式，请选择其他导出格式</string>
+    <string name="audio_mp3_channels">MP3 最多支持两个声道，请合并或删除声道，或选择其他格式</string>
+</resources>

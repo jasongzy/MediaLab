@@ -7,6 +7,7 @@ import android.graphics.Rect
 import android.net.Uri
 import android.os.SystemClock
 import android.util.Log
+import androidx.compose.runtime.snapshots.Snapshot
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.kyant.taglib.Picture
@@ -35,6 +36,8 @@ internal enum class ImportType {
 internal enum class Confirmation(val title: Int, val message: Int, val confirm: Int = R.string.discard) {
     IMAGE(R.string.replace_image, R.string.replace_message),
     AUDIO(R.string.replace_audio, R.string.replace_audio_message),
+    RESTORE_AUDIO(R.string.restore_original_audio, R.string.discard_unapplied_message, R.string.restore_original_audio),
+    EXPORT_AUDIO(R.string.export, R.string.audio_export_pending, R.string.continue_action),
     UNDO(R.string.undo, R.string.discard_unapplied_message),
     REDO(R.string.redo, R.string.discard_unapplied_message),
     APPLY(R.string.apply, R.string.discard_other_edits_message, R.string.apply),
@@ -80,6 +83,7 @@ internal data class LabState(
     val colorLosses: List<Int> = emptyList(),
     val busy: Boolean = false,
     val showProgress: Boolean = false,
+    val progress: Float? = null,
     val refreshingMedia: Boolean = false,
     val stage: Int = R.string.loading_photo,
     val error: String? = null,
@@ -92,7 +96,7 @@ internal data class LabState(
         get() = audio?.dirty == true
     val workingFiles: Set<File>
         get() =
-            (photo.history.flatMap { it.files } + listOfNotNull(audio?.file, exportFile))
+            (photo.history.flatMap { it.files } + audio?.workingFiles.orEmpty() + listOfNotNull(exportFile))
                 .toSet()
 }
 
@@ -107,7 +111,7 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
     private val settings = context.getSharedPreferences("settings", 0)
     private var exportOptions: ExportOptions? = null
     private var exportedSource: PhotoFrame? = null
-    private var playbackPosition: Pair<File, Long>? = null
+    private val playbackPositions = mutableMapOf<File, Long>()
     private var history: PhotoHistory? = null
     private var resizePreview: ResizePreview? = null
     private var confirmationAnswer: CompletableDeferred<Boolean>? = null
@@ -156,7 +160,7 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
             } catch (error: OutOfMemoryError) {
                 mutable.update { it.copy(error = context.getString(R.string.memory_error)) }
             } finally {
-                mutable.update { it.copy(busy = false, showProgress = false) }
+                mutable.update { it.copy(busy = false, showProgress = false, progress = null) }
             }
         }
     }
@@ -175,10 +179,12 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
     }
 
     fun playbackPosition(file: File): Long =
-        playbackPosition?.takeIf { it.first == file }?.second ?: 0
+        playbackPositions[file] ?: 0
 
     fun rememberPlaybackPosition(file: File, position: Long) {
-        playbackPosition = file to position
+        val retained = state.value.workingFiles
+        playbackPositions.keys.retainAll(retained)
+        if (file in retained) playbackPositions[file] = position
     }
 
     fun clearError() {
@@ -294,6 +300,7 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
                 return@work
             }
             val (file, name) = MediaFiles.import(context, uri, workspace.work)
+            var audio: AudioDocument? = null
             try {
                 val bounds =
                     android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
@@ -316,8 +323,9 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
                     acceptPhoto(PhotoFrame(file, info), preview, name, uri)
                 } else {
                     val document = AudioFiles.read(file, name).copy(sourceUri = uri, sourceBytes = file.length())
+                    audio = document
                     currentCoroutineContext().ensureActive()
-                    val old = state.value.audio?.file
+                    val old = state.value.audio?.files.orEmpty()
                     mutable.update {
                         it.copy(
                             audio = document,
@@ -325,10 +333,10 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
                             tab = 1,
                         )
                     }
-                    old?.delete()
+                    old.forEach { it.delete() }
                 }
             } finally {
-                if (file !in state.value.workingFiles) file.delete()
+                if (file !in state.value.workingFiles) (audio?.files ?: setOf(file)).forEach { it.delete() }
             }
         }
 
@@ -888,62 +896,144 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
 
     fun shareImage(options: ExportOptions, ready: (File) -> Unit) =
         work(R.string.preparing_image) {
-            val file = prepare(options)
-            val directory = workspace.exports.apply { mkdirs() }
-            val target =
-                File(directory, MediaFiles.outputName(state.value.photo.name, file.extension))
+            shareOutput(prepare(options), state.value.photo.name, ready)
+        }
+
+    private suspend fun shareOutput(file: File, name: String, ready: (File) -> Unit) {
+        val directory = workspace.exports.apply { mkdirs() }
+        val target = File(directory, MediaFiles.outputName(name, file.extension))
+        try {
             file.inputStream().use { input ->
                 target.outputStream().use { MediaFiles.copy(input, it) }
             }
             withContext(Dispatchers.Main) { ready(target) }
+        } catch (error: Exception) {
+            target.delete()
+            throw error
+        }
+    }
+
+    private fun commitAudio(document: AudioDocument, frame: AudioFrame, action: Int) {
+        val editor = document.editor
+        val files = editor.files
+        val changedMedia = editor.history.value.media != frame.media
+        Snapshot.withMutableSnapshot {
+            editor.commit(frame, action)
+            if (changedMedia) editor.resetPlayback()
+        }
+        (files - editor.files).forEach { it.delete() }
+    }
+
+    fun applyAudioMetadata(tool: AudioTool) =
+        work(R.string.apply, showProgress = false) {
+            val audio = state.value.audio ?: return@work
+            val editor = audio.editor
+            if (tool !in editor.pending) return@work
+            val frame = editor.history.value
+            val metadata = when (tool) {
+                AudioTool.TAGS -> frame.metadata.copy(tags = editor.tags.value)
+                AudioTool.ARTWORK -> frame.metadata.copy(pictures = editor.pictures.value)
+                else -> return@work
+            }
+            commitAudio(audio, frame.copy(metadata = metadata), tool.label)
+            mutable.update { it.copy(notice = Notice(R.string.changes_applied)) }
         }
 
-    fun editAudio(tags: Map<String, List<String>>, pictures: List<Picture>) {
-        state.value.audio?.editor?.history?.change(AudioMetadata(tags, pictures))
+    fun undoAudio(direction: Int) = work(R.string.loading_audio, showProgress = false) {
+        val audio = state.value.audio ?: return@work
+        val editor = audio.editor
+        val history = editor.history
+        if (editor.tag != null || editor.picture != null ||
+            (if (direction < 0) !history.canUndo else !history.canRedo)) return@work
+        if (editor.pending.isNotEmpty() && !confirm(if (direction < 0) Confirmation.UNDO else Confirmation.REDO)) return@work
+        val action = if (direction < 0) history.undoAction else history.redoAction
+        val before = history.value.media
+        Snapshot.withMutableSnapshot {
+            if (direction < 0) history.undo() else history.redo()
+            if (before != history.value.media) editor.resetPlayback() else editor.resetTime()
+            editor.resetMetadata()
+        }
+        historyNotice(direction, action ?: R.string.audio_tab)
     }
 
-    fun undoAudio(direction: Int) {
-        val audio = state.value.audio ?: return
-        if (state.value.busy || audio.editor.hasDraft) return
-        if (direction < 0) audio.editor.history.undo() else audio.editor.history.redo()
-    }
-
-    fun restoreAudio() {
-        val editor = state.value.audio?.editor ?: return
-        if (state.value.busy || editor.hasDraft || editor.history.value == editor.original) return
-        editor.history.change(editor.original)
+    fun restoreAudio() = work(R.string.loading_audio, showProgress = false) {
+        val audio = state.value.audio ?: return@work
+        val editor = audio.editor
+        if (editor.tag != null || editor.picture != null ||
+            (editor.history.value == editor.original && editor.pending.isEmpty())) return@work
+        if (editor.pending.isNotEmpty() && !confirm(Confirmation.RESTORE_AUDIO)) return@work
+        commitAudio(audio, editor.original, R.string.restore_original_audio)
+        editor.resetPlayback()
+        editor.resetMetadata()
         mutable.update { it.copy(notice = Notice(R.string.original_audio_restored)) }
     }
 
-    fun saveAudio() =
-        work(R.string.saving) {
-            val document = state.value.audio!!
-            val metadata = document.editor.history.value
-            val file = AudioFiles.save(workspace.work, document, metadata.tags, metadata.pictures)
-            try {
-                val path = MediaFiles.save(
-                    context,
-                    file,
-                    MediaFiles.outputName(document.name, file.extension),
-                    false,
-                )
-                val audio = AudioFiles.read(file, document.name).copy(
-                    saved = metadata, editor = document.editor,
-                    sourceUri = document.sourceUri, sourceBytes = document.sourceBytes,
-                    sourceDuration = document.sourceDuration,
-                )
-                mutable.update {
-                    it.copy(
-                        audio = audio,
-                        notice = Notice(R.string.file_saved, path),
-                    )
-                }
-                document.file.delete()
-            } catch (error: Exception) {
-                file.delete()
-                throw error
+    fun applyAudioTime() = processAudio(null)
+
+    fun editAudioChannels(merge: Boolean) = processAudio(merge)
+
+    private fun processAudio(merge: Boolean?) = work(R.string.processing_audio) {
+        val audio = state.value.audio ?: return@work
+        val editor = audio.editor
+        val frame = editor.history.value
+        if (merge == null && (!editor.inputValid || !editor.pendingTime)) return@work
+        if (merge != null && editor.pendingTime && !confirm(Confirmation.APPLY)) return@work
+        val groups = merge?.let { channelGroups(frame.media.channels, editor.selectedChannels, it) }
+        val time = if (merge == null) editor.time.value else MediaTimeEdit(frame.media.durationMs)
+        val target = MediaFiles.temporary(workspace.work, "flac")
+        try {
+            val media = renderAudio(frame.media, target, time, groups) { progress ->
+                mutable.update { it.copy(progress = progress) }
             }
+            currentCoroutineContext().ensureActive()
+            commitAudio(audio, frame.copy(media = media),
+                if (merge == null) R.string.video_time else R.string.audio_channels)
+            mutable.update { it.copy(notice = Notice(R.string.changes_applied)) }
+        } finally {
+            if (target !in editor.files) target.delete()
         }
+    }
+
+    private suspend fun prepareAudio(): AudioExportPreview? {
+        val audio = checkNotNull(state.value.audio)
+        val editor = audio.editor
+        if (editor.pending.isNotEmpty() && !confirm(Confirmation.EXPORT_AUDIO)) return null
+        val frame = editor.history.value
+        val options = editor.exportOptions
+        editor.preview?.takeIf { it.frame == frame && it.options == options && it.file.isFile }?.let { return it }
+        val file = exportAudio(workspace.work, audio, options) { progress ->
+            mutable.update { it.copy(progress = progress) }
+        }
+        val old = editor.preview
+        val preview = AudioExportPreview(file, frame, options)
+        editor.preview = preview
+        old?.files?.forEach { it.delete() }
+        return preview
+    }
+
+    fun previewAudio() = work(R.string.processing_audio) {
+        val preview = prepareAudio() ?: return@work
+        val audio = checkNotNull(state.value.audio)
+        if (preview.playable == preview.file || !preview.playable.isFile)
+            audio.editor.preview = preview.copy(playable = AudioFiles.preparePlayback(
+                preview.file, preview.options.encoding(audio.encoding),
+            ))
+        audio.editor.showPreview = true
+    }
+
+    fun shareAudio(ready: (File) -> Unit) = work(R.string.processing_audio) {
+        val preview = prepareAudio() ?: return@work
+        shareOutput(preview.file, checkNotNull(state.value.audio).name, ready)
+    }
+
+    fun saveAudio() = work(R.string.processing_audio) {
+        val preview = prepareAudio() ?: return@work
+        val audio = checkNotNull(state.value.audio)
+        val path = MediaFiles.save(
+            context, preview.file, MediaFiles.outputName(audio.name, preview.file.extension), false,
+        )
+        mutable.update { it.copy(audio = audio.copy(saved = preview.frame), notice = Notice(R.string.file_saved, path)) }
+    }
 
     fun cover(uri: Uri, ready: (Picture) -> Unit) =
         work(R.string.loading_photo) {

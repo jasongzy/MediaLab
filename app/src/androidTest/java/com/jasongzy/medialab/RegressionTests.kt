@@ -43,6 +43,7 @@ class RegressionTests : Instrumentation() {
                     "raw" to { photos.raw() },
                     "publication" to { media.publication() },
                     "artwork" to { media.artwork() },
+                    "audio" to { AudioRegression.run(app, this@RegressionTests) },
                     "modelStorage" to { ModelStorageRegression.run(targetContext) },
                 )
                 .filter { selectedTest == null || it.first == selectedTest }

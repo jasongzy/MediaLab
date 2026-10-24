@@ -72,6 +72,7 @@ android {
     packaging {
         jniLibs.useLegacyPackaging = true
         jniLibs.excludes += setOf("**/libQnnDsp*.so", "**/libQnnGpu.so")
+        jniLibs.pickFirsts += "**/libc++_shared.so"
         resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
     }
     lint { abortOnError = true }
@@ -100,6 +101,7 @@ dependencies {
     add(taglibArchive.name, libs.taglib)
     implementation(files(taglibApi.map { it.destinationDir.resolve("classes.jar") }).builtBy(taglibApi))
     implementation(libs.media3.exoplayer)
+    implementation(libs.ffmpeg)
     debugImplementation(libs.compose.tooling)
     testImplementation(libs.junit)
 }

@@ -127,7 +127,6 @@
     <string name="unlock">Unlock NCM</string>
     <string name="tags">Tags</string>
     <string name="artwork">Artwork</string>
-    <string name="technical">Technical details</string>
     <string name="add_tag">Add tag</string>
     <string name="tag_key">Field</string>
     <string name="tag_values">Values (one per line)</string>

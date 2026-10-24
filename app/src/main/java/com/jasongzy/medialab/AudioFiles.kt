@@ -19,19 +19,28 @@ internal data class AudioDocument(
     val file: File,
     val name: String,
     val properties: AudioProperties?,
-    val saved: AudioMetadata,
+    val metadata: AudioMetadata,
     val technical: List<Pair<String, String>>,
-    val editor: AudioEditorState = AudioEditorState(saved),
+    val encoding: AudioEncoding? = null,
+    val playable: File = file,
+    val saved: AudioFrame = AudioFrame(AudioMedia(file, properties, technical), metadata),
+    val editor: AudioEditorState = AudioEditorState(saved, AudioExportOptions(
+        bits = encoding?.bits?.takeIf { it in listOf(16, 24, 32) } ?: 24,
+    )),
     val sourceUri: Uri? = null,
     val sourceBytes: Long? = null,
     val sourceDuration: Long? = properties?.length?.toLong(),
 ) {
     val tags: Map<String, List<String>>
-        get() = editor.history.value.tags
+        get() = editor.history.value.metadata.tags
     val pictures: List<Picture>
-        get() = editor.history.value.pictures
+        get() = editor.history.value.metadata.pictures
+    val current get() = editor.history.value.media
+    val playbackFile get() = if (current.file == file) playable else current.file
+    val files get() = editor.files + playable + editor.preview?.files.orEmpty()
+    val workingFiles get() = editor.files + playable + editor.preview?.takeIf { editor.showPreview }?.files.orEmpty()
     val dirty: Boolean
-        get() = editor.history.value != saved
+        get() = editor.history.value != saved || editor.pending.isNotEmpty()
 }
 
 internal object AudioFiles {
@@ -48,12 +57,13 @@ internal object AudioFiles {
             )
             .detachFd()
 
-    fun read(file: File, name: String): AudioDocument {
+    suspend fun read(file: File, name: String): AudioDocument {
         val metadata =
             TagLib.getMetadata(fd(file))
                 ?: throw UnsupportedMediaException(R.string.select_audio_only)
-        val properties = TagLib.getAudioProperties(fd(file))
-        val propertyKeys = if (properties == null) emptySet() else setOf(
+        var properties = TagLib.getAudioProperties(fd(file))
+            ?: throw UnsupportedMediaException(R.string.select_audio_only)
+        val propertyKeys = setOf(
             MediaFormat.KEY_DURATION, MediaFormat.KEY_BIT_RATE, MediaFormat.KEY_SAMPLE_RATE, MediaFormat.KEY_CHANNEL_COUNT,
         )
         val extractor = MediaExtractor()
@@ -63,6 +73,17 @@ internal object AudioFiles {
             for (i in 0 until extractor.trackCount) {
                 val format = extractor.getTrackFormat(i)
                 if (format.getString(MediaFormat.KEY_MIME)?.startsWith("audio/") == true) {
+                    properties = AudioProperties(
+                        length = properties.length.takeIf { it > 0 }
+                            ?: (format.getLong(MediaFormat.KEY_DURATION, 0L) / 1000)
+                                .takeIf { it in 1..Int.MAX_VALUE.toLong() }?.toInt() ?: 0,
+                        bitrate = properties.bitrate.takeIf { it > 0 }
+                            ?: format.getInteger(MediaFormat.KEY_BIT_RATE, 0) / 1000,
+                        sampleRate = format.getInteger(MediaFormat.KEY_SAMPLE_RATE, 0).takeIf { it > 0 }
+                            ?: properties.sampleRate,
+                        channels = format.getInteger(MediaFormat.KEY_CHANNEL_COUNT, 0).takeIf { it > 0 }
+                            ?: properties.channels,
+                    )
                     for (key in format.keys.sorted()) {
                         if (key.startsWith("csd-") || key in propertyKeys) continue
                         val value =
@@ -83,13 +104,44 @@ internal object AudioFiles {
         } finally {
             extractor.release()
         }
-        return AudioDocument(
-            file,
-            name,
-            properties,
-            AudioMetadata(metadata.propertyMap.mapValues { it.value.toList() }, metadata.pictures.toList()),
-            technical,
-        )
+        val info = MediaProcessing.inspect(file)
+        val stream = info?.streams?.firstOrNull { it.type == "audio" }
+        val encoding = stream?.let {
+            AudioEncoding(it.codec.orEmpty(), info.format.orEmpty().substringBefore(','),
+                it.allProperties.optInt("bits_per_raw_sample", 0).takeIf { bits -> bits > 0 }
+                    ?: it.allProperties.optInt("bits_per_sample", 0))
+        }
+        val playable = preparePlayback(file, encoding)
+        try {
+            if (playable != file) properties = checkNotNull(TagLib.getAudioProperties(fd(playable)))
+            currentCoroutineContext().ensureActive()
+            return AudioDocument(
+                file,
+                name,
+                properties,
+                AudioMetadata(metadata.propertyMap.mapValues { it.value.toList() }, metadata.pictures.toList()),
+                technical,
+                encoding,
+                playable,
+            )
+        } catch (error: Throwable) {
+            if (playable != file) playable.delete()
+            throw error
+        }
+    }
+
+    suspend fun preparePlayback(file: File, encoding: AudioEncoding?): File {
+        if (encoding?.container != "aac") return file
+        val target = MediaFiles.temporary(checkNotNull(file.parentFile), "m4a")
+        try {
+            // MP4 indexes every AAC packet, giving the player exact duration and seek positions.
+            MediaProcessing.execute(listOf("-protocol_whitelist", "file,pipe", "-i", file.path,
+                "-map", "0:a:0", "-c:a", "copy", "-map_metadata", "-1", target.path))
+            return target
+        } catch (error: Throwable) {
+            target.delete()
+            throw error
+        }
     }
 
     fun thumbnail(data: ByteArray, size: Int = 512): Bitmap? {
@@ -114,9 +166,10 @@ internal object AudioFiles {
         tags: Map<String, List<String>>,
         pictures: List<Picture>,
     ): File {
-        val target = MediaFiles.temporary(directory, document.file.extension)
+        val extension = if (document.current.file == document.file) document.encoding?.extension else null
+        val target = MediaFiles.temporary(directory, extension ?: document.current.file.extension)
         try {
-            document.file.inputStream().use { input ->
+            document.current.file.inputStream().use { input ->
                 target.outputStream().use { MediaFiles.copy(input, it) }
             }
             writeTags(target, tags, pictures)
@@ -127,7 +180,7 @@ internal object AudioFiles {
         }
     }
 
-    private suspend fun writeTags(
+    suspend fun writeTags(
         target: File,
         tags: Map<String, List<String>>,
         pictures: List<Picture>,
@@ -152,7 +205,7 @@ internal object AudioFiles {
                 "Cannot save cover art"
             }
         val result = requireNotNull(TagLib.getMetadata(fd(target)))
-        for ((key, values) in tags) check(result.propertyMap[key]?.toList().orEmpty() == values) {
+        for ((key, values) in tags) check(sameTagValues(key, values, result.propertyMap[key]?.toList().orEmpty())) {
             "Tag verification failed: $key"
         }
         check((originalKeys - tags.keys).none { it in result.propertyMap }) {
@@ -161,6 +214,24 @@ internal object AudioFiles {
         if (!samePictures(result.pictures.toList(), pictures))
             throw UnsupportedMediaException(R.string.artwork_not_saved)
         currentCoroutineContext().ensureActive()
+    }
+
+    fun sameTagValues(key: String, expected: List<String>, actual: List<String>): Boolean {
+        if (expected == actual) return true
+        if (key !in setOf("DISCNUMBER", "TRACKNUMBER") || expected.size != actual.size) return false
+        // MP4 stores number/total as integers, discarding padding and an unspecified zero total.
+        fun numbers(value: String): Pair<Int, Int>? {
+            val parts = value.split('/')
+            if (parts.size !in 1..2) return null
+            val number = parts[0].trim().toIntOrNull()?.takeIf { it >= 0 } ?: return null
+            val total = if (parts.size == 1) 0
+                else parts[1].trim().toIntOrNull()?.takeIf { it >= 0 } ?: return null
+            return number to total
+        }
+        return expected.indices.all { index ->
+            val number = numbers(expected[index])
+            number != null && number == numbers(actual[index])
+        }
     }
 
     private fun samePictures(first: List<Picture>, second: List<Picture>): Boolean =

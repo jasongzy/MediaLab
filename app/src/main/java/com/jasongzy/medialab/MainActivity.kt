@@ -12,6 +12,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.compose.animation.*
 import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
@@ -224,7 +225,14 @@ private fun LabApp(model: LabViewModel, state: LabState, exit: () -> Unit) {
             Surface(shape = MaterialTheme.shapes.extraLarge, tonalElevation = 6.dp) {
                 Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                     Text(stringResource(state.stage), style = MaterialTheme.typography.titleMedium)
-                    LinearWavyProgressIndicator(Modifier.fillMaxWidth())
+                    if (state.progress != null) {
+                        val progress by animateFloatAsState(
+                            state.progress,
+                            ProgressIndicatorDefaults.ProgressAnimationSpec,
+                            label = "taskProgress",
+                        )
+                        LinearWavyProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth())
+                    } else LinearWavyProgressIndicator(Modifier.fillMaxWidth())
                     TextButton(
                         onClick = model::cancel,
                         modifier = Modifier.align(androidx.compose.ui.Alignment.End),

@@ -724,23 +724,26 @@ internal class PhotoRegression(
             answer(model, Confirmation.AUDIO, false)
             check(model.state.value.audio!!.editor.tag === tag && !model.state.value.audioDirty)
             instrumentation.runOnMainSync {
-                model.editAudio(mapOf("TITLE" to listOf("Unsaved")), emptyList())
+                checkNotNull(model.state.value.audio).editor.tags.change(mapOf("TITLE" to listOf("Unsaved")))
+                model.applyAudioMetadata(AudioTool.TAGS)
                 check(model.state.value.audio!!.editor.tag === tag)
                 model.state.value.audio!!.editor.tag = null
             }
+            idle(model)
             val editedAudio = checkNotNull(model.state.value.audio)
             check(editedAudio.sourceUri == Uri.fromFile(audio))
             check(editedAudio.sourceBytes == audio.length())
             check(model.state.value.audioDirty)
-            instrumentation.runOnMainSync {
-                model.restoreAudio()
-                check(!model.state.value.audioDirty && model.state.value.notice?.message == R.string.original_audio_restored)
-                model.clearNotice()
-                model.restoreAudio()
-                check(model.state.value.notice == null)
-                model.undoAudio(-1)
-            }
+            instrumentation.runOnMainSync { model.restoreAudio() }
+            idle(model)
+            check(!model.state.value.audioDirty && model.state.value.notice?.message == R.string.original_audio_restored)
+            instrumentation.runOnMainSync { model.clearNotice(); model.restoreAudio() }
+            idle(model)
+            check(model.state.value.notice == null)
+            instrumentation.runOnMainSync { model.undoAudio(-1) }
+            idle(model)
             check(model.state.value.audioDirty)
+            check(model.state.value.notice == Notice(R.string.undone, argumentRes = R.string.restore_original_audio))
             val before = work.listFiles()!!.toSet()
             for (type in listOf(ImportType.AUDIO, null)) {
                 instrumentation.runOnMainSync { model.open(Uri.fromFile(audio), type) }

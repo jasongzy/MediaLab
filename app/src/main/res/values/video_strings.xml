@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <string name="video_time">Time</string>
+    <string name="video_start">Start</string>
+    <string name="video_end">End</string>
+    <string name="video_extend_time">Add intro / outro</string>
+    <string name="video_before">Before</string>
+    <string name="video_after">After</string>
+    <string name="video_reset_time">Reset time</string>
+    <string name="video_speed">Speed (0.10–8.00×)</string>
+    <string name="video_speed_hint">Changes the retained segment’s speed while preserving pitch</string>
+    <string name="video_result_duration">Estimated duration: %1$s\u00a0s</string>
+    <string name="video_reset_values">Reset values</string>
+</resources>

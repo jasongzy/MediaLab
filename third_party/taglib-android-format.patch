@@ -1,0 +1,22 @@
+diff --git a/taglib-android-1.0.6/fileref_ext.cpp b/patched/fileref_ext.cpp
+--- a/taglib-android-1.0.6/fileref_ext.cpp
++++ b/patched/fileref_ext.cpp
+@@ -306,14 +306,12 @@ namespace TagLibExt {
+                         IOStream *stream,
+                         bool readAudioProperties,
+                         AudioProperties::ReadStyle audioPropertiesStyle) {
+-        // Try to resolve file types based on the file extension.
++        // Recorders may use an audio codec suffix for a different container.
+ 
+-        d->file = detectByExtension(&fileName, stream, readAudioProperties, audioPropertiesStyle);
++        d->file = detectByContent(stream, readAudioProperties, audioPropertiesStyle);
+         if (d->file)
+             return;
+ 
+-        // At last, try to resolve file types based on the actual content.
+-
+-        d->file = detectByContent(stream, readAudioProperties, audioPropertiesStyle);
++        d->file = detectByExtension(&fileName, stream, readAudioProperties, audioPropertiesStyle);
+     }
+ 
+ }  // namespace

@@ -30,8 +30,13 @@
 
 ### 音频
 
-- 单文件音频编辑，支持播放试听、信息查看以及标签和封面编辑
-- 支持 MP3、FLAC、M4A、Ogg/Vorbis、Opus、WAV 等 TagLib 支持的格式；字段和封面编辑能力依格式而定
+- 编辑音频，多工具切换连续编辑，支持撤销、重做
+- 时间裁剪、变速并保持音调、添加静音片头/片尾
+- 指定声道试听、删除、合并
+- 编辑标签和封面，仅修改标签或封面时可保留原编码
+- 导出格式及质量参数可调
+
+支持导入 MP3、AAC、FLAC、M4A、Ogg/Vorbis、Opus、WAV 等音频格式；支持导出 MP3、AAC、M4A、FLAC 和 WAV；标签和封面编辑能力依格式而定。
 
 #### NCM 解锁
 
@@ -53,4 +58,5 @@ APK 内置神经网络模型，首次使用时会在设备端完成准备工作�
 - [LiteRT](https://github.com/google-ai-edge/LiteRT)
 - [MNN](https://github.com/alibaba/MNN)
 - [LibRaw](https://www.libraw.org/)
+- [FFmpeg](https://ffmpeg.org/), [FFmpegKit for Android](https://github.com/ffmpegkit-maintained/ffmpeg)
 - [DeNcm](https://github.com/Pacoshao/DeNcm)

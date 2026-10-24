@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <string name="video_time">时间</string>
+    <string name="video_start">开始</string>
+    <string name="video_end">结束</string>
+    <string name="video_extend_time">添加片头 / 片尾</string>
+    <string name="video_before">片头</string>
+    <string name="video_after">片尾</string>
+    <string name="video_reset_time">重置时间</string>
+    <string name="video_speed">倍速（0.10–8.00×）</string>
+    <string name="video_speed_hint">调整保留片段的速度，保持音调</string>
+    <string name="video_result_duration">预计时长：%1$s\u00a0s</string>
+    <string name="video_reset_values">重置数值</string>
+</resources>

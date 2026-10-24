@@ -30,8 +30,13 @@ Supports importing phone DNG and LibRaw-supported camera RAW files, developed in
 
 ### Audio
 
-- Edit one audio file at a time: preview playback, inspect file information, and edit tags and cover artwork
-- Support for MP3, FLAC, M4A, Ogg/Vorbis, Opus, WAV, and other TagLib-supported formats; editable fields and artwork support vary by format
+- Edit audio across multiple tools, with undo and redo
+- Trim, change speed while preserving pitch, and add silence at the beginning/end
+- Audition, delete, or merge selected channels
+- Edit tags and cover artwork, with the option to preserve the original encoding when only tags or artwork are changed
+- Adjust export format and quality settings
+
+Supports importing MP3, AAC, FLAC, M4A, Ogg/Vorbis, Opus, WAV, and other audio formats; supports exporting MP3, AAC, M4A, FLAC, and WAV. Tag and artwork editing capabilities vary by format.
 
 #### NCM unlocking
 
@@ -53,4 +58,5 @@ The APK includes neural network models. First use prepares the selected model on
 - [LiteRT](https://github.com/google-ai-edge/LiteRT)
 - [MNN](https://github.com/alibaba/MNN)
 - [LibRaw](https://www.libraw.org/)
+- [FFmpeg](https://ffmpeg.org/), [FFmpegKit for Android](https://github.com/ffmpegkit-maintained/ffmpeg)
 - [DeNcm](https://github.com/Pacoshao/DeNcm)

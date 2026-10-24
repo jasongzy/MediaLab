@@ -58,9 +58,13 @@ internal fun NumberField(
     onDragStarted: () -> Unit = {},
     onDragFinished: (Boolean) -> Unit = {},
     parse: (String) -> Int? = String::toIntOrNull,
+    format: (Int) -> String = Int::toString,
+    decimal: Boolean = false,
+    dragStep: Float = 1f,
+    suffix: String? = null,
     change: (Int) -> Unit,
 ) {
-    var text by rememberSaveable { mutableStateOf(value.toString()) }
+    var text by rememberSaveable { mutableStateOf(format(value)) }
     var previousValue by rememberSaveable { mutableIntStateOf(value) }
     var dragging by remember { mutableStateOf(false) }
     val currentValue by rememberUpdatedState(value)
@@ -69,7 +73,7 @@ internal fun NumberField(
     val currentStarted by rememberUpdatedState(onDragStarted)
     val currentFinished by rememberUpdatedState(onDragFinished)
     val updateText by rememberUpdatedState<(Int) -> Unit> {
-        text = it.toString()
+        text = format(it)
         onDraftChanged(false)
     }
     val focus = LocalFocusManager.current
@@ -81,30 +85,36 @@ internal fun NumberField(
     val valid = parse(text) in range
     SideEffect { onValidityChanged(valid) }
     LaunchedEffect(value) {
-        if (previousValue != value && parse(text) != value) text = value.toString()
+        if (previousValue != value && parse(text) != value) text = format(value)
         previousValue = value
-        onDraftChanged(text != value.toString())
+        onDraftChanged(text != format(value))
     }
     OutlinedTextField(
         text,
         { input ->
             val digits = if (range.first < 0 && (input.startsWith('-') || input.startsWith('+'))) input.drop(1) else input
-            if ((range.first < 0 || input.length <= 7) && digits.all(Char::isDigit)) {
+            if ((range.first < 0 || input.length <= if (decimal) 14 else 7) &&
+                digits.all { it.isDigit() || (decimal && it == '.') }) {
                 text = input
-                onDraftChanged(input != value.toString())
+                onDraftChanged(input != format(value))
                 parse(input)?.takeIf { it in range }?.let(change)
             }
         },
         modifier.onFocusChanged {
             if (!it.isFocused) parse(text)?.takeIf { number -> number in range }?.let { number ->
-                text = number.toString()
+                text = format(number)
                 onDraftChanged(false)
             }
         },
         label = { Text(stringResource(label)) },
+        suffix = suffix?.let { { Text(it) } },
         singleLine = true,
         isError = !valid,
-        keyboardOptions = KeyboardOptions(keyboardType = if (range.first < 0) KeyboardType.Ascii else KeyboardType.Number),
+        keyboardOptions = KeyboardOptions(keyboardType = when {
+            decimal -> KeyboardType.Decimal
+            range.first < 0 -> KeyboardType.Ascii
+            else -> KeyboardType.Number
+        }),
         trailingIcon = {
             TooltipBox(
                 positionProvider = TooltipDefaults.rememberTooltipPositionProvider(TooltipAnchorPosition.Above),
@@ -157,7 +167,7 @@ internal fun NumberField(
                                     },
                                     onDragEnd = { finish(true) },
                                     onDragCancel = { finish(false) },
-                                ) { _, delta -> drag?.move(delta / density) }
+                                ) { _, delta -> drag?.move(delta / density * dragStep) }
                             } finally {
                                 finish(false)
                             }

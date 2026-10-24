@@ -5,8 +5,9 @@ taglib-android-1.0.6.tar.gz contains the unchanged taglib.cpp, utils.h,
 fileref_ext.cpp and fileref_ext.h from src/main/cpp, plus the upstream LICENSE.
 The Kotlin API and keep rules are extracted from the verified Maven AAR.
 taglib-android-unicode.patch converts JNI strings through UTF-16 in both
-directions and releases temporary JNI resources. CMake applies the patch to
-a fresh build-directory copy whenever configuring the native build.
+directions and releases temporary JNI resources. taglib-android-format.patch
+detects containers by content before falling back to the file extension.
+CMake applies both patches to a fresh build-directory copy when configuring.
 
 TagLib 2.3
 https://github.com/taglib/taglib/releases/download/v2.3/taglib-2.3.tar.gz

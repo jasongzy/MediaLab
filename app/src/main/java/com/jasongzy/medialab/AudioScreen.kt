@@ -2,26 +2,32 @@ package com.jasongzy.medialab
 
 import android.graphics.Bitmap
 import android.text.format.Formatter
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -60,6 +66,33 @@ internal fun AudioScreen(model: LabViewModel, state: LabState, active: Boolean) 
     }
     val editor = audio.editor
     val history = editor.history
+    val scroll = key(editor) { rememberScrollState() }
+    val media = audio.current
+    val tools = AudioTool.entries.filter { it != AudioTool.CHANNELS || media.channels > 1 }
+    val toolScroll = key(editor) { rememberLazyListState() }
+    val exportHighlight = remember(editor) { Animatable(0f) }
+    val highlightColor = MaterialTheme.colorScheme.primary
+    var exportRequest by remember(editor) { mutableIntStateOf(0) }
+    val unapplied = stringResource(R.string.unapplied_changes)
+    var shownTool by rememberSaveable(editor) { mutableStateOf(editor.tool) }
+    LaunchedEffect(editor.tool) {
+        if (shownTool != editor.tool) {
+            scroll.scrollTo(0)
+            editor.audition = false
+            shownTool = editor.tool
+        }
+        val index = tools.indexOf(editor.tool)
+        if (toolScroll.layoutInfo.visibleItemsInfo.none { it.index == index })
+            toolScroll.animateScrollToItem(index)
+    }
+    LaunchedEffect(exportRequest) {
+        if (exportRequest > 0) {
+            scroll.scrollTo(0)
+            toolScroll.animateScrollToItem(tools.indexOf(AudioTool.EXPORT))
+            exportHighlight.snapTo(0.16f)
+            exportHighlight.animateTo(0f, tween(1200))
+        }
+    }
     var menu by rememberSaveable(editor) { mutableStateOf(false) }
     var editTag by editor::tag
     var editPicture by editor::picture
@@ -72,8 +105,8 @@ internal fun AudioScreen(model: LabViewModel, state: LabState, active: Boolean) 
                     val current = model.state.value.audio ?: return@cover
                     if (current.editor !== editor) return@cover
                     val index = request.index
-                    if (index != null && index !in current.pictures.indices) return@cover
-                    val pictures = current.pictures.toMutableList()
+                    if (index != null && index !in editor.pictures.value.indices) return@cover
+                    val pictures = editor.pictures.value.toMutableList()
                     if (index != null)
                         pictures[index] =
                             picture.copy(
@@ -81,7 +114,7 @@ internal fun AudioScreen(model: LabViewModel, state: LabState, active: Boolean) 
                                 pictureType = pictures[index].pictureType,
                             )
                     else pictures += picture
-                    model.editAudio(current.tags, pictures)
+                    editor.pictures.change(pictures)
                 }
         }
     val context = LocalContext.current
@@ -90,25 +123,34 @@ internal fun AudioScreen(model: LabViewModel, state: LabState, active: Boolean) 
             Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            FileName(
-                audio.name, audio.sourceUri,
-                MediaFiles.mime(audio.file).takeUnless { it == "application/octet-stream" } ?: "audio/*",
-                audio.sourceBytes,
-                R.string.original_duration to (
-                    audio.sourceDuration?.takeIf { it >= 0 }?.let(::playbackTime)
-                        ?: stringResource(R.string.unknown)
-                ),
-                Modifier.weight(1f),
-            )
+            Column(Modifier.weight(1f)) {
+                FileName(
+                    audio.name, audio.sourceUri,
+                    MediaFiles.mime(audio.file).takeUnless { it == "application/octet-stream" } ?: "audio/*",
+                    audio.sourceBytes,
+                    R.string.original_duration to (
+                        audio.sourceDuration?.takeIf { it > 0 }?.let(::playbackTime)
+                            ?: stringResource(R.string.unknown)
+                    ),
+                )
+                Text(
+                    if (media.durationMs > 0) playbackTime(media.durationMs) else stringResource(R.string.unknown_time),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             ToolButton(R.drawable.ic_undo, R.string.undo, history.canUndo) { model.undoAudio(-1) }
             ToolButton(R.drawable.ic_redo, R.string.redo, history.canRedo) { model.undoAudio(1) }
-            ToolButton(R.drawable.ic_save, R.string.save_copy, action = model::saveAudio)
+            ToolButton(R.drawable.ic_save, R.string.export) {
+                editor.tool = AudioTool.EXPORT
+                exportRequest++
+            }
             Box {
                 ToolButton(R.drawable.ic_more, R.string.more) { menu = true }
                 DropdownMenu(menu, { menu = false }) {
                     DropdownMenuItem(
                         text = { Text(stringResource(R.string.restore_original_audio)) },
-                        enabled = history.value != editor.original,
+                        enabled = history.value != editor.original || editor.pending.isNotEmpty(),
                         onClick = {
                             menu = false
                             model.restoreAudio()
@@ -131,153 +173,219 @@ internal fun AudioScreen(model: LabViewModel, state: LabState, active: Boolean) 
                 }
             }
         }
-        MediaPlayer(audio.file, active, model.playbackPosition(audio.file)) {
-            model.rememberPlaybackPosition(audio.file, it)
-        }
-        val common =
-            listOf(
-                "TITLE",
-                "ARTIST",
-                "ALBUM",
-                "ALBUMARTIST",
-                "TRACKNUMBER",
-                "DISCNUMBER",
-                "DATE",
-                "GENRE",
-                "COMPOSER",
-                "LYRICS",
-                "COMMENT",
-            )
-        val keys =
-            common.filter { it in audio.tags || it in listOf("TITLE", "ARTIST", "ALBUM") } +
-                (audio.tags.keys - common.toSet()).sorted()
-        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 16.dp)) {
-            item {
-                Row(
-                    Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        stringResource(R.string.tags),
-                        Modifier.weight(1f),
-                        style = MaterialTheme.typography.titleMedium,
-                    )
-                    ToolButton(R.drawable.ic_add, R.string.add_tag) {
-                        editTag = TagDraft("", emptyList())
-                    }
-                }
-            }
-            items(keys, key = { it }) { key ->
-                ListItem(
-                    content = { Text(tagLabel(key)) },
-                    supportingContent = {
-                        Text(
-                            audio.tags[key]?.joinToString(" · ").orEmpty(),
-                            maxLines = 3,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    },
-                    modifier =
-                        Modifier.clickable { editTag = TagDraft(key, audio.tags[key].orEmpty()) },
-                )
-            }
-            item {
-                HorizontalDivider(Modifier.padding(vertical = 8.dp, horizontal = 16.dp))
-                Row(
-                    Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        stringResource(R.string.artwork),
-                        Modifier.weight(1f),
-                        style = MaterialTheme.typography.titleMedium,
-                    )
-                    ToolButton(R.drawable.ic_add, R.string.add_cover) {
-                        editor.coverRequest = CoverRequest()
-                        coverPicker.launch(arrayOf("image/*"))
-                    }
-                }
-            }
-            items(audio.pictures.size) { index ->
-                val picture = audio.pictures[index]
-                val bitmap by
-                    produceState<Bitmap?>(null, picture.data) {
-                        value =
-                            withContext(Dispatchers.IO) { AudioFiles.thumbnail(picture.data) }
-                    }
-                Row(
-                    Modifier.fillMaxWidth().padding(16.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    bitmap?.let {
-                        Image(
-                            it.asImageBitmap(),
-                            stringResource(R.string.artwork),
-                            Modifier.size(80.dp).clickable { editPicture = PictureDraft(index, picture) },
-                        )
-                    }
-                    Column(Modifier.weight(1f).clickable { editPicture = PictureDraft(index, picture) }) {
-                        Text(
-                            pictureLabel(picture.pictureType),
-                            style = MaterialTheme.typography.titleSmall,
-                        )
-                        if (picture.description.isNotBlank())
-                            Text(
-                                picture.description,
-                                maxLines = 2,
-                                style = MaterialTheme.typography.bodySmall,
-                            )
-                        Text(
-                            "${picture.mimeType} · ${Formatter.formatFileSize(context, picture.data.size.toLong())}",
-                            style = MaterialTheme.typography.labelSmall,
-                        )
-                    }
-                    ToolButton(R.drawable.ic_save, R.string.export_cover) {
-                        model.saveCover(picture)
-                    }
-                }
-            }
-            item {
-                HorizontalDivider(Modifier.padding(vertical = 8.dp, horizontal = 16.dp))
-                Text(
-                    stringResource(R.string.technical),
-                    Modifier.padding(16.dp),
-                    style = MaterialTheme.typography.titleMedium,
-                )
-                SelectionContainer {
-                    Column(
-                        Modifier.padding(horizontal = 16.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
+        EditorLayout(
+            Modifier.weight(1f).fillMaxWidth(),
+            wrapPreview = true,
+            preview = {
+                MediaPlayer(
+                    audio.playbackFile, active && !editor.showPreview, model.playbackPosition(media.file), paused = state.busy,
+                    seekPosition = editor.seekPosition, onSeekHandled = { editor.seekPosition = null },
+                    channelCount = media.channels,
+                    auditionChannels = if (editor.audition && editor.selectedChannels.size < media.channels)
+                        editor.selectedChannels else emptySet(),
+                ) { model.rememberPlaybackPosition(media.file, it) }
+            },
+            controls = {
+                Column {
+                    LazyRow(
+                        Modifier.fillMaxWidth(), contentPadding = PaddingValues(horizontal = 16.dp),
+                        state = toolScroll,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        Text(
-                            "${audio.file.extension.uppercase()} · ${Formatter.formatFileSize(context, audio.file.length())}",
-                            style = MaterialTheme.typography.bodyMedium,
-                        )
-                        audio.properties?.let { properties ->
-                            DetailRow(
-                                stringResource(R.string.duration),
-                                playbackTime(properties.length.toLong()),
-                            )
-                            DetailRow(
-                                stringResource(R.string.bitrate),
-                                "${properties.bitrate} kb/s",
-                            )
-                            DetailRow(
-                                stringResource(R.string.sample_rate),
-                                "${properties.sampleRate} Hz",
-                            )
-                            DetailRow(
-                                stringResource(R.string.channels),
-                                properties.channels.toString(),
+                        items(tools, key = { it }) { tool ->
+                            FilterChip(
+                                selected = editor.tool == tool,
+                                onClick = { editor.tool = tool },
+                                label = { Text(stringResource(tool.label)) },
+                                leadingIcon = {
+                                    BadgedBox(badge = {
+                                        if (tool in editor.pending) Badge(Modifier.semantics { contentDescription = unapplied })
+                                    }) {
+                                        Icon(painterResource(tool.icon), null, Modifier.size(18.dp))
+                                    }
+                                },
                             )
                         }
-                        audio.technical.forEach { (key, value) -> DetailRow(key, value) }
+                    }
+                    if (editor.tool == AudioTool.TIME && media.canEdit) AudioTimeline(editor)
+                    val common =
+                        listOf(
+                            "TITLE",
+                            "ARTIST",
+                            "ALBUM",
+                            "ALBUMARTIST",
+                            "TRACKNUMBER",
+                            "DISCNUMBER",
+                            "DATE",
+                            "GENRE",
+                            "COMPOSER",
+                            "LYRICS",
+                            "COMMENT",
+                        )
+                    val keys =
+                        common.filter { it in editor.tags.value || it in listOf("TITLE", "ARTIST", "ALBUM") } +
+                            (editor.tags.value.keys - common.toSet()).sorted()
+                    Column(
+                        Modifier.fillMaxSize()
+                            .drawBehind {
+                                if (editor.tool == AudioTool.EXPORT) drawRect(highlightColor.copy(alpha = exportHighlight.value))
+                            }
+                            .verticalScrollbar(scroll)
+                            .verticalScroll(scroll)
+                            .padding(bottom = 16.dp),
+                    ) {
+                        if (editor.tool == AudioTool.EXPORT) AudioExportPanel(audio, model)
+                        if (editor.tool == AudioTool.TIME || editor.tool == AudioTool.CHANNELS)
+                            AudioEditPanel(audio, model)
+                        if (editor.tool == AudioTool.TAGS) {
+                            Row(
+                                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    stringResource(R.string.tags),
+                                    Modifier.weight(1f),
+                                    style = MaterialTheme.typography.titleMedium,
+                                )
+                                ToolButton(R.drawable.ic_add, R.string.add_tag) {
+                                    editTag = TagDraft("", emptyList())
+                                }
+                                HistoryButtons(editor.tags, R.string.tags) {}
+                            }
+                            keys.forEach { key ->
+                                ListItem(
+                                    content = { Text(tagLabel(key)) },
+                                    supportingContent = {
+                                        Text(
+                                            editor.tags.value[key]?.joinToString(" · ").orEmpty(),
+                                            maxLines = 3,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                    },
+                                    modifier =
+                                        Modifier.clickable { editTag = TagDraft(key, editor.tags.value[key].orEmpty()) },
+                                )
+                            }
+                        }
+                        if (editor.tool == AudioTool.ARTWORK) {
+                            Row(
+                                Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    stringResource(R.string.artwork),
+                                    Modifier.weight(1f),
+                                    style = MaterialTheme.typography.titleMedium,
+                                )
+                                ToolButton(R.drawable.ic_add, R.string.add_cover) {
+                                    editor.coverRequest = CoverRequest()
+                                    coverPicker.launch(arrayOf("image/*"))
+                                }
+                                HistoryButtons(editor.pictures, R.string.artwork) {}
+                            }
+                            editor.pictures.value.forEachIndexed { index, picture ->
+                                val bitmap by
+                                    produceState<Bitmap?>(null, picture.data) {
+                                        value =
+                                            withContext(Dispatchers.IO) { AudioFiles.thumbnail(picture.data) }
+                                    }
+                                Row(
+                                    Modifier.fillMaxWidth().padding(16.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                ) {
+                                    Box(Modifier.size(80.dp).clickable { editPicture = PictureDraft(index, picture) }) {
+                                        bitmap?.let {
+                                            Image(
+                                                it.asImageBitmap(),
+                                                stringResource(R.string.artwork),
+                                                Modifier.fillMaxSize(),
+                                            )
+                                        }
+                                    }
+                                    Column(Modifier.weight(1f).clickable { editPicture = PictureDraft(index, picture) }) {
+                                        Text(
+                                            pictureLabel(picture.pictureType),
+                                            style = MaterialTheme.typography.titleSmall,
+                                        )
+                                        if (picture.description.isNotBlank())
+                                            Text(
+                                                picture.description,
+                                                maxLines = 2,
+                                                style = MaterialTheme.typography.bodySmall,
+                                            )
+                                        Text(
+                                            "${picture.mimeType} · ${Formatter.formatFileSize(context, picture.data.size.toLong())}",
+                                            style = MaterialTheme.typography.labelSmall,
+                                        )
+                                    }
+                                    ToolButton(R.drawable.ic_save, R.string.export_cover) {
+                                        model.saveCover(picture)
+                                    }
+                                }
+                            }
+                        }
+                        if (editor.tool == AudioTool.TAGS || editor.tool == AudioTool.ARTWORK) {
+                            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                                horizontalArrangement = Arrangement.End) {
+                                Button({ model.applyAudioMetadata(editor.tool) }, enabled = editor.tool in editor.pending) {
+                                    Text(stringResource(R.string.apply))
+                                }
+                            }
+                        }
+                        if (editor.tool == AudioTool.INFO) {
+                            InformationPanel(Modifier.padding(16.dp)) {
+                                Text(
+                                    "${media.file.extension.uppercase()} · ${Formatter.formatFileSize(context, media.file.length())}",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                )
+                                media.properties?.let { properties ->
+                                    DetailRow(
+                                        stringResource(R.string.duration),
+                                        properties.length.takeIf { it > 0 }?.let { playbackTime(it.toLong()) }
+                                            ?: stringResource(R.string.unknown),
+                                    )
+                                    DetailRow(
+                                        stringResource(R.string.bitrate),
+                                        properties.bitrate.takeIf { it > 0 }?.let { "$it kb/s" }
+                                            ?: stringResource(R.string.unknown),
+                                    )
+                                    DetailRow(
+                                        stringResource(R.string.sample_rate),
+                                        properties.sampleRate.takeIf { it > 0 }?.let { "$it Hz" }
+                                            ?: stringResource(R.string.unknown),
+                                    )
+                                    DetailRow(
+                                        stringResource(R.string.channels),
+                                        properties.channels.takeIf { it > 0 }?.toString()
+                                            ?: stringResource(R.string.unknown),
+                                    )
+                                }
+                                media.technical.forEach { (key, value) -> DetailRow(key, value) }
+                            }
+                        }
+                    }
+                }
+            },
+        )
+    }
+    val preview = editor.preview
+    if (editor.showPreview && preview != null && !state.busy)
+        androidx.compose.ui.window.Dialog({ editor.showPreview = false }) {
+            Surface(shape = MaterialTheme.shapes.extraLarge, tonalElevation = 6.dp) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(stringResource(R.string.preview), style = MaterialTheme.typography.titleMedium)
+                    MediaPlayer(preview.playable, active, model.playbackPosition(preview.file)) {
+                        model.rememberPlaybackPosition(preview.file, it)
+                    }
+                    Text("${preview.file.extension.uppercase()} · ${Formatter.formatFileSize(context, preview.file.length())}",
+                        style = MaterialTheme.typography.bodySmall)
+                    TextButton({ editor.showPreview = false }, Modifier.align(Alignment.End)) {
+                        Text(stringResource(R.string.close))
                     }
                 }
             }
         }
-    }
     editTag?.let { draft ->
         val original = draft.original
         var key by draft::key
@@ -316,29 +424,29 @@ internal fun AudioScreen(model: LabViewModel, state: LabState, active: Boolean) 
             confirmButton = {
                 TextButton(
                     {
-                        val tags = audio.tags.toMutableMap()
+                        val tags = editor.tags.value.toMutableMap()
                         val newValues =
                             (if (normalized in listOf("LYRICS", "COMMENT")) listOf(text)
                                 else text.lines())
                                 .filter { it.isNotBlank() }
                         if (newValues.isEmpty()) tags.remove(normalized)
                         else tags[normalized] = newValues
-                        model.editAudio(tags, audio.pictures)
+                        editor.tags.change(tags)
                         editTag = null
                     },
                     enabled =
                         normalized.isNotBlank() &&
                             normalized.length <= 256 &&
-                            (original.isNotBlank() || normalized !in audio.tags),
+                            (original.isNotBlank() || normalized !in editor.tags.value),
                 ) {
-                    Text(stringResource(R.string.apply))
+                    Text(stringResource(android.R.string.ok))
                 }
             },
             dismissButton = {
                 Row {
                     if (original.isNotBlank())
                         TextButton({
-                            model.editAudio(audio.tags - original, audio.pictures)
+                            editor.tags.change(editor.tags.value - original)
                             editTag = null
                         }) {
                             Text(stringResource(R.string.delete))
@@ -349,10 +457,10 @@ internal fun AudioScreen(model: LabViewModel, state: LabState, active: Boolean) 
         )
     }
     editPicture
-        ?.takeIf { it.index in audio.pictures.indices }
+        ?.takeIf { it.index in editor.pictures.value.indices }
         ?.let { draft ->
             val index = draft.index
-            val picture = audio.pictures[index]
+            val picture = editor.pictures.value[index]
             val bitmap by
                 produceState<Bitmap?>(null, picture.data) {
                     value = withContext(Dispatchers.IO) { AudioFiles.thumbnail(picture.data, 1024) }
@@ -418,15 +526,15 @@ internal fun AudioScreen(model: LabViewModel, state: LabState, active: Boolean) 
                 },
                 confirmButton = {
                     TextButton({
-                        val pictures = audio.pictures.toMutableList()
+                        val pictures = editor.pictures.value.toMutableList()
                         if (deleting) pictures.removeAt(index)
                         else
                             pictures[index] =
                                 picture.copy(description = description, pictureType = type)
-                        model.editAudio(audio.tags, pictures)
+                        editor.pictures.change(pictures)
                         editPicture = null
                     }) {
-                        Text(stringResource(if (deleting) R.string.delete else R.string.apply))
+                        Text(stringResource(if (deleting) R.string.delete else android.R.string.ok))
                     }
                 },
                 dismissButton = {
