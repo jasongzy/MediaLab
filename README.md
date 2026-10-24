@@ -12,17 +12,17 @@ A native Android media toolbox
 
 ### Images
 
-- Edit one image across multiple tools, with undo/redo and a shared export step
-- Remove backgrounds locally with RMBG 1.4 (LiteRT with compatible Qualcomm NPUs and GPU/CPU fallback) or RMBG 2.0 (MNN OpenCL GPU)
-- Refine background removal masks with hard or soft keep/remove brushes, and temporarily store masks for reuse across images
+- Edit images across multiple tools, with undo and redo
 - Crop to any size or aspect ratio, including block-aligned lossless JPEG cropping
 - Expand the canvas freely or to a preset aspect ratio, filling new areas with a solid color or transparency
-- Rotate to any integer angle and flip horizontally or vertically, with automatic canvas expansion or a fixed canvas size
+- Rotate to any angle and flip horizontally or vertically, with automatic canvas expansion or a fixed canvas size
+- Remove backgrounds locally with RMBG 1.4 (LiteRT with NPU acceleration on compatible Qualcomm devices and GPU/CPU fallback) or RMBG 2.0 (MNN OpenCL GPU); refine masks with hard or soft brushes to keep or remove areas, and temporarily store masks for reuse across images
 - Cover or erase areas with rectangles, ellipses, freehand selections, and brushes
-- Resize with interpolation, adjust compression quality, and export PNG, JPEG, or WebP
+- Resize to any dimensions with interpolation
 - Pick pixel colors, copy HEX codes, and extract representative colors from images
 - Edit or delete metadata
 - Extract still images from Motion Photos; finalize Xiaomi recoverable edits
+- Choose the export format and adjust lossy compression quality
 
 Supports importing JPEG, PNG, WebP, BMP, and other image formats, plus device-supported HEIF/AVIF; supports exporting JPEG, PNG, and WebP. Editing and export preserve supported color spaces (such as Display P3 and Adobe RGB) and relevant EXIF metadata, including capture dates and camera details, by default.
 
@@ -38,12 +38,7 @@ Supports importing phone DNG and LibRaw-supported camera RAW files, developed in
 
 Supports importing MP3, AAC, FLAC, M4A, Ogg/Vorbis, Opus, WAV, and other audio formats; supports exporting MP3, AAC, M4A, FLAC, and WAV. Tag and artwork editing capabilities vary by format.
 
-#### NCM unlocking
-
-- Import multiple files or scan folders recursively, preserving subfolder structure in the output
-- Unlock original MP3/FLAC audio with tags and artwork, with optional copying of ordinary audio files
-- Process in the background, stop tasks, retry failures, and choose to skip, rename, or overwrite existing files
-- Verify output before optional source deletion, or find and clean up already-unlocked originals after confirmation
+Supports unlocking NCM files to extract the original MP3/FLAC audio and restore tags and artwork; select multiple files or scan folders recursively, preserving subfolder structure in the output.
 
 ## 📥 Download
 
