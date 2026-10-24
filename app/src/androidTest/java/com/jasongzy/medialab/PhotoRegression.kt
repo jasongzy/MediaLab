@@ -873,11 +873,11 @@ internal class PhotoRegression(
             instrumentation.runOnMainSync { model.loadMask() }
             answer(model, Confirmation.RESIZE_MASK, true)
             check(applied.cutout?.mask === stored && applied.cutout?.showMask == true)
-            check(model.state.value.maskBytes == stored.bytes)
             instrumentation.runOnMainSync { model.discardBackground() }
             answer(model, Confirmation.DISCARD_MASK, true)
             for (direction in listOf(-1, 1)) {
                 val before = model.state.value.photo
+                val pending = before.pending + PhotoTool.COVER
                 val editor = checkNotNull(before.editor)
                 val strokes = listOf(Stroke(listOf(0f to 0f, 4f to 4f), Color.WHITE, 1f, CoverShape.RECTANGLE))
                 val action = if (direction < 0) Confirmation.UNDO else Confirmation.REDO
@@ -890,12 +890,18 @@ internal class PhotoRegression(
                 instrumentation.runOnMainSync { model.undo(direction) }
                 answer(model, action, false)
                 check(model.state.value.photo === before && editor.coverHistory.value == strokes)
-                check(model.state.value.photo.pending == listOf(PhotoTool.COVER))
+                check(model.state.value.photo.pending == pending)
                 instrumentation.runOnMainSync { model.undo(direction) }
                 answer(model, action, true)
                 check(model.state.value.photo.position == before.position + direction)
                 check(model.state.value.photo.sourceUri == Uri.fromFile(input))
-                check(model.state.value.photo.editor !== editor && model.state.value.photo.pending.isEmpty())
+                val restored = checkNotNull(model.state.value.photo.editor)
+                check(restored !== editor)
+                if (direction < 0) {
+                    check(model.state.value.photo.pending == listOf(PhotoTool.CROP))
+                    check(restored.tool == PhotoTool.CROP && restored.cropHistory.canUndo)
+                    check(restored.cropHistory.value == draft.cropHistory.value)
+                } else check(model.state.value.photo.pending.isEmpty())
             }
             instrumentation.runOnMainSync { model.undo(-1) }
             idle(model)
@@ -914,10 +920,46 @@ internal class PhotoRegression(
             val stroke =
                 Stroke(listOf(-1f to -1f, 20f to 20f), Color.TRANSPARENT, 1f, CoverShape.RECTANGLE)
             Photos.cover(reference, listOf(stroke))
-            instrumentation.runOnMainSync { model.cover(listOf(stroke)) }
+            val coverDraft = checkNotNull(model.state.value.photo.editor)
+            instrumentation.runOnMainSync {
+                coverDraft.cropHistory.change(FrameSelection(Rect(0, 0, info.width, info.height)))
+                coverDraft.coverHistory.change(listOf(stroke))
+                coverDraft.coverHistory.change(listOf(stroke, stroke.copy(color = Color.BLACK)))
+                coverDraft.coverHistory.undo()
+                model.cover(coverDraft.coverHistory.value)
+            }
             idle(model)
             val edited = checkNotNull(model.state.value.photo.frame)
             check(edited.source == null && edited.pixels!!.sameAs(reference))
+            instrumentation.runOnMainSync { model.undo(-1) }
+            idle(model)
+            val restoredCover = checkNotNull(model.state.value.photo.editor)
+            check(
+                restoredCover.tool == PhotoTool.COVER &&
+                    model.state.value.photo.pending == listOf(PhotoTool.COVER)
+            )
+            check(restoredCover.coverHistory.value == listOf(stroke))
+            check(restoredCover.coverHistory.canUndo && restoredCover.coverHistory.canRedo)
+            instrumentation.runOnMainSync {
+                restoredCover.coverHistory.redo()
+                model.undo(1)
+            }
+            answer(model, Confirmation.REDO, false)
+            check(
+                model.state.value.photo.editor === restoredCover &&
+                    restoredCover.coverHistory.value.size == 2
+            )
+            instrumentation.runOnMainSync { model.undo(1) }
+            answer(model, Confirmation.REDO, true)
+            check(
+                model.state.value.photo.frame === edited &&
+                    model.state.value.photo.pending.isEmpty()
+            )
+            instrumentation.runOnMainSync { model.undo(-1) }
+            idle(model)
+            check(model.state.value.photo.editor!!.coverHistory.value == listOf(stroke))
+            instrumentation.runOnMainSync { model.undo(1) }
+            answer(model, Confirmation.REDO, true)
             instrumentation.runOnMainSync {
                 model.removeBackground(BackgroundModel.RMBG20)
             }
@@ -932,7 +974,13 @@ internal class PhotoRegression(
             instrumentation.runOnMainSync { model.previewResize(32, 24, 2) { preview = it } }
             idle(model)
             check(preview === expectedPreview)
-            instrumentation.runOnMainSync { model.resize(32, 24, 2) }
+            instrumentation.runOnMainSync {
+                model.state.value.photo.editor!!.resize.apply {
+                    width = 32
+                    height = 24
+                }
+                model.resize(32, 24, 2)
+            }
             idle(model)
             val resized = checkNotNull(model.state.value.photo.frame)
             check(model.state.value.photo.preview === expectedPreview)
@@ -946,12 +994,28 @@ internal class PhotoRegression(
             instrumentation.runOnMainSync { model.undo(-1) }
             idle(model)
             check(model.state.value.photo.frame === edited && edited.pixels!!.sameAs(reference))
+            instrumentation.runOnMainSync { model.undo(-1) }
+            answer(model, Confirmation.UNDO, true)
+            check(model.state.value.photo.pending == listOf(PhotoTool.COVER))
             instrumentation.runOnMainSync { model.undo(1) }
-            idle(model)
+            answer(model, Confirmation.REDO, true)
+            check(
+                model.state.value.photo.frame === edited &&
+                    model.state.value.photo.pending == listOf(PhotoTool.RESIZE)
+            )
+            check(model.state.value.photo.editor!!.resize.width == 32)
+            instrumentation.runOnMainSync { model.undo(1) }
+            answer(model, Confirmation.REDO, true)
             check(model.state.value.photo.frame === resized)
             instrumentation.runOnMainSync { model.undo(-1) }
             idle(model)
-            instrumentation.runOnMainSync { model.crop(Rect(0, 0, 16, 16), false) }
+            instrumentation.runOnMainSync {
+                model.state.value.photo.editor!!.resize.apply {
+                    width = reference.width
+                    height = reference.height
+                }
+                model.crop(Rect(0, 0, 16, 16), false)
+            }
             idle(model)
             check(model.state.value.photo.history.size == 3 && resized.pixels == null)
             check(!expectedPreview.isRecycled)
@@ -993,9 +1057,12 @@ internal class PhotoRegression(
             instrumentation.runOnMainSync { model.undo(-1) }
             idle(model)
             check(model.state.value.photo.frame === beforeClean && beforeClean.info.metadata.containsAll(capture))
+            check(model.state.value.notice == Notice(R.string.undone, argumentRes = R.string.clean))
+            check(model.state.value.photo.pending.isEmpty())
             instrumentation.runOnMainSync { model.undo(1) }
             idle(model)
             check(model.state.value.photo.frame === cleaned && cleaned.info.metadata.isEmpty())
+            check(model.state.value.notice == Notice(R.string.redone, argumentRes = R.string.clean))
             instrumentation.runOnMainSync { model.resize(16, 16, 0) }
             idle(model)
             instrumentation.runOnMainSync { model.previewExport(ExportOptions(format = ImageFormat.JPEG)) {} }
@@ -1022,9 +1089,11 @@ internal class PhotoRegression(
             instrumentation.runOnMainSync { model.undo(-1) }
             idle(model)
             check(model.state.value.photo.frame === beforeRestore.frame)
+            check(model.state.value.notice == Notice(R.string.undone, argumentRes = R.string.restore_original))
             instrumentation.runOnMainSync { model.undo(1) }
             idle(model)
             check(model.state.value.photo.frame === original)
+            check(model.state.value.notice == Notice(R.string.redone, argumentRes = R.string.restore_original))
             val editor = checkNotNull(model.state.value.photo.editor)
             instrumentation.runOnMainSync {
                 editor.cutout = cutout
@@ -1038,8 +1107,23 @@ internal class PhotoRegression(
             instrumentation.runOnMainSync { model.undo(-1) }
             idle(model)
             check(model.state.value.photo.frame === original)
+            val restoredCutout = checkNotNull(model.state.value.photo.editor?.cutout)
+            check(restoredCutout !== cutout && restoredCutout.mask === mask)
+            check(restoredCutout.maskPreview.sameAs(cutout.maskPreview))
+            check(
+                restoredCutout.history.value == cutout.history.value &&
+                    restoredCutout.history.canUndo
+            )
+            check(model.state.value.photo.pending == listOf(PhotoTool.BACKGROUND))
+            instrumentation.runOnMainSync { model.undo(-1) }
+            answer(model, Confirmation.UNDO, true)
             instrumentation.runOnMainSync { model.undo(1) }
             idle(model)
+            val redoneDraft = checkNotNull(model.state.value.photo.editor?.cutout)
+            check(model.state.value.photo.pending == listOf(PhotoTool.BACKGROUND))
+            check(redoneDraft.history.value == cutout.history.value && redoneDraft.history.canUndo)
+            instrumentation.runOnMainSync { model.undo(1) }
+            answer(model, Confirmation.REDO, true)
             check(model.state.value.photo.frame === cut)
             instrumentation.runOnMainSync { model.open(Uri.fromFile(input), ImportType.IMAGE) }
             answer(model, Confirmation.IMAGE, true)

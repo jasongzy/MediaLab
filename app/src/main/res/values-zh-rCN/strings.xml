@@ -51,6 +51,8 @@
     <string name="unapplied_export">以下修改尚未应用，导出时不会包含：\n%1$s</string>
     <string name="undo">撤销</string>
     <string name="redo">重做</string>
+    <string name="undone">已撤销：%1$s</string>
+    <string name="redone">已重做：%1$s</string>
     <string name="hold_original">按住查看原图</string>
     <string name="original_format">当前格式</string>
     <string name="png">PNG</string>

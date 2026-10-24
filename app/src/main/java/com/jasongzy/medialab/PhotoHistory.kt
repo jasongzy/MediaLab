@@ -44,6 +44,10 @@ internal class PhotoHistory(
 ) {
     var frames = listOf(first)
         private set
+    var drafts = listOf<PhotoDraft?>(null)
+        private set
+    var actions = listOf<Int?>(null)
+        private set
     var position = 0
         private set
     val current: PhotoFrame
@@ -119,11 +123,19 @@ internal class PhotoHistory(
         return if (result === source) checkNotNull(source.copy(source.config!!, true)) else result
     }
 
-    suspend fun append(frame: PhotoFrame) {
+    suspend fun append(frame: PhotoFrame, draft: PhotoDraft? = null, action: Int? = draft?.tool?.label) {
         if (frame !in frames) reserve(frame.pixels?.allocationByteCount?.toLong() ?: 0, keep = null)
         currentCoroutineContext().ensureActive()
         val discarded = frames.drop(position + 1)
         frames = frames.take(position + 1) + frame
+        drafts = drafts.take(position + 1) + draft
+        actions = actions.take(position + 1) + action
+        // Keep large masks bounded; image history remains available after a draft is evicted.
+        val maskBudget = Runtime.getRuntime().maxMemory() / 8
+        while (drafts.mapNotNull { it?.mask }.distinct().sumOf { it.bytes } > maskBudget) {
+            val oldest = drafts.indexOfFirst { it?.mask != null }
+            drafts = drafts.toMutableList().also { it[oldest] = null }
+        }
         position = frames.lastIndex
         discarded.distinct().filter { it !in frames }.forEach { it.release() }
     }
@@ -136,6 +148,8 @@ internal class PhotoHistory(
     fun close() {
         frames.distinct().forEach { it.release() }
         frames = emptyList()
+        drafts = emptyList()
+        actions = emptyList()
     }
 
     private suspend fun detach(frame: PhotoFrame): Bitmap? {

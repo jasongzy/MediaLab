@@ -101,6 +101,17 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
     var tool by editor::tool
     val toolScroll = key(photo.history.first()) { rememberLazyListState() }
     val panelScroll = key(photo.history.first()) { rememberScrollState() }
+    var shownTool by rememberSaveable(photo.history.first()) { mutableStateOf(tool) }
+    LaunchedEffect(editor, tool) {
+        if (shownTool != tool) {
+            panelScroll.scrollTo(0)
+            shownTool = tool
+        }
+        val index = tool.ordinal
+        if (toolScroll.layoutInfo.visibleItemsInfo.none { it.index == index })
+            toolScroll.animateScrollToItem(index)
+    }
+
     val exportHighlight = remember(editor) { Animatable(0f) }
     val highlightColor = MaterialTheme.colorScheme.primary
     var exportRequest by remember(editor) { mutableIntStateOf(0) }
@@ -300,7 +311,7 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
                                         ))
                                     }
                                 }
-                                HistoryButtons(frameHistory) {
+                                HistoryButtons(frameHistory, if (expanding) R.string.expand_canvas else R.string.crop) {
                                     dropper = false
                                     inputRevision++
                                 }
@@ -393,7 +404,7 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
                                 fill, fillShape,
                                 { fill = it; dropper = false },
                                 { fillShape = it; dropper = false },
-                            ) { HistoryButtons(coverHistory) { dropper = false } }
+                            ) { HistoryButtons(coverHistory, R.string.cover) { dropper = false } }
                             ColorField(color, allowTransparent = true, pick = { dropper = !dropper }) {
                                 color = it
                                 dropper = false
@@ -617,7 +628,7 @@ private fun BackgroundPanel(model: LabViewModel, photo: PhotoState, hasStoredMas
                     },
                     enabled = draft.history.value.lastOrNull() != MaskEdit.Harden,
                 ) { Text(stringResource(R.string.harden_mask)) }
-                HistoryButtons(draft.history) { editor.dropper = false }
+                HistoryButtons(draft.history, R.string.remove_background) { editor.dropper = false }
             }
         }
         Text(
@@ -1227,7 +1238,7 @@ private fun RotationPanel(editor: PhotoEditorState, apply: (RotationSelection) -
                 if (dragging) history.preview(next) else history.change(next)
             }
         }
-        HistoryButtons(history) {
+        HistoryButtons(history, R.string.rotate) {
             finishInput()
             inputRevision++
         }

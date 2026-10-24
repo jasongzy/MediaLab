@@ -51,6 +51,8 @@
     <string name="unapplied_export">These changes have not been applied and will not be included in the export:\n%1$s</string>
     <string name="undo">Undo</string>
     <string name="redo">Redo</string>
+    <string name="undone">Undone: %1$s</string>
+    <string name="redone">Redone: %1$s</string>
     <string name="hold_original">Hold to view original</string>
     <string name="original_format">Current format</string>
     <string name="png">PNG</string>

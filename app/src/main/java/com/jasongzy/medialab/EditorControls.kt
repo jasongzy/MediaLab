@@ -1,5 +1,7 @@
 package com.jasongzy.medialab
 
+import android.widget.Toast
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -31,15 +33,20 @@ internal fun ToolButton(icon: Int, label: Int, enabled: Boolean = true, action: 
 }
 
 @Composable
-internal fun HistoryButtons(history: ToolHistory<*>, beforeChange: () -> Unit) {
+internal fun HistoryButtons(history: ToolHistory<*>, action: Int, beforeChange: () -> Unit) {
+    val context = LocalContext.current
+    val undone = stringResource(R.string.undone, stringResource(action))
+    val redone = stringResource(R.string.redone, stringResource(action))
     Row {
         ToolButton(R.drawable.ic_undo, R.string.undo, history.canUndo) {
             beforeChange()
             history.undo()
+            Toast.makeText(context, undone, Toast.LENGTH_SHORT).show()
         }
         ToolButton(R.drawable.ic_redo, R.string.redo, history.canRedo) {
             beforeChange()
             history.redo()
+            Toast.makeText(context, redone, Toast.LENGTH_SHORT).show()
         }
     }
 }
