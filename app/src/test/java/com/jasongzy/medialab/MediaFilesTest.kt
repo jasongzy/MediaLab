@@ -113,6 +113,7 @@ class MediaFilesTest {
                 )
             firstFiles = state.workingFiles
             val stale = listOf(
+                export,
                 file(first.work, "unused.png"),
                 file(cache, "exports/stale.png"),
                 file(cache, "ncm/decoded.flac"),

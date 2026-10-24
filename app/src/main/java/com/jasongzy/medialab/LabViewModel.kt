@@ -96,7 +96,8 @@ internal data class LabState(
         get() = audio?.dirty == true
     val workingFiles: Set<File>
         get() =
-            (photo.history.flatMap { it.files } + audio?.workingFiles.orEmpty() + listOfNotNull(exportFile))
+            (photo.history.flatMap { it.files } + audio?.workingFiles.orEmpty() +
+                listOfNotNull(exportFile?.takeIf { photo.editor?.showExportPreview == true }))
                 .toSet()
 }
 
