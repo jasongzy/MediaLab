@@ -42,6 +42,7 @@
     <string name="export">Export</string>
     <string name="apply">Apply</string>
     <string name="unapplied_changes">Unapplied changes</string>
+    <string name="export_pending">Some edits have not been applied. Export the current media anyway?</string>
     <string name="discard_unapplied_message">This will discard unapplied changes. Continue?</string>
     <string name="discard_other_edits_message">Applying this change will discard unapplied changes in other tools. Continue?</string>
     <string name="restore_original">Restore original</string>

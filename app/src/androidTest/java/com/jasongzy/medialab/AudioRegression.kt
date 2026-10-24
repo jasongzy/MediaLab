@@ -197,7 +197,7 @@ internal object AudioRegression {
             idle()
             check(audio.editor.pending == listOf(AudioTool.TIME, AudioTool.ARTWORK) && audio.pictures.isEmpty())
             instrumentation.runOnMainSync { model.saveAudio() }
-            withTimeout(30_000) { model.state.first { it.confirmation == Confirmation.EXPORT_AUDIO } }
+            withTimeout(30_000) { model.state.first { it.confirmation == Confirmation.EXPORT } }
             instrumentation.runOnMainSync { model.answerConfirmation(false) }
             idle()
             check(audio.editor.pictures.value == listOf(picture))

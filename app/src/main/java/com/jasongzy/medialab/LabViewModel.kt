@@ -37,7 +37,7 @@ internal enum class Confirmation(val title: Int, val message: Int, val confirm: 
     IMAGE(R.string.replace_image, R.string.replace_message),
     AUDIO(R.string.replace_audio, R.string.replace_audio_message),
     RESTORE_AUDIO(R.string.restore_original_audio, R.string.discard_unapplied_message, R.string.restore_original_audio),
-    EXPORT_AUDIO(R.string.export, R.string.audio_export_pending, R.string.continue_action),
+    EXPORT(R.string.export, R.string.export_pending, R.string.continue_action),
     UNDO(R.string.undo, R.string.discard_unapplied_message),
     REDO(R.string.redo, R.string.discard_unapplied_message),
     APPLY(R.string.apply, R.string.discard_other_edits_message, R.string.apply),
@@ -858,8 +858,9 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
             }
         }
 
-    private suspend fun prepare(options: ExportOptions): File {
+    private suspend fun prepare(options: ExportOptions): File? {
         val photo = state.value.photo
+        if (photo.pending.isNotEmpty() && !confirm(Confirmation.EXPORT)) return null
         val frame = checkNotNull(photo.frame)
         if (
             exportOptions == options &&
@@ -898,13 +899,13 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
 
     fun previewExport(options: ExportOptions, ready: () -> Unit) =
         work(R.string.preparing_image) {
-            prepare(options)
+            prepare(options) ?: return@work
             withContext(Dispatchers.Main) { ready() }
         }
 
     fun saveImage(options: ExportOptions) =
         work(R.string.saving) {
-            val file = prepare(options)
+            val file = prepare(options) ?: return@work
             val path = MediaFiles.save(
                 context,
                 file,
@@ -916,7 +917,8 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
 
     fun shareImage(options: ExportOptions, ready: (File) -> Unit) =
         work(R.string.preparing_image) {
-            shareOutput(prepare(options), state.value.photo.name, ready)
+            val file = prepare(options) ?: return@work
+            shareOutput(file, state.value.photo.name, ready)
         }
 
     private suspend fun shareOutput(file: File, name: String, ready: (File) -> Unit) {
@@ -1017,7 +1019,7 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
     private suspend fun prepareAudio(): AudioExportPreview? {
         val audio = checkNotNull(state.value.audio)
         val editor = audio.editor
-        if (editor.pending.isNotEmpty() && !confirm(Confirmation.EXPORT_AUDIO)) return null
+        if (editor.pending.isNotEmpty() && !confirm(Confirmation.EXPORT)) return null
         val frame = editor.history.value
         val options = editor.exportOptions
         editor.preview?.takeIf { it.frame == frame && it.options == options && it.file.isFile }?.let { return it }

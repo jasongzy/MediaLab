@@ -13,7 +13,6 @@
     <string name="audio_duration_unavailable">Could not read the audio duration, so editing is unavailable</string>
     <string name="audio_channels_unavailable">Could not identify the audio channels, so editing is unavailable</string>
     <string name="audio_channels_unsupported">This audio has %1$d channels; editing supports up to 8</string>
-    <string name="audio_export_pending">Some edits have not been applied. Export the current audio anyway?</string>
     <string name="processing_audio">Processing audio</string>
     <string name="audio_bitrate">Bitrate (kb/s)</string>
     <string name="audio_bitrate_hint">Higher bitrates generally improve sound quality and increase file size</string>

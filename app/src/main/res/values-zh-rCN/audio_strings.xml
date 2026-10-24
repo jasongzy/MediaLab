@@ -13,7 +13,6 @@
     <string name="audio_duration_unavailable">无法读取音频时长，暂时无法剪辑</string>
     <string name="audio_channels_unavailable">无法识别声道，暂时无法剪辑</string>
     <string name="audio_channels_unsupported">此音频有 %1$d 个声道，目前最多支持编辑 8 个声道</string>
-    <string name="audio_export_pending">部分修改尚未应用，仍要导出当前音频吗？</string>
     <string name="processing_audio">正在处理音频</string>
     <string name="audio_bitrate">码率（kb/s）</string>
     <string name="audio_bitrate_hint">码率越高，通常音质越好，文件也越大</string>

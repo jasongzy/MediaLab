@@ -1112,6 +1112,26 @@ internal class PhotoRegression(
             } finally {
                 decoded.recycle()
             }
+            val exportEditor = checkNotNull(model.state.value.photo.editor)
+            instrumentation.runOnMainSync {
+                exportEditor.cropHistory.change(FrameSelection(Rect(1, 1, 8, 8)))
+            }
+            var previewShown = false
+            for (action in listOf<() -> Unit>(
+                { model.previewExport(ExportOptions()) { previewShown = true } },
+                { model.shareImage(ExportOptions()) { error("Unexpected share") } },
+                { model.saveImage(ExportOptions()) },
+            )) {
+                instrumentation.runOnMainSync(action)
+                answer(model, Confirmation.EXPORT, false)
+                check(!previewShown && model.state.value.exportFile == export)
+                check(model.state.value.photo.pending == listOf(PhotoTool.CROP))
+            }
+            instrumentation.runOnMainSync { model.previewExport(ExportOptions()) { previewShown = true } }
+            answer(model, Confirmation.EXPORT, true)
+            check(previewShown && model.state.value.exportFile == export)
+            check(model.state.value.photo.pending == listOf(PhotoTool.CROP))
+            instrumentation.runOnMainSync { exportEditor.cropHistory.undo() }
             for (format in listOf(ImageFormat.PNG, ImageFormat.JPEG, ImageFormat.WEBP_LOSSLESS, ImageFormat.WEBP_LOSSY)) {
                 instrumentation.runOnMainSync { model.previewExport(ExportOptions(format = format)) {} }
                 idle(model)

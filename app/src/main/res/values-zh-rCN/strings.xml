@@ -42,6 +42,7 @@
     <string name="export">导出</string>
     <string name="apply">应用</string>
     <string name="unapplied_changes">尚未应用的修改</string>
+    <string name="export_pending">部分修改尚未应用，仍要导出当前内容吗？</string>
     <string name="discard_unapplied_message">此操作会丢弃尚未应用的修改，是否继续？</string>
     <string name="discard_other_edits_message">应用后将丢弃其他工具中尚未应用的修改，是否继续？</string>
     <string name="restore_original">恢复原图</string>
