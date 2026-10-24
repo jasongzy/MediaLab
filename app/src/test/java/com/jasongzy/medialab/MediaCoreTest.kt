@@ -56,6 +56,13 @@ class MediaCoreTest {
         assertArrayEquals(before.jpeg.parts.first { it.marker == 0xe1 }.payload,
             taggedInfo.jpeg.parts.first { it.marker == 0xe1 &&
                 it.payload.toString(Charsets.UTF_8).startsWith("http://ns.adobe.com/xap/1.0/") }.payload)
+        val extracted = folder.newFile("motion.mp4")
+        Containers.extractVideo(source, extracted)
+        assertArrayEquals(range(source, before.video), extracted.readBytes())
+        assertThrows(InterruptedException::class.java) {
+            Containers.extractVideo(source, extracted) { throw InterruptedException() }
+        }
+        assertFalse(extracted.exists())
         val target = folder.newFile("static.jpg")
         Containers.clean(source, target, static = true, flatten = true, metadata = true)
         val after = Containers.inspect(target)!!

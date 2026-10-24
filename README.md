@@ -21,12 +21,22 @@ A native Android media toolbox
 - Resize to any dimensions with interpolation
 - Pick pixel colors, copy HEX codes, and extract representative colors from images
 - Edit or delete metadata
-- Extract still images from Motion Photos; finalize Xiaomi recoverable edits
+- Extract still images and embedded videos from Motion Photos; finalize Xiaomi recoverable edits
 - Choose the export format and adjust lossy compression quality
 
 Supports importing JPEG, PNG, WebP, BMP, and other image formats, plus device-supported HEIF/AVIF; supports exporting JPEG, PNG, and WebP. Editing and export preserve supported color spaces (such as Display P3 and Adobe RGB) and relevant EXIF metadata, including capture dates and camera details, by default.
 
 Supports importing phone DNG and LibRaw-supported camera RAW files, developed into full-resolution sRGB images for editing.
+
+### Video
+
+- Edit videos or GIFs across multiple tools, with undo and redo
+- Trim, change speed while preserving pitch, and add solid-color intros/outros or hold the first/last frame
+- Crop, expand, rotate, mirror, resize, cover selected regions during a chosen time range, and edit or delete metadata
+- Save a selected frame or audio track, or send it to the image/audio tab for editing
+- Choose the export format, adjust frame rate, bitrate, GIF color count and looping, and optionally remove audio tracks
+
+Supports importing MP4, MOV, MKV, WebM, AVI, and other video formats, as well as GIF; supports exporting MP4, MOV, MKV, WebM, and GIF. Compatibility depends on the file's encoding and device capabilities.
 
 ### Audio
 

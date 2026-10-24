@@ -25,6 +25,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import java.util.Locale
 
 @Composable
 internal fun InformationPanel(
@@ -98,6 +99,59 @@ internal fun PhotoInformation(info: PhotoInfo, model: LabViewModel) {
 }
 
 @Composable
+internal fun VideoInformation(video: VideoDocument, model: LabViewModel) {
+    val edits = video.editor.history.value
+    InformationPanel {
+        MediaDetail(
+            stringResource(R.string.dimensions),
+            "${edits.size.width} × ${edits.size.height} px",
+        )
+        MediaDetail(stringResource(R.string.video_duration), mediaSeconds(edits.durationMs) + " s")
+        MediaDetail(
+            stringResource(R.string.video_audio_tracks),
+            video.info.audioTracks.size.toString(),
+        )
+        val rendered = video.appliedInfo ?: video.info
+        val color = rendered.color
+        if (color.isNotEmpty()) MediaDetail(stringResource(R.string.color_space), color)
+        MediaDetail(
+            stringResource(R.string.dynamic_range),
+            stringResource(if (rendered.hdr) R.string.hdr else R.string.sdr),
+        )
+        val metadata = video.info.metadata(edits)
+        if (metadata.isNotEmpty()) {
+            HorizontalDivider()
+            Text(
+                stringResource(R.string.media_metadata),
+                style = MaterialTheme.typography.titleSmall,
+            )
+            Text(stringResource(R.string.edit_metadata_hint), style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+            metadata.forEach { group ->
+                if (group.streamIndex != null)
+                    Text(
+                        if (group.streamIndex == video.info.videoIndex)
+                            stringResource(R.string.video_tab)
+                        else
+                            stringResource(
+                                R.string.video_audio_track,
+                                video.info.audioTracks.indexOfFirst {
+                                    it.index == group.streamIndex
+                                } + 1,
+                            ),
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                MetadataEntries(group.entries) { changes, done ->
+                    val entry = changes.entries.single()
+                    model.editVideoMetadata(VideoTag(group.streamIndex, entry.key), entry.value, done)
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun MetadataEntries(
     entries: List<Pair<String, String>>,
     group: (String) -> List<Pair<String, String>> = { key -> entries.filter { it.first == key } },
@@ -150,4 +204,23 @@ private fun MetadataEntries(
             }
         }
     }
+}
+
+@Composable
+internal fun VideoSourceDetails(info: VideoInfo) {
+    listOf(
+            R.string.original_dimensions to "${info.width} × ${info.height} px",
+            R.string.video_codec to info.codec,
+            R.string.video_audio_codec to
+                info.audioTracks
+                    .map { it.codec }
+                    .distinct()
+                    .joinToString(" · ")
+                    .ifEmpty { stringResource(R.string.video_no_audio) },
+            R.string.video_fps to "%.3f".format(Locale.ROOT, info.fps),
+            R.string.video_bitrate to (info.bitrate / 1000).toString(),
+            R.string.dynamic_range to stringResource(if (info.hdr) R.string.hdr else R.string.sdr),
+        )
+        .forEach { (label, value) -> MediaDetail(stringResource(label), value) }
+    if (info.color.isNotEmpty()) MediaDetail(stringResource(R.string.color_space), info.color)
 }

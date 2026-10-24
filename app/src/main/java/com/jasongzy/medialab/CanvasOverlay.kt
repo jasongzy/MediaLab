@@ -3,11 +3,16 @@ package com.jasongzy.medialab
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
+import androidx.compose.material3.CircularWavyProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.listSaver
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
@@ -21,6 +26,17 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.unit.dp
 import kotlin.math.abs
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun BoxScope.CanvasLoading() {
+    Box(
+        Modifier.matchParentSize().background(Color.Black.copy(alpha = 0.45f)),
+        contentAlignment = Alignment.Center,
+    ) {
+        CircularWavyProgressIndicator(color = Color.White, trackColor = Color.White.copy(alpha = 0.2f))
+    }
+}
 
 internal val viewportSaver =
     listSaver<ImageViewport, Float>(

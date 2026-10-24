@@ -12,7 +12,7 @@
     <string name="playback_time">%1$s of %2$s</string>
     <string name="unknown_time">—:—</string>
     <string name="playback_focus_unavailable">Audio is currently unavailable; try playing again</string>
-    <string name="playback_error">Unable to play this audio (%1$s)</string>
+    <string name="playback_error">Unable to play this file (%1$s)</string>
     <string name="pick_photo">Choose image</string>
     <string name="choose_audio">Choose audio</string>
     <string name="more">More</string>
@@ -227,8 +227,8 @@
     <string name="file_details">Original file details</string>
     <string name="filename">Filename</string>
     <string name="original_file_size">Original file size</string>
-    <string name="original_dimensions">Original image dimensions</string>
-    <string name="original_duration">Original audio duration</string>
+    <string name="original_dimensions">Original dimensions</string>
+    <string name="original_duration">Original duration</string>
     <string name="source_address">Source address</string>
     <string name="open_with">Open with another app</string>
     <string name="no_file_viewer">No app available to open this file.</string>
@@ -241,7 +241,7 @@
     <string name="select_image_only">Choose a supported image file.</string>
     <string name="media_stream_unavailable">Could not read the file. Extract or save it to your device, then open it again.</string>
     <string name="select_audio_only">Please choose a supported audio file.</string>
-    <string name="select_media_only">Please choose a supported image or audio file</string>
+    <string name="select_media_only">Please choose a supported image, video or audio file</string>
     <string name="empty_media_file">The file is empty</string>
     <string name="transparency_background">Transparency background</string>
     <string name="jpeg_background_hint">JPEG fills transparent areas with this color</string>
@@ -253,6 +253,7 @@
     <string name="dimensions">Dimensions</string>
     <string name="file_format">File type</string>
     <string name="media_metadata">Metadata</string>
+    <string name="video_audio_tracks">Audio tracks</string>
     <string name="edit_metadata">Edit metadata</string>
     <string name="edit_metadata_hint">Tap an entry to edit or delete it</string>
     <string name="invalid_metadata">Invalid metadata value; check its format and range</string>

@@ -126,7 +126,7 @@ internal fun AudioScreen(model: LabViewModel, state: LabState, active: Boolean) 
             Column(Modifier.weight(1f)) {
                 FileName(
                     audio.name, audio.sourceUri,
-                    MediaFiles.mime(audio.file).takeUnless { it == "application/octet-stream" } ?: "audio/*",
+                    MediaFiles.mime(audio.file, ImportType.AUDIO).takeUnless { it == "application/octet-stream" } ?: "audio/*",
                     audio.sourceBytes,
                     R.string.original_duration to (
                         audio.sourceDuration?.takeIf { it > 0 }?.let(::playbackTime)

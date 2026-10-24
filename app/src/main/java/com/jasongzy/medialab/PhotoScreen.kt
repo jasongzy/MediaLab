@@ -98,7 +98,7 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
     val editor = checkNotNull(photo.editor)
     var menu by rememberSaveable(editor) { mutableStateOf(false) }
     var tool by editor::tool
-    val tools = PhotoTool.entries
+    val tools = PhotoTool.entries.filter { it != PhotoTool.EXTRACT || info.container?.video != null }
     val toolScroll = key(photo.history.first(), tools) {
         rememberLazyListState(initialFirstVisibleItemIndex = tools.indexOf(tool))
     }
@@ -505,6 +505,17 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
                                 enabled = canClean(info, cleanup, photo.frame?.source != null),
                             ) {
                                 Text(stringResource(R.string.apply))
+                            }
+                        }
+                        PhotoTool.EXTRACT -> {
+                            Text(stringResource(R.string.motion_video), style = MaterialTheme.typography.bodySmall)
+                            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                FilledTonalButton({ model.extractMotionVideo(false) }) {
+                                    Text(stringResource(R.string.motion_video_edit))
+                                }
+                                TextButton({ model.extractMotionVideo(true) }) {
+                                    Text(stringResource(R.string.motion_video_save))
+                                }
                             }
                         }
                         PhotoTool.INFO -> PhotoInformation(info, model)

@@ -43,7 +43,11 @@ internal fun MediaPlayer(
     active: Boolean,
     initialPosition: Long,
     modifier: Modifier = Modifier,
+    video: Boolean = false,
+    muted: Boolean = false,
     paused: Boolean = false,
+    videoContent: (@Composable ColumnScope.(Player?, Boolean, Boolean) -> Unit)? = null,
+    hasVideoPlaceholder: Boolean = false,
     onInteraction: () -> Unit = {},
     seekPosition: Long? = null,
     onSeekHandled: () -> Unit = {},
@@ -53,14 +57,17 @@ internal fun MediaPlayer(
 ) {
     val context = LocalContext.current
     val savePosition by key(file) { rememberUpdatedState(rememberPosition) }
+    val currentMuted by rememberUpdatedState(muted)
     val currentAudition by rememberUpdatedState(auditionChannels)
     var resumeAudition by remember(file) { mutableStateOf(false) }
     var player by remember(file) { mutableStateOf<ExoPlayer?>(null) }
     var play by remember(file) { mutableStateOf<(() -> Unit)?>(null) }
+    var updateMute by remember(file) { mutableStateOf<((Boolean) -> Unit)?>(null) }
     var position by remember(file) { mutableLongStateOf(initialPosition) }
     var duration by remember(file) { mutableLongStateOf(0) }
     var playing by remember(file) { mutableStateOf(false) }
     var buffering by remember(file) { mutableStateOf(true) }
+    var firstFrame by remember(file) { mutableStateOf(false) }
     var showBuffering by remember(file) { mutableStateOf(false) }
     var seekable by remember(file) { mutableStateOf(false) }
     var error by remember(file) { mutableStateOf<String?>(null) }
@@ -68,6 +75,7 @@ internal fun MediaPlayer(
 
     if (active)
         LifecycleResumeEffect(file, auditionChannels) {
+            firstFrame = false
             buffering = true
             error = null
             val renderers = object : DefaultRenderersFactory(context.applicationContext) {
@@ -121,6 +129,10 @@ internal fun MediaPlayer(
             }
             val listener =
                 object : Player.Listener {
+                    override fun onRenderedFirstFrame() {
+                        firstFrame = true
+                    }
+
                     override fun onEvents(player: Player, events: Player.Events) {
                         if (
                             player.playbackState == Player.STATE_ENDED &&
@@ -145,6 +157,7 @@ internal fun MediaPlayer(
                 }
             current.addListener(listener)
             current.setAudioAttributes(attributes, false)
+            current.volume = if (currentMuted) 0f else 1f
             current.setHandleAudioBecomingNoisy(true)
             current.setMediaItem(
                 androidx.media3.common.MediaItem.fromUri(Uri.fromFile(file)),
@@ -153,7 +166,16 @@ internal fun MediaPlayer(
             player = current
             play = {
                 if (current.playbackState == Player.STATE_ENDED) current.seekTo(0)
-                if (requestFocus()) current.play()
+                if (currentMuted || requestFocus()) current.play()
+            }
+            updateMute = { mute ->
+                if (mute) {
+                    current.volume = 0f
+                    releaseFocus()
+                } else {
+                    if (current.playWhenReady && !requestFocus()) current.pause()
+                    current.volume = 1f
+                }
             }
             if (resumeAudition && !paused) play?.invoke()
             resumeAudition = false
@@ -166,14 +188,19 @@ internal fun MediaPlayer(
                 current.release()
                 player = null
                 play = null
+                updateMute = null
                 playing = false
+                firstFrame = false
                 dragging = null
             }
         }
     LaunchedEffect(player) {
         val current = player ?: return@LaunchedEffect
+        // Let the video output attach before decoding the paused first frame.
+        if (video) withFrameNanos { }
         current.prepare()
     }
+    LaunchedEffect(player, muted) { updateMute?.invoke(muted) }
     LaunchedEffect(player, paused) { if (paused) player?.pause() }
     LaunchedEffect(player, seekPosition) {
         val current = player ?: return@LaunchedEffect
@@ -213,15 +240,35 @@ internal fun MediaPlayer(
     val range = 0f..duration.coerceAtLeast(1).toFloat()
     val slider = remember(file, duration) { SliderState(0f, trackRange = range) }
     slider.value = (dragging ?: position.toFloat()).coerceIn(range)
-    Column(modifier) {
+    val hasPausedFrame = hasVideoPlaceholder && !playing && dragging == null
+    val loadingVideo = active && error == null && !hasPausedFrame && (!firstFrame || (buffering && showBuffering))
+    Column(
+        modifier,
+        verticalArrangement =
+            Arrangement.spacedBy(if (video && videoContent == null) 12.dp else 0.dp),
+    ) {
+        if (videoContent != null) videoContent(player, loadingVideo, firstFrame)
+        else if (video)
+            Box(
+                Modifier.fillMaxWidth().heightIn(min = 80.dp, max = 240.dp).aspectRatio(16f / 9f),
+                contentAlignment = Alignment.Center,
+            ) {
+                androidx.compose.ui.viewinterop.AndroidView(
+                    factory = { androidx.media3.ui.PlayerView(it).apply { useController = false } },
+                    update = { it.player = player },
+                    onRelease = { it.player = null },
+                    modifier = Modifier.fillMaxSize(),
+                )
+                if (loadingVideo) CanvasLoading()
+            }
         Surface(
             modifier =
                 Modifier.fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                    .padding(horizontal = 16.dp, vertical = if (video) 4.dp else 8.dp),
             shape = MaterialTheme.shapes.large,
             color = MaterialTheme.colorScheme.surfaceContainerLow,
         ) {
-            Column(Modifier.padding(horizontal = 8.dp, vertical = 12.dp)) {
+            Column(Modifier.padding(horizontal = 8.dp, vertical = if (video) 0.dp else 12.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     ToolButton(
                         if (playing) R.drawable.ic_pause else R.drawable.ic_play,
@@ -239,6 +286,11 @@ internal fun MediaPlayer(
                                 dragging = it
                                 slider.value = it
                                 savePosition(it.toLong().coerceIn(0, duration))
+                                if (video)
+                                    player?.let { current ->
+                                        current.setScrubbingModeEnabled(true)
+                                        current.seekTo(it.toLong().coerceIn(0, duration))
+                                    }
                             },
                             onValueChangeFinished = {
                                 dragging?.let {
@@ -246,12 +298,14 @@ internal fun MediaPlayer(
                                     player?.seekTo(position)
                                     savePosition(position)
                                 }
+                                if (video) player?.setScrubbingModeEnabled(false)
                                 dragging = null
                             },
                             enabled =
                                 player != null && seekable && duration > 0 && error == null && !paused,
                             modifier =
                                 Modifier.fillMaxWidth()
+                                    .then(if (video) Modifier.height(32.dp) else Modifier)
                                     .semantics {
                                         contentDescription = seekLabel
                                         stateDescription = seekDescription
@@ -282,7 +336,7 @@ internal fun MediaPlayer(
                     Modifier.fillMaxWidth().height(12.dp).padding(horizontal = 12.dp),
                     contentAlignment = Alignment.Center,
                 ) {
-                    if (showBuffering) LinearWavyProgressIndicator(Modifier.fillMaxWidth())
+                    if (!video && showBuffering) LinearWavyProgressIndicator(Modifier.fillMaxWidth())
                 }
                 error?.let {
                     Text(

@@ -786,6 +786,22 @@ internal class PhotoRegression(
             check(model.state.value.photo.history.size == 1)
             check(photo.history.flatMap { it.files }.none { it.exists() })
             check(model.state.value.workingFiles.all { it.isFile })
+            val video = File(app.filesDir, "video.bin")
+            MediaProcessing.execute(listOf("-loop", "1", "-i", image.path, "-t", "0.2",
+                "-c:v", "mpeg4", "-pix_fmt", "yuv420p", "-f", "mp4", video.path))
+            instrumentation.runOnMainSync { model.open(Uri.fromFile(video), null) }
+            idle(model)
+            val openedVideo = checkNotNull(model.state.value.video)
+            check(model.state.value.tab == ImportType.VIDEO.ordinal)
+            val artworkAudio = File(app.filesDir, "artwork-audio.bin")
+            MediaProcessing.execute(listOf("-i", audio.path, "-c:a", "aac", "-f", "mp4", artworkAudio.path))
+            AudioFiles.writeTags(artworkAudio, emptyMap(), listOf(
+                com.kyant.taglib.Picture(image.readBytes(), "", "", "image/png"),
+            ))
+            instrumentation.runOnMainSync { model.open(Uri.fromFile(artworkAudio), null) }
+            idle(model)
+            check(model.state.value.tab == ImportType.AUDIO.ordinal && model.state.value.video === openedVideo)
+            check(checkNotNull(model.state.value.audio).pictures.size == 1)
         } finally {
             instrumentation.runOnMainSync { store.clear() }
         }

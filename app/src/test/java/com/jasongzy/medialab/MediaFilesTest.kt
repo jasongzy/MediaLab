@@ -105,11 +105,25 @@ class MediaFilesTest {
             val audio = file(first.work, "tagged.mp3")
             val export = file(first.work, "export.webp")
             val shared = file(first.exports, "shared.png")
+            val videoFile = file(first.work, "video.mp4")
+            val videoInfo = VideoInfo(32, 32, 1000, 30.0, 1000, "h264", emptyList(), "mp4", false, "", 0, emptyList())
+            val video = VideoDocument(videoFile, videoFile.name, null, videoInfo, videoFile)
+            val previous = videoInfo.edits().copy(width = 16)
+            val current = videoInfo.edits().copy(width = 24)
+            val historicalPreview = file(first.work, "previous.mp4")
+            val activePreview = file(first.work, "current.mp4")
+            video.previews.retain(previous, VideoPreviewCache.Preview(historicalPreview, videoInfo), listOf(previous))
+            video.previews.retain(current, VideoPreviewCache.Preview(activePreview, videoInfo), listOf(previous, current))
+            video.appliedPreview = activePreview
+            val exportPreview = file(first.work, "export.mp4")
+            video.previewFile = exportPreview
+            video.editor.showPreview = true
             val state =
                 LabState(
                     photo = PhotoState(history = frames, position = 1),
                     audio = AudioDocument(audio, audio.name, null, AudioMetadata(emptyMap(), emptyList()), emptyList()),
                     exportFile = export,
+                    video = video,
                 )
             firstFiles = state.workingFiles
             val stale = listOf(
@@ -150,12 +164,19 @@ class MediaFilesTest {
                 for (kept in firstFiles + secondFiles + listOf(saved, model, settings))
                     assertEquals(kept.path, "media", kept.readText())
                 assertTrue((stale + otherStale + shared).none { it.exists() })
+                assertFalse(historicalPreview.exists())
+                assertNull(video.previews[previous])
+                assertEquals(activePreview, video.previews[current]?.file)
                 first.clearStale()
                 assertTrue(secondFiles.all { it.isFile })
             }
             first.clearStale()
             assertFalse(secondWork.exists())
+            video.editor.showPreview = false
+            firstFiles = state.workingFiles
+            assertTrue(exportPreview in video.files)
             first.clearAll()
+            assertFalse(exportPreview.exists())
             assertFalse(secondExports.exists())
             assertTrue(state.workingFiles.all { it.isFile })
         }

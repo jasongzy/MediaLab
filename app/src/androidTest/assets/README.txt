@@ -2,6 +2,10 @@ silence.mp3 and silence.flac contain 0.1 seconds of generated 8 kHz mono silence
 Generated with FFmpeg anullsrc, libmp3lame at 16 kbit/s and the FLAC encoder.
 These small fixtures exercise real audio containers during Unicode tag and artwork round trips.
 
+held.gif is a generated 32 x 32 animation: red for 100 ms, then blue for 4900 ms.
+Created with Pillow using two solid RGB frames and duration=[100, 4900].
+It verifies extracting a frame during the final hold of a variable-rate animation.
+
 mosaic.dng is a synthetic 96 x 64, uncompressed 12-bit RGGB sensor image in a
 16-bit DNG container, generated with NumPy and tifffile. Samples are
 64 + arange(6144) % 3800; black/white levels are 64/4095, orientation is 6,

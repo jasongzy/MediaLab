@@ -30,6 +30,7 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="image/*" />
                 <data android:mimeType="audio/*" />
+                <data android:mimeType="video/*" />
                 <data android:mimeType="application/octet-stream" />
                 <data android:mimeType="application/vnd.nokia.configuration-message" />
             </intent-filter>
@@ -38,15 +39,17 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:scheme="content" android:mimeType="image/*" />
                 <data android:scheme="content" android:mimeType="audio/*" />
+                <data android:scheme="content" android:mimeType="video/*" />
                 <data android:scheme="content" android:mimeType="application/octet-stream" />
                 <data android:scheme="content" android:mimeType="application/vnd.nokia.configuration-message" />
             </intent-filter>
-            <!-- App-to-app image streams; MiXplorer queries the case-sensitive placeholder host below. -->
+            <!-- App-to-app media streams; MiXplorer queries the case-sensitive placeholder host below. -->
             <intent-filter tools:ignore="AppLinkUrlError">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:scheme="http" />
                 <data android:mimeType="image/*" />
+                <data android:mimeType="video/*" />
                 <data android:host="127.0.0.1" />
                 <data android:host="MiXplorer" />
             </intent-filter>

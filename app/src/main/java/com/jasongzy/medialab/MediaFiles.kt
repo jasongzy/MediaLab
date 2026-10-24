@@ -2,9 +2,9 @@ package com.jasongzy.medialab
 
 import android.content.ContentValues
 import android.content.Context
-import androidx.core.content.FileProvider
-import android.content.Intent
 import android.content.ClipData
+import android.content.Intent
+import androidx.core.content.FileProvider
 import android.media.MediaScannerConnection
 import android.net.Uri
 import android.os.Environment
@@ -36,7 +36,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 
-internal enum class ImportType { IMAGE, AUDIO }
+internal enum class ImportType { IMAGE, VIDEO, AUDIO }
 
 internal class UnsupportedMediaException(val messageRes: Int) : Exception()
 
@@ -186,12 +186,12 @@ internal object MediaFiles {
         }
     }
 
-    fun mime(file: File): String =
+    fun mime(file: File, type: ImportType? = null): String =
         when (file.extension.lowercase()) {
             "flac" -> "audio/flac"
             "mp3" -> "audio/mpeg"
-            "m4a",
-            "mp4" -> "audio/mp4"
+            "m4a" -> "audio/mp4"
+            "mp4" -> if (type == ImportType.AUDIO) "audio/mp4" else "video/mp4"
             "opus",
             "ogg" -> "audio/ogg"
             "wav" -> "audio/wav"
@@ -298,10 +298,18 @@ internal object MediaFiles {
 
     suspend fun save(context: Context, file: File, name: String, type: ImportType): String {
         val resolver = context.contentResolver
-        val collection =
-            if (type == ImportType.IMAGE) MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-            else MediaStore.Audio.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-        val relativePath = if (type == ImportType.IMAGE) "Pictures/MediaLab/" else "Music/MediaLab/"
+        val volume = MediaStore.VOLUME_EXTERNAL_PRIMARY
+        val collection = when (type) {
+            ImportType.IMAGE -> MediaStore.Images.Media.getContentUri(volume)
+            ImportType.VIDEO -> if (file.extension == "gif") MediaStore.Images.Media.getContentUri(volume)
+                else MediaStore.Video.Media.getContentUri(volume)
+            ImportType.AUDIO -> MediaStore.Audio.Media.getContentUri(volume)
+        }
+        val relativePath = when (type) {
+            ImportType.IMAGE -> "Pictures/MediaLab/"
+            ImportType.VIDEO -> if (file.extension == "gif") "Pictures/MediaLab/" else "Movies/MediaLab/"
+            ImportType.AUDIO -> "Music/MediaLab/"
+        }
         val existing = indexedFiles(context, collection, relativePath)
         val values =
             ContentValues().apply {
@@ -309,7 +317,7 @@ internal object MediaFiles {
                     MediaStore.MediaColumns.DISPLAY_NAME,
                     BatchFiles.uniqueName(name, existing.map { it.name }),
                 )
-                put(MediaStore.MediaColumns.MIME_TYPE, mime(file))
+                put(MediaStore.MediaColumns.MIME_TYPE, mime(file, type))
                 put(
                     MediaStore.MediaColumns.RELATIVE_PATH,
                     relativePath,

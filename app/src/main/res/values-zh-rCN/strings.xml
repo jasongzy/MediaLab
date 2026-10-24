@@ -12,7 +12,7 @@
     <string name="playback_time">%1$s，共 %2$s</string>
     <string name="unknown_time">—:—</string>
     <string name="playback_focus_unavailable">暂时无法使用音频，请稍后重试播放</string>
-    <string name="playback_error">无法播放此音频（%1$s）</string>
+    <string name="playback_error">无法播放此文件（%1$s）</string>
     <string name="pick_photo">选择图片</string>
     <string name="choose_audio">选择音频</string>
     <string name="more">更多</string>
@@ -239,7 +239,7 @@
     <string name="select_image_only">请选择支持的图像文件。</string>
     <string name="media_stream_unavailable">无法读取文件，请先解压或保存到设备后再打开。</string>
     <string name="select_audio_only">请选择支持的音频文件</string>
-    <string name="select_media_only">请选择支持的图像或音频文件</string>
+    <string name="select_media_only">请选择支持的图像、视频或音频文件</string>
     <string name="empty_media_file">文件内容为空</string>
     <string name="transparency_background">透明区域背景色</string>
     <string name="jpeg_background_hint">JPEG 会用此颜色填充透明区域</string>
@@ -251,6 +251,7 @@
     <string name="dimensions">尺寸</string>
     <string name="file_format">文件类型</string>
     <string name="media_metadata">元数据</string>
+    <string name="video_audio_tracks">音轨数量</string>
     <string name="edit_metadata">编辑元数据</string>
     <string name="edit_metadata_hint">点击条目以修改或删除</string>
     <string name="invalid_metadata">元数据值无效，请检查格式和取值范围</string>

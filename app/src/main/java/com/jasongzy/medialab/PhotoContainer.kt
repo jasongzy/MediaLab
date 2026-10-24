@@ -537,6 +537,18 @@ internal object Containers {
         return null
     }
 
+    fun extractVideo(source: File, target: File, check: () -> Unit = {}) {
+        try {
+            val range = requireNotNull(inspect(source)?.video) { "Motion photo has no embedded video" }
+            RandomAccessFile(source, "r").use { input ->
+                target.outputStream().use { output -> copyRange(input, output, range, check) }
+            }
+        } catch (error: Exception) {
+            target.delete()
+            throw error
+        }
+    }
+
     fun copyRange(
         input: RandomAccessFile,
         output: OutputStream,

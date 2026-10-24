@@ -31,8 +31,11 @@ import kotlinx.coroutines.withContext
 internal enum class Confirmation(val title: Int, val message: Int, val confirm: Int = R.string.discard) {
     IMAGE(R.string.replace_image, R.string.replace_message),
     AUDIO(R.string.replace_audio, R.string.replace_audio_message),
+    VIDEO(R.string.replace_video, R.string.replace_video_message),
+    VIDEO_COLOR(R.string.convert_color, R.string.video_hdr_message, R.string.continue_action),
     RESTORE_AUDIO(R.string.restore_original_audio, R.string.discard_unapplied_message, R.string.restore_original_audio),
     EXPORT(R.string.export, R.string.export_pending, R.string.continue_action),
+    RESTORE_VIDEO(R.string.restore_video, R.string.discard_unapplied_message, R.string.restore_video),
     UNDO(R.string.undo, R.string.discard_unapplied_message),
     REDO(R.string.redo, R.string.discard_unapplied_message),
     APPLY(R.string.apply, R.string.discard_other_edits_message, R.string.apply),
@@ -74,6 +77,7 @@ internal data class LabState(
     val storedMask: CutoutMask.Stored? = null,
     val batchPage: Boolean = false,
     val audio: AudioDocument? = null,
+    val video: VideoDocument? = null,
     val confirmation: Confirmation? = null,
     val colorLosses: List<Int> = emptyList(),
     val busy: Boolean = false,
@@ -91,7 +95,7 @@ internal data class LabState(
         get() = audio?.dirty == true
     val workingFiles: Set<File>
         get() =
-            (photo.history.flatMap { it.files } + audio?.workingFiles.orEmpty() +
+            (photo.history.flatMap { it.files } + video?.workingFiles.orEmpty() + audio?.workingFiles.orEmpty() +
                 listOfNotNull(exportFile?.takeIf { photo.editor?.showExportPreview == true }))
                 .toSet()
 }
@@ -244,13 +248,16 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
 
     private suspend fun canReplace(type: ImportType): Boolean {
         val current = state.value
-        val edited =
-            if (type == ImportType.IMAGE)
-                current.photo.history.size > 1 || current.photo.pending.isNotEmpty()
-            else current.audioDirty || current.audio?.editor?.hasDraft == true
-        return !edited || confirm(
-            if (type == ImportType.IMAGE) Confirmation.IMAGE else Confirmation.AUDIO
-        )
+        val edited = when (type) {
+            ImportType.IMAGE -> current.photo.history.size > 1 || current.photo.pending.isNotEmpty()
+            ImportType.VIDEO -> current.video?.let { it.dirty || !it.editor.inputValid } == true
+            ImportType.AUDIO -> current.audioDirty || current.audio?.editor?.hasDraft == true
+        }
+        return !edited || confirm(when (type) {
+            ImportType.IMAGE -> Confirmation.IMAGE
+            ImportType.VIDEO -> Confirmation.VIDEO
+            ImportType.AUDIO -> Confirmation.AUDIO
+        })
     }
 
     private suspend fun confirm(action: Confirmation, colorLosses: List<Int> = emptyList()): Boolean {
@@ -285,6 +292,7 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
         work(
             when (type) {
                 ImportType.AUDIO -> R.string.loading_audio
+                ImportType.VIDEO -> R.string.loading_video
                 ImportType.IMAGE -> R.string.loading_photo
                 null -> R.string.loading_media
             }
@@ -363,7 +371,19 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
             val bounds =
                 android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
             android.graphics.BitmapFactory.decodeFile(file.path, bounds)
-            val type = requested ?: if (bounds.outWidth > 0) ImportType.IMAGE else ImportType.AUDIO
+            val gif = bounds.outMimeType == "image/gif"
+            var videoInfo: VideoInfo? = null
+            val type =
+                requested?.takeUnless { it == ImportType.IMAGE && gif }
+                    ?: when {
+                        gif -> ImportType.VIDEO
+                        bounds.outWidth > 0 -> ImportType.IMAGE
+                        else -> {
+                            videoInfo = try { Videos.inspect(file) }
+                                catch (_: UnsupportedMediaException) { null }
+                            if (videoInfo != null) ImportType.VIDEO else ImportType.AUDIO
+                        }
+                    }
             when (type) {
                 ImportType.IMAGE ->
                     if (bounds.outWidth <= 0)
@@ -372,6 +392,13 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
                     if (bounds.outWidth > 0 || Ncm.matches(file))
                         throw UnsupportedMediaException(R.string.select_audio_only)
                 }
+                ImportType.VIDEO ->
+                    if (bounds.outWidth > 0 && !gif)
+                        throw UnsupportedMediaException(R.string.select_video_only)
+            }
+            if (type == ImportType.VIDEO && videoInfo == null) {
+                mutable.update { it.copy(stage = R.string.loading_video) }
+                videoInfo = Videos.inspect(file)
             }
             audio = if (type == ImportType.AUDIO)
                 AudioFiles.read(file, name).copy(sourceUri = uri, sourceBytes = file.length())
@@ -392,10 +419,23 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
                     }
                     old.forEach { it.delete() }
                 }
+                ImportType.VIDEO -> {
+                    val document =
+                        Videos.read(file, name, uri, workspace.work, checkNotNull(videoInfo))
+                    try {
+                        currentCoroutineContext().ensureActive()
+                    } catch (cancelled: CancellationException) {
+                        document.files.forEach { it.delete() }
+                        throw cancelled
+                    }
+                    val old = state.value.video
+                    mutable.update { it.copy(video = document, tab = type.ordinal) }
+                    old?.files?.forEach { it.delete() }
+                }
             }
         } catch (error: UnsupportedMediaException) {
             if (requested == null && error.messageRes in listOf(
-                    R.string.select_image_only, R.string.select_audio_only,
+                    R.string.select_image_only, R.string.select_video_only, R.string.select_audio_only,
                 )) throw UnsupportedMediaException(R.string.select_media_only)
             throw error
         } catch (_: android.graphics.ImageDecoder.DecodeException) {
@@ -406,6 +446,109 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
                 (audio?.files ?: setOf(file)).forEach { it.delete() }
             }
         }
+    }
+
+    fun restoreVideo() = work(R.string.preparing_video, showProgress = false) {
+        val video = checkNotNull(state.value.video)
+        val editor = video.editor
+        if ((editor.pending.isNotEmpty() || !editor.inputValid) && !confirm(Confirmation.RESTORE_VIDEO)) return@work
+        updateVideoPreview(video, editor.original) {
+            editor.commit(editor.original, action = R.string.restore_video)
+        }
+        mutable.update { it.copy(notice = Notice(R.string.video_restored)) }
+    }
+
+    fun undoVideo(direction: Int) = work(R.string.preparing_video, showProgress = false) {
+        val video = checkNotNull(state.value.video)
+        val editor = video.editor
+        val next = (if (direction < 0) editor.history.undoValue else editor.history.redoValue) ?: return@work
+        val metadataOnly = next.previewKey() == editor.history.value.previewKey()
+        if (!metadataOnly && (editor.pending.isNotEmpty() || !editor.inputValid) &&
+            !confirm(if (direction < 0) Confirmation.UNDO else Confirmation.REDO)) return@work
+        val draft = editor.navigationDraft(direction)
+        val action = if (direction < 0) editor.history.undoAction else editor.history.redoAction
+        updateVideoPreview(video, next, draft, preserveDrafts = metadataOnly) {
+            if (direction < 0) editor.history.undo() else editor.history.redo()
+        }
+        historyNotice(direction, action ?: R.string.video_tab)
+    }
+
+    fun applyVideo() = work(R.string.preparing_video, showProgress = false) {
+        val video = checkNotNull(state.value.video)
+        val editor = video.editor
+        val applicable = if (editor.tool == VideoTool.CLEAN)
+            editor.clearMetadata && !editor.history.value.clearMetadata
+        else editor.tool in editor.pending
+        if (!editor.inputValid || !applicable) return@work
+        if (editor.pending.any { it != editor.tool } && !confirm(Confirmation.APPLY)) return@work
+        val next = editor.applyTool(editor.tool)
+        next.validate(video.info.size, video.info.durationMs)
+        val draft = editor.capture()
+        updateVideoPreview(video, next) { editor.commit(next, draft) }
+        mutable.update { it.copy(notice = Notice(R.string.changes_applied)) }
+    }
+
+    private suspend fun updateVideoPreview(
+        video: VideoDocument,
+        next: VideoEdits,
+        restoredDraft: VideoDraft? = null,
+        preserveDrafts: Boolean = false,
+        commit: () -> Unit,
+    ) {
+        val editor = video.editor
+        val samePicture = next.previewKey() == editor.history.value.previewKey()
+        val original = next.previewKey() == editor.original.previewKey()
+        var preview = if (original) null else video.previews[next]
+        var generated: File? = null
+        try {
+            if (!original && preview == null) {
+                if (video.info.hdr && video.appliedPreview == null && !confirm(Confirmation.VIDEO_COLOR))
+                    throw CancellationException()
+                mutable.update { it.copy(showProgress = true) }
+                generated = Videos.preview(video.file, video.info, next, workspace.work) { time ->
+                    mutable.update { it.copy(progress = (time.toFloat() / next.durationMs).coerceIn(0f, 1f)) }
+                }
+                preview = VideoPreviewCache.Preview(generated, Videos.inspect(generated))
+            }
+            currentCoroutineContext().ensureActive()
+            val position = if (samePicture) editor.positionMs else next.positionFrom(editor.history.value, editor.positionMs)
+            val oldExport = video.previewFile
+            Snapshot.withMutableSnapshot {
+                commit()
+                if (!preserveDrafts) {
+                    editor.resetDrafts()
+                    restoredDraft?.let(editor::restore)
+                }
+                editor.positionMs = position
+                video.appliedPreview = preview?.file
+                video.appliedInfo = preview?.info
+                video.previewFile = null
+                video.previewEdits = null
+                editor.showPreview = false
+            }
+            video.previews.retain(next, preview, editor.history.snapshot().steps)
+            oldExport?.delete()
+        } finally {
+            if (generated != video.appliedPreview) generated?.delete()
+        }
+    }
+
+    fun editVideoMetadata(tag: VideoTag, value: String?, done: () -> Unit) = work(R.string.apply, showProgress = false) {
+        val video = checkNotNull(state.value.video)
+        val previous = video.editor.history.value
+        val current = requireNotNull(video.info.metadata(previous)
+            .firstOrNull { it.streamIndex == tag.streamIndex }?.entries?.firstOrNull { it.first == tag.key }).second
+        val normalized = Videos.normalizeMetadata(tag.key, value)
+        val next = previous.copy(metadataEdits = previous.metadataEdits + (tag to normalized))
+        if (Videos.normalizeMetadata(tag.key, current) == normalized) {
+            withContext(Dispatchers.Main) { done() }
+            return@work
+        }
+        updateVideoPreview(video, next, preserveDrafts = true) {
+            video.editor.commit(next, action = R.string.media_metadata)
+        }
+        mutable.update { it.copy(notice = Notice(R.string.changes_applied)) }
+        withContext(Dispatchers.Main) { done() }
     }
 
     fun editPhotoMetadata(changes: Map<String, String?>, done: () -> Unit) = work(R.string.apply, showProgress = false) {
@@ -426,6 +569,99 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
         publish(checkNotNull(photo.preview), restoredEditor = photo.editor)
         withContext(Dispatchers.Main) { done() }
     }
+
+    private suspend fun renderVideo(): File? {
+        val video = checkNotNull(state.value.video)
+        if (video.editor.pending.isNotEmpty() && !confirm(Confirmation.EXPORT)) return null
+        if (video.editor.format == null && video.info.exportFormat == null)
+            throw UnsupportedMediaException(R.string.video_current_format_unavailable)
+        val options = video.editor.output
+        if (video.previewEdits == options && video.previewFile?.isFile == true)
+            return video.previewFile!!
+        if (video.info.hdr && video.appliedPreview == null && !Videos.canCopy(video.info, options) &&
+            !confirm(Confirmation.VIDEO_COLOR)) return null
+        val target = MediaFiles.temporary(workspace.work, options.format.extension)
+        Videos.export(video.file, video.info, options, target, stage = { stage ->
+            mutable.update { it.copy(stage = stage, progress = null) }
+        }) { time ->
+            mutable.update {
+                it.copy(progress = (time.toFloat() / options.durationMs).coerceIn(0f, 1f))
+            }
+        }
+        val old = video.previewFile
+        video.previewEdits = options
+        video.previewFile = target
+        old?.delete()
+        return target
+    }
+
+    fun previewVideo() =
+        work(R.string.preparing_video) {
+            renderVideo() ?: return@work
+            checkNotNull(state.value.video).editor.showPreview = true
+        }
+
+    fun saveVideo() =
+        work(R.string.preparing_video) {
+            val file = renderVideo() ?: return@work
+            val video = checkNotNull(state.value.video)
+            val path =
+                MediaFiles.save(
+                    context,
+                    file,
+                    MediaFiles.outputName(video.name, file.extension),
+                    ImportType.VIDEO,
+                )
+            mutable.update { it.copy(notice = Notice(R.string.file_saved, path)) }
+        }
+
+    fun shareVideo(ready: (File) -> Unit) = work(R.string.preparing_video) {
+        val file = renderVideo() ?: return@work
+        shareOutput(file, checkNotNull(state.value.video).name, ready)
+    }
+
+    fun extractMotionVideo(save: Boolean) = work(R.string.preparing_video) {
+        val photo = state.value.photo
+        val source = checkNotNull(photo.frame?.source)
+        val target = MediaFiles.temporary(workspace.work, "mp4")
+        val name = MediaFiles.outputName(photo.name, "mp4", "motion")
+        try {
+            val coroutine = currentCoroutineContext()
+            Containers.extractVideo(source, target) { coroutine.ensureActive() }
+            if (save) {
+                Videos.inspect(target)
+                val path = MediaFiles.save(context, target, name, ImportType.VIDEO)
+                mutable.update { it.copy(notice = Notice(R.string.file_saved, path)) }
+            } else acceptFile(target, name, null, ImportType.VIDEO)
+        } finally {
+            if (target !in state.value.workingFiles) target.delete()
+        }
+    }
+
+    fun extractVideo(audio: Boolean, save: Boolean) =
+        work(R.string.preparing_video) {
+            val video = checkNotNull(state.value.video)
+            val edits = video.editor.history.value
+            val type = if (audio) ImportType.AUDIO else ImportType.IMAGE
+            val file = MediaFiles.temporary(workspace.work, if (audio) "flac" else "png")
+            val name =
+                MediaFiles.outputName(video.name, file.extension, if (audio) "audio" else "frame")
+            try {
+                if (audio)
+                    Videos.audio(video.file, video.info, edits, checkNotNull(video.selectedAudioTrack), file)
+                else {
+                    edits.validate(video.info.size, video.info.durationMs)
+                    if (video.info.hdr && video.appliedPreview == null && !confirm(Confirmation.VIDEO_COLOR)) return@work
+                    Videos.frame(video.file, video.info, video.editor.positionMs, file, edits)
+                }
+                if (save) {
+                    val path = MediaFiles.save(context, file, name, type)
+                    mutable.update { it.copy(notice = Notice(R.string.file_saved, path)) }
+                } else acceptFile(file, name, null, type)
+            } finally {
+                if (file !in state.value.workingFiles) file.delete()
+            }
+        }
 
     private fun discardResize(retained: Bitmap? = null) {
         resizePreview?.bitmap?.takeIf { it !== retained }?.recycle()

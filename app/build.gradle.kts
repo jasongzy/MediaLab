@@ -101,6 +101,7 @@ dependencies {
     add(taglibArchive.name, libs.taglib)
     implementation(files(taglibApi.map { it.destinationDir.resolve("classes.jar") }).builtBy(taglibApi))
     implementation(libs.media3.exoplayer)
+    implementation(libs.media3.ui)
     implementation(libs.ffmpeg)
     debugImplementation(libs.compose.tooling)
     testImplementation(libs.junit)

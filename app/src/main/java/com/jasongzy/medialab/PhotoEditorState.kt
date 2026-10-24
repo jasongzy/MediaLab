@@ -18,6 +18,7 @@ internal enum class PhotoTool(val label: Int, val icon: Int) {
     RESIZE(R.string.resize, R.drawable.ic_resize),
     COLORS(R.string.colors, R.drawable.ic_palette),
     CLEAN(R.string.clean, R.drawable.ic_clean),
+    EXTRACT(R.string.video_extract, R.drawable.ic_video),
     INFO(R.string.info, R.drawable.ic_info),
     EXPORT(R.string.export, R.drawable.ic_save),
 }
@@ -48,7 +49,9 @@ internal class PhotoDraft(
 )
 
 internal class PhotoEditorState(info: PhotoInfo, hasAlpha: Boolean, previous: PhotoEditorState? = null) {
-    var tool: PhotoTool by mutableStateOf(previous?.tool ?: PhotoTool.CROP)
+    var tool: PhotoTool by mutableStateOf(
+        previous?.tool?.takeIf { it != PhotoTool.EXTRACT || info.container?.video != null } ?: PhotoTool.CROP
+    )
     val cropHistory = ToolHistory(FrameSelection(Rect(0, 0, info.width, info.height)))
     val canvasHistory = ToolHistory(FrameSelection(Rect(0, 0, info.width, info.height)))
     val rotationHistory = ToolHistory(RotationSelection())

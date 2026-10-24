@@ -33,6 +33,7 @@ internal fun FileName(
     sourceBytes: Long?,
     sourceDetail: Pair<Int, String>,
     modifier: Modifier = Modifier,
+    sourceDetails: @Composable ColumnScope.() -> Unit = {},
 ) {
     val clipboard = LocalClipboard.current
     val context = LocalContext.current
@@ -78,6 +79,7 @@ internal fun FileName(
                             .forEach { (label, value) ->
                                 MediaDetail(stringResource(label), value)
                             }
+                        sourceDetails()
                         sourceUri?.let { MediaDetail(stringResource(R.string.source_address), it.toString()) }
                     }
                 }

@@ -104,6 +104,7 @@ private fun LabApp(model: LabViewModel, state: LabState, exit: () -> Unit) {
             !settings &&
                 (state.photo.frame != null ||
                     state.audio != null ||
+                    state.video != null ||
                     batch.items.isNotEmpty() ||
                     batch.busy)
     ) {
@@ -165,7 +166,8 @@ private fun LabApp(model: LabViewModel, state: LabState, exit: () -> Unit) {
                         for ((index, label, icon) in
                             listOf(
                                 Triple(0, R.string.image_tab, R.drawable.ic_photo),
-                                Triple(1, R.string.audio_tab, R.drawable.ic_audio),
+                                Triple(1, R.string.video_tab, R.drawable.ic_video),
+                                Triple(2, R.string.audio_tab, R.drawable.ic_audio),
                             )) {
                             NavigationBarItem(
                                 selected = state.tab == index,
@@ -186,6 +188,10 @@ private fun LabApp(model: LabViewModel, state: LabState, exit: () -> Unit) {
                     if (tab == 0)
                         pages.SaveableStateProvider("image") {
                             key(state.photo.editor) { PhotoScreen(model, state) }
+                        }
+                    else if (tab == 1)
+                        pages.SaveableStateProvider("video") {
+                            key(state.video?.editor) { VideoScreen(model, state, !settings && state.tab == 1) }
                         }
                     else
                         AnimatedContent(
