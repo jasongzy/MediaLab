@@ -68,16 +68,17 @@ internal fun FileName(
                     ) {
                         listOfNotNull(
                                 R.string.filename to name,
+                                R.string.file_format to sourceMime,
                                 sourceBytes?.let {
                                     R.string.original_file_size to
                                         Formatter.formatFileSize(context, it)
                                 },
                                 sourceDetail,
-                                sourceUri?.let { R.string.source_address to it.toString() },
                             )
                             .forEach { (label, value) ->
                                 MediaDetail(stringResource(label), value)
                             }
+                        sourceUri?.let { MediaDetail(stringResource(R.string.source_address), it.toString()) }
                     }
                 }
             },

@@ -224,7 +224,7 @@
     <string name="zoom_out">Zoom out</string>
     <string name="copied">Copied</string>
     <string name="filename_copied">Filename copied</string>
-    <string name="file_details">File details</string>
+    <string name="file_details">Original file details</string>
     <string name="filename">Filename</string>
     <string name="original_file_size">Original file size</string>
     <string name="original_dimensions">Original image dimensions</string>
@@ -249,6 +249,7 @@
     <string name="current_media_info">Current media information</string>
     <string name="current_media_info_hint">Updates as you edit; tap the filename to view original file details</string>
     <string name="dimensions">Dimensions</string>
+    <string name="file_format">File type</string>
     <string name="media_metadata">Metadata</string>
     <string name="edit_metadata">Edit metadata</string>
     <string name="edit_metadata_hint">Tap an entry to edit or delete it</string>

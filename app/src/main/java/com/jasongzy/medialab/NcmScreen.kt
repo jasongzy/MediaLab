@@ -12,6 +12,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
@@ -213,7 +214,8 @@ internal fun NcmScreen(model: LabViewModel, state: BatchState) {
                     label = { Text(stringResource(R.string.batch_failures)) },
                 )
             }
-            LazyColumn(Modifier.weight(1f)) {
+            val scroll = rememberLazyListState()
+            LazyColumn(Modifier.weight(1f).verticalScrollbar(scroll), state = scroll) {
                 items(
                     state.items.filter { !failures || it.status == BatchStatus.FAILED },
                     key = { it.file.key },
@@ -380,9 +382,11 @@ internal fun NcmScreen(model: LabViewModel, state: BatchState) {
     }
     if (options)
         ModalBottomSheet(onDismissRequest = { options = false }) {
+            val scroll = rememberScrollState()
             Column(
                 Modifier.fillMaxWidth()
-                    .verticalScroll(rememberScrollState())
+                    .verticalScrollbar(scroll)
+                    .verticalScroll(scroll)
                     .padding(horizontal = 24.dp)
                     .padding(bottom = 32.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -391,10 +395,10 @@ internal fun NcmScreen(model: LabViewModel, state: BatchState) {
                     stringResource(R.string.batch_options),
                     style = MaterialTheme.typography.titleLarge,
                 )
-                Toggle(R.string.batch_recursive, state.options.recursive) {
+                CheckOption(R.string.batch_recursive, state.options.recursive) {
                     NcmBatch.configure(state.options.copy(recursive = it))
                 }
-                Toggle(R.string.batch_copy_audio, state.options.copyAudio) {
+                CheckOption(R.string.batch_copy_audio, state.options.copyAudio) {
                     NcmBatch.configure(state.options.copy(copyAudio = it))
                 }
                 Text(
@@ -407,7 +411,7 @@ internal fun NcmScreen(model: LabViewModel, state: BatchState) {
                 ) {
                     NcmBatch.configure(state.options.copy(conflict = ConflictPolicy.entries[it]))
                 }
-                Toggle(R.string.batch_delete_original, state.options.deleteOriginal) {
+                CheckOption(R.string.batch_delete_original, state.options.deleteOriginal) {
                     NcmBatch.configure(state.options.copy(deleteOriginal = it))
                 }
             }

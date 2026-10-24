@@ -222,7 +222,7 @@
     <string name="zoom_out">缩小</string>
     <string name="copied">已复制</string>
     <string name="filename_copied">已复制文件名</string>
-    <string name="file_details">文件信息</string>
+    <string name="file_details">原文件信息</string>
     <string name="filename">文件名</string>
     <string name="original_file_size">原文件大小</string>
     <string name="original_dimensions">原文件尺寸</string>
@@ -247,6 +247,7 @@
     <string name="current_media_info">当前媒体信息</string>
     <string name="current_media_info_hint">随编辑而更新；点击文件名可查看原文件信息</string>
     <string name="dimensions">尺寸</string>
+    <string name="file_format">文件类型</string>
     <string name="media_metadata">元数据</string>
     <string name="edit_metadata">编辑元数据</string>
     <string name="edit_metadata_hint">点击条目以修改或删除</string>

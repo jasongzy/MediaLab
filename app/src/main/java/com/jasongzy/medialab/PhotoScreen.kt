@@ -98,7 +98,10 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
     val editor = checkNotNull(photo.editor)
     var menu by rememberSaveable(editor) { mutableStateOf(false) }
     var tool by editor::tool
-    val toolScroll = key(photo.history.first()) { rememberLazyListState() }
+    val tools = PhotoTool.entries
+    val toolScroll = key(photo.history.first(), tools) {
+        rememberLazyListState(initialFirstVisibleItemIndex = tools.indexOf(tool))
+    }
     val panelScroll = key(photo.history.first()) { rememberScrollState() }
     var shownTool by rememberSaveable(photo.history.first()) { mutableStateOf(tool) }
     LaunchedEffect(editor, tool) {
@@ -106,18 +109,17 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
             panelScroll.scrollTo(0)
             shownTool = tool
         }
-        val index = tool.ordinal
+        val index = tools.indexOf(tool)
         if (toolScroll.layoutInfo.visibleItemsInfo.none { it.index == index })
             toolScroll.animateScrollToItem(index)
     }
-
     val exportHighlight = remember(editor) { Animatable(0f) }
     val highlightColor = MaterialTheme.colorScheme.primary
     var exportRequest by remember(editor) { mutableIntStateOf(0) }
     LaunchedEffect(exportRequest) {
         if (exportRequest > 0) {
             panelScroll.scrollTo(0)
-            toolScroll.animateScrollToItem(PhotoTool.EXPORT.ordinal)
+            toolScroll.animateScrollToItem(tools.indexOf(PhotoTool.EXPORT))
             exportHighlight.snapTo(0.16f)
             exportHighlight.animateTo(0f, tween(1200))
         }
@@ -259,8 +261,8 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
                     state = toolScroll,
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    items(PhotoTool.entries.size) { i ->
-                        val item = PhotoTool.entries[i]
+                    items(tools.size, key = { tools[it] }) { i ->
+                        val item = tools[i]
                         FilterChip(
                             tool == item,
                             {
@@ -287,6 +289,7 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
                             if (tool == PhotoTool.EXPORT)
                                 drawRect(highlightColor.copy(alpha = exportHighlight.value))
                         }
+                        .verticalScrollbar(panelScroll)
                         .verticalScroll(panelScroll)
                         .padding(horizontal = 16.dp, vertical = 4.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -340,7 +343,7 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
                                     info.orientation == 1 &&
                                     info.container.gainmap == null
                             if (canLossless) {
-                                Toggle(R.string.lossless_jpeg, lossless) { lossless = it }
+                                CheckOption(R.string.lossless_jpeg, lossless) { lossless = it }
                                 if (lossless)
                                     Text(
                                         stringResource(
@@ -348,6 +351,7 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
                                             jpeg.blockX,
                                             jpeg.blockY,
                                         ),
+                                        Modifier.padding(start = 36.dp),
                                         style = MaterialTheme.typography.bodySmall,
                                     )
                             }
@@ -577,7 +581,7 @@ private fun BackgroundPanel(model: LabViewModel, photo: PhotoState, hasStoredMas
                     },
                     enabled = draft.history.value.lastOrNull() != MaskEdit.Harden,
                 ) { Text(stringResource(R.string.harden_mask)) }
-                HistoryButtons(draft.history, R.string.remove_background) { editor.dropper = false }
+                HistoryButtons(draft.history, R.string.mask) { editor.dropper = false }
             }
         }
         Text(
@@ -610,7 +614,7 @@ private fun BackgroundPanel(model: LabViewModel, photo: PhotoState, hasStoredMas
             }
         }
         BrushSize(editor.brushWidth, IntSize(photo.info!!.width, photo.info.height)) { editor.brushWidth = it; editor.dropper = false }
-        Toggle(R.string.soft_edges, draft.softEdges) { draft.softEdges = it; editor.dropper = false }
+        CheckOption(R.string.soft_edges, draft.softEdges) { draft.softEdges = it; editor.dropper = false }
     }
     FlowRow(
         Modifier.fillMaxWidth(),
@@ -1207,7 +1211,7 @@ private fun RotationPanel(editor: PhotoEditorState, apply: (RotationSelection) -
             )
         }
     }
-    Toggle(R.string.lock_canvas_size, selection.lockCanvas) {
+    CheckOption(R.string.lock_canvas_size, selection.lockCanvas) {
         finishInput()
         history.change(selection.copy(lockCanvas = it))
     }
@@ -1266,7 +1270,7 @@ private fun ResizePanel(
             selection.height = it.height
         }
     }
-    Toggle(R.string.keep_ratio, selection.lock) { selection.lock = it }
+    CheckOption(R.string.keep_ratio, selection.lock) { selection.lock = it }
     ChoiceChips(
         listOf(
             0 to stringResource(R.string.nearest),
@@ -1379,6 +1383,12 @@ private fun ExportPanel(model: LabViewModel, state: LabState) {
     ) {
         options = options.copy(format = ImageFormat.entries[it])
     }
+    if (options.format == ImageFormat.ORIGINAL) Text(
+        if (state.photo.frame?.source != null && options.preservesSource(info))
+            info.mime.substringAfter('/').uppercase(java.util.Locale.ROOT)
+        else options.encodedFormat(info).extension.uppercase(java.util.Locale.ROOT),
+        style = MaterialTheme.typography.bodyMedium,
+    )
     if (options.format in listOf(ImageFormat.JPEG, ImageFormat.WEBP_LOSSY)) {
         Text(
             "${stringResource(R.string.quality)} · ${options.quality}",
@@ -1449,7 +1459,7 @@ private fun CleanupOptions(
     val motion = info.container?.video != null
     val editable = info.container?.edit != null
     if (motion)
-        Toggle(R.string.extract_static, options.static) {
+        CheckOption(R.string.extract_static, options.static) {
             change(
                 options.copy(
                     static = it,
@@ -1459,7 +1469,7 @@ private fun CleanupOptions(
             )
         }
     if (editable)
-        Toggle(R.string.flatten_edits, options.flatten) {
+        CheckOption(R.string.flatten_edits, options.flatten) {
             change(
                 options.copy(
                     flatten = it,
@@ -1468,7 +1478,7 @@ private fun CleanupOptions(
                 )
             )
         }
-    Toggle(R.string.clear_metadata, options.metadata) {
+    CheckOption(R.string.clear_metadata, options.metadata) {
         change(
             options.copy(
                 metadata = it,
@@ -1479,6 +1489,7 @@ private fun CleanupOptions(
     }
     Text(
         stringResource(R.string.clear_metadata_hint),
+        Modifier.padding(start = 36.dp),
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
@@ -1488,8 +1499,9 @@ private fun CleanupOptions(
                 if (motion && editable) R.string.cleanup_motion_edits
                 else R.string.cleanup_attachments
             ),
+            Modifier.padding(start = 36.dp),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-    Toggle(R.string.keep_color, options.keepColor) { change(options.copy(keepColor = it)) }
+    CheckOption(R.string.keep_color, options.keepColor) { change(options.copy(keepColor = it)) }
 }

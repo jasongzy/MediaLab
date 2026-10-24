@@ -1,21 +1,56 @@
 package com.jasongzy.medialab
 
 import android.widget.Toast
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.foundation.gestures.ScrollableState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+
+@Composable
+internal fun Modifier.verticalScrollbar(state: ScrollableState): Modifier {
+    val color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f)
+    return drawWithContent {
+        drawContent()
+        if (!state.canScrollForward && !state.canScrollBackward) return@drawWithContent
+        val indicator = state.scrollIndicatorState ?: return@drawWithContent
+        val viewport = indicator.viewportSize.toFloat()
+        val content = indicator.contentSize.toFloat()
+        if (viewport <= 0f || content <= viewport) return@drawWithContent
+        val inset = 4.dp.toPx()
+        val track = (size.height - inset * 2).coerceAtLeast(0f)
+        val thumb = (track * viewport / content).coerceIn(minOf(24.dp.toPx(), track), track)
+        val fraction = when {
+            !state.canScrollBackward -> 0f
+            !state.canScrollForward -> 1f
+            else -> (indicator.scrollOffset / (content - viewport)).coerceIn(0f, 1f)
+        }
+        val width = 3.dp.toPx()
+        drawRoundRect(
+            color,
+            topLeft = Offset(size.width - inset - width, inset + (track - thumb) * fraction),
+            size = Size(width, thumb),
+            cornerRadius = CornerRadius(width / 2),
+        )
+    }
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -180,17 +215,23 @@ internal fun ChoiceChips(choices: List<Pair<Int, String>>, selected: Int, choose
 }
 
 @Composable
-internal fun Toggle(label: Int, value: Boolean, enabled: Boolean = true, set: (Boolean) -> Unit) {
+internal fun CheckOption(label: Int, value: Boolean, enabled: Boolean = true, set: (Boolean) -> Unit) =
+    CheckOption(stringResource(label), value, enabled, set)
+
+@Composable
+internal fun CheckOption(label: String, value: Boolean, enabled: Boolean = true, set: (Boolean) -> Unit) {
     Row(
-        Modifier.fillMaxWidth(),
-        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+        Modifier.fillMaxWidth().heightIn(min = 48.dp)
+            .toggleable(value, enabled = enabled, role = Role.Checkbox, onValueChange = set),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
+        Checkbox(value, onCheckedChange = null, enabled = enabled, modifier = Modifier.padding(end = 12.dp))
         Text(
-            stringResource(label),
+            label,
             Modifier.weight(1f),
             style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = if (enabled) 1f else 0.38f),
         )
-        Switch(value, set, enabled = enabled)
     }
 }
 
