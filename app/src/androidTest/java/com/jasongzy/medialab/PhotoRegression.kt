@@ -693,6 +693,7 @@ internal class PhotoRegression(
             }
             idle(model)
             val draft = checkNotNull(model.state.value.photo.editor)
+
             instrumentation.runOnMainSync {
                 draft.cropHistory.change(FrameSelection(Rect(2, 2, 20, 20)))
                 model.open(Uri.fromFile(image), ImportType.IMAGE)
@@ -757,6 +758,19 @@ internal class PhotoRegression(
             idle(model)
             check(model.state.value.notice?.message == R.string.select_audio_only)
             check(model.state.value.audio === editedAudio && work.listFiles()!!.toSet() == before)
+            for ((name, content, expected) in listOf(
+                    Triple("empty.bin", byteArrayOf(), R.string.empty_media_file),
+                    Triple("document.txt", "not media".toByteArray(), R.string.select_media_only),
+                    Triple("fake.mp4", "not a video".toByteArray(), R.string.select_media_only),
+                    Triple("broken.png", image.readBytes().take(48).toByteArray(), R.string.select_media_only),
+                )) {
+                val invalid = File(app.filesDir, name).apply { writeBytes(content) }
+                instrumentation.runOnMainSync { model.clearNotice(); model.open(Uri.fromFile(invalid), null) }
+                idle(model)
+                check(model.state.value.notice?.message == expected) { "Unexpected import result: $name" }
+                check(model.state.value.photo === photo && model.state.value.audio === editedAudio)
+                check(work.listFiles()!!.toSet() == before)
+            }
             instrumentation.runOnMainSync { model.open(Uri.fromFile(audio), null) }
             withTimeout(30_000) { model.state.first { it.confirmation == Confirmation.AUDIO } }
             instrumentation.runOnMainSync { model.cancel() }

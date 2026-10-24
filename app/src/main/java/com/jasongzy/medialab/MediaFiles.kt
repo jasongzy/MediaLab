@@ -146,7 +146,7 @@ internal object MediaFiles {
                         copy(it, output)
                     }
             }
-            require(file.length() > 0) { "Empty input" }
+            if (file.length() == 0L) throw UnsupportedMediaException(R.string.empty_media_file)
             return file to name
         } catch (error: Exception) {
             file.delete()

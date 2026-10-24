@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources xmlns:tools="http://schemas.android.com/tools">
+    <string name="loading_media">正在载入文件</string>
     <string name="video_time">时间</string>
     <string name="video_start">开始</string>
     <string name="video_end">结束</string>

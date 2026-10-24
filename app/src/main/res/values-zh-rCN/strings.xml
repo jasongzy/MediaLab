@@ -238,6 +238,8 @@
     <string name="select_image_only">请选择支持的图像文件。</string>
     <string name="image_stream_unavailable">无法读取图片，请先解压或保存到设备后再打开。</string>
     <string name="select_audio_only">请选择支持的音频文件</string>
+    <string name="select_media_only">请选择支持的图像或音频文件</string>
+    <string name="empty_media_file">文件内容为空</string>
     <string name="transparency_background">透明区域背景色</string>
     <string name="jpeg_background_hint">JPEG 会用此颜色填充透明区域</string>
     <string name="export_size">导出文件大小：%1$s</string>

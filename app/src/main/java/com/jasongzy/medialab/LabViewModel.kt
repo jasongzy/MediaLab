@@ -281,63 +281,31 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
     fun receive(uri: Uri) {
         viewModelScope.launch {
             state.first { !it.busy }
-            open(uri, if (uri.scheme == "http") ImportType.IMAGE else null)
+            open(uri, null)
         }
     }
 
     fun open(uri: Uri, type: ImportType?) =
         work(
-            if (type == null || type == ImportType.IMAGE) R.string.loading_photo
-            else R.string.loading_audio
+            when (type) {
+                ImportType.AUDIO -> R.string.loading_audio
+                ImportType.IMAGE -> R.string.loading_photo
+                null -> R.string.loading_media
+            }
         ) {
             if (
                 type == null &&
+                    uri.scheme != "http" &&
                     (MediaFiles.name(context, uri).endsWith(".ncm", true) ||
-                        context.contentResolver.openInputStream(uri)?.use { Ncm.matches(it) } == true)
+                        context.contentResolver.openInputStream(uri)?.use { Ncm.matches(it) } ==
+                            true)
             ) {
                 NcmBatch.addFiles(context, listOf(uri), shared = true)
                 showBatch(true)
                 return@work
             }
             val (file, name) = MediaFiles.import(context, uri, workspace.work)
-            var audio: AudioDocument? = null
-            try {
-                val bounds =
-                    android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                android.graphics.BitmapFactory.decodeFile(file.path, bounds)
-                val isImage = if (type == null) bounds.outWidth > 0 else type == ImportType.IMAGE
-                val typeError =
-                    when {
-                        isImage -> R.string.select_image_only
-                        else -> R.string.select_audio_only
-                    }
-                if ((bounds.outWidth > 0) != isImage) throw UnsupportedMediaException(typeError)
-                if (!isImage) {
-                    if (Ncm.matches(file)) throw UnsupportedMediaException(typeError)
-                    AudioFiles.validate(file)
-                }
-                if (!canReplace(if (isImage) ImportType.IMAGE else ImportType.AUDIO)) return@work
-                if (isImage) {
-                    val preview = Photos.preview(file)
-                    val info = Photos.info(file, preview)
-                    acceptPhoto(PhotoFrame(file, info), preview, name, uri)
-                } else {
-                    val document = AudioFiles.read(file, name).copy(sourceUri = uri, sourceBytes = file.length())
-                    audio = document
-                    currentCoroutineContext().ensureActive()
-                    val old = state.value.audio?.files.orEmpty()
-                    mutable.update {
-                        it.copy(
-                            audio = document,
-                            batchPage = false,
-                            tab = 1,
-                        )
-                    }
-                    old.forEach { it.delete() }
-                }
-            } finally {
-                if (file !in state.value.workingFiles) (audio?.files ?: setOf(file)).forEach { it.delete() }
-            }
+            acceptFile(file, name, uri, type)
         }
 
     fun openRaw(uri: Uri) = work(R.string.loading_raw) {
@@ -390,6 +358,58 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
         }
         old?.close()
         oldExport?.delete()
+    }
+
+    private suspend fun acceptFile(file: File, name: String, uri: Uri?, requested: ImportType?) {
+        var preview: Bitmap? = null
+        var audio: AudioDocument? = null
+        try {
+            val bounds =
+                android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            android.graphics.BitmapFactory.decodeFile(file.path, bounds)
+            val type = requested ?: if (bounds.outWidth > 0) ImportType.IMAGE else ImportType.AUDIO
+            when (type) {
+                ImportType.IMAGE ->
+                    if (bounds.outWidth <= 0)
+                        throw UnsupportedMediaException(R.string.select_image_only)
+                ImportType.AUDIO -> {
+                    if (bounds.outWidth > 0 || Ncm.matches(file))
+                        throw UnsupportedMediaException(R.string.select_audio_only)
+                }
+            }
+            audio = if (type == ImportType.AUDIO)
+                AudioFiles.read(file, name).copy(sourceUri = uri, sourceBytes = file.length())
+            else null
+            val image = if (type == ImportType.IMAGE) {
+                preview = Photos.preview(file)
+                PhotoFrame(file, Photos.info(file, preview))
+            } else null
+            if (!canReplace(type)) return
+            when (type) {
+                ImportType.IMAGE -> acceptPhoto(checkNotNull(image), checkNotNull(preview), name, uri)
+                ImportType.AUDIO -> {
+                    val document = checkNotNull(audio)
+                    currentCoroutineContext().ensureActive()
+                    val old = state.value.audio?.files.orEmpty()
+                    mutable.update {
+                        it.copy(audio = document, batchPage = false, tab = type.ordinal)
+                    }
+                    old.forEach { it.delete() }
+                }
+            }
+        } catch (error: UnsupportedMediaException) {
+            if (requested == null && error.messageRes in listOf(
+                    R.string.select_image_only, R.string.select_audio_only,
+                )) throw UnsupportedMediaException(R.string.select_media_only)
+            throw error
+        } catch (_: android.graphics.ImageDecoder.DecodeException) {
+            throw UnsupportedMediaException(if (requested == null) R.string.select_media_only else R.string.select_image_only)
+        } finally {
+            if (file !in state.value.workingFiles) {
+                preview?.recycle()
+                (audio?.files ?: setOf(file)).forEach { it.delete() }
+            }
+        }
     }
 
     fun editPhotoMetadata(changes: Map<String, String?>, done: () -> Unit) = work(R.string.apply, showProgress = false) {

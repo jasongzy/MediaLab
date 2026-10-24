@@ -194,7 +194,7 @@ internal object Photos {
 
     fun preview(file: File): Bitmap =
         ImageDecoder.decodeBitmap(ImageDecoder.createSource(file)) { decoder, info, _ ->
-            require(!info.isAnimated) { "Choose a still image" }
+            if (info.isAnimated) throw UnsupportedMediaException(R.string.select_image_only)
             decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
             val scale = minOf(1.0, 1800.0 / maxOf(info.size.width, info.size.height))
             decoder.setTargetSize(
