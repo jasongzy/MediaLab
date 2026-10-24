@@ -247,11 +247,15 @@ internal object Containers {
         metadata: Boolean,
         auxiliary: File?,
         check: () -> Unit,
+        exif: ByteArray? = null,
     ) {
         val keepVideo = !static && !metadata && info.video != null
         val keepEdit = !flatten && !static && !metadata && info.edit != null
         val rewritten = mutableListOf<Pair<JpegPart, ByteArray?>>()
-        for (part in info.jpeg.parts) {
+        val parts = info.jpeg.parts.toMutableList()
+        if (exif != null && parts.none { it.marker == 0xe1 && it.payload.startsWith("Exif\u0000\u0000".toByteArray()) })
+            parts.add(0, JpegPart(0xe1, ByteRange(2, 0), "Exif\u0000\u0000".toByteArray()))
+        for (part in parts) {
             val content = part.payload
             val isXmp = part.marker == 0xe1 && content.startsWith(xmpPrefix)
             val isMpf = part.marker == 0xe2 && content.startsWith("MPF\u0000".toByteArray())
@@ -262,8 +266,9 @@ internal object Containers {
                     (part.marker == 0xee && content.startsWith("Adobe".toByteArray()))
             val replacement =
                 when {
-                    isMpf -> if (info.gainmap == null) null else content.copyOf()
-                    isXmp -> rewriteXmp(content, keepVideo, keepEdit, metadata, info)
+                    exif != null && part.marker == 0xe1 && content.startsWith("Exif\u0000\u0000".toByteArray()) -> exif
+                    isMpf -> if (info.gainmap == null && exif == null) null else content.copyOf()
+                    isXmp -> if (exif != null) content else rewriteXmp(content, keepVideo, keepEdit, metadata, info)
                     metadata && part.marker == 0xe0 ->
                         if (content.startsWith("JFIF\u0000".toByteArray()) && content.size >= 14)
                             content.copyOf(14).apply {
@@ -291,14 +296,16 @@ internal object Containers {
             ) {
                 val buffer = mpf(payload)
                 val table = requireNotNull(mpEntries(buffer))
-                val gainmapLength = auxiliary?.length() ?: requireNotNull(info.gainmap).length
+                val gainmapLength = if (exif != null) buffer.getInt(table + 20).toLong() and 0xffffffffL
+                    else auxiliary?.length() ?: requireNotNull(info.gainmap).length
                 require(primaryLength <= 0xffffffffL && gainmapLength <= 0xffffffffL)
                 buffer.putInt(table + 4, primaryLength.toInt())
                 buffer.putInt(table + 20, gainmapLength.toInt())
-                buffer.putInt(
-                    table + 24,
-                    (primaryLength - part.range.start - precedingDelta - 8).toInt(),
-                )
+                val offset = if (exif != null)
+                    (buffer.getInt(table + 24).toLong() and 0xffffffffL) + delta - precedingDelta
+                else primaryLength - part.range.start - precedingDelta - 8
+                require(offset in 0..0xffffffffL)
+                buffer.putInt(table + 24, offset.toInt())
             }
             precedingDelta += (payload?.size?.plus(4)?.toLong() ?: 0L) - part.range.length
         }
@@ -323,18 +330,28 @@ internal object Containers {
                     position = part.range.end
                 }
                 copyRange(input, output, ByteRange(position, info.jpeg.end - position), check)
-                if (auxiliary != null)
-                    RandomAccessFile(auxiliary, "r").use {
-                        copyRange(it, output, ByteRange(0, auxiliary.length()), check)
-                    }
-                else info.gainmap?.let { copyRange(input, output, it, check) }
-                if (keepEdit) copyRange(input, output, info.edit, check)
-                if (keepVideo) copyRange(input, output, info.video, check)
+                if (exif != null) {
+                    copyRange(input, output, ByteRange(info.jpeg.end, source.length() - info.jpeg.end), check)
+                } else {
+                    if (auxiliary != null)
+                        RandomAccessFile(auxiliary, "r").use {
+                            copyRange(it, output, ByteRange(0, auxiliary.length()), check)
+                        }
+                    else info.gainmap?.let { copyRange(input, output, it, check) }
+                    if (keepEdit) copyRange(input, output, info.edit, check)
+                    if (keepVideo) copyRange(input, output, info.video, check)
+                }
             }
         }
         val result = requireNotNull(inspect(target))
         kotlin.check(result.jpeg.width == info.jpeg.width && result.jpeg.height == info.jpeg.height)
         kotlin.check((result.video != null) == keepVideo && (result.edit != null) == keepEdit)
+    }
+
+    fun replaceExif(source: File, target: File, exif: ByteArray, check: () -> Unit = {}) {
+        require(source.canonicalFile != target.canonicalFile)
+        require(exif.size <= 65533)
+        writeClean(source, requireNotNull(inspect(source)), target, false, false, false, null, check, exif)
     }
 
     private fun rewriteXmp(
@@ -520,7 +537,7 @@ internal object Containers {
         return null
     }
 
-    private fun copyRange(
+    fun copyRange(
         input: RandomAccessFile,
         output: OutputStream,
         range: ByteRange,

@@ -246,4 +246,13 @@
     <string name="export_size">Exported file size: %1$s</string>
     <string name="cleanup_motion_edits">Converting to a still image deletes the embedded video, edit history, and recoverable original, keeping the current picture; clearing metadata also deletes this data</string>
     <string name="cleanup_attachments">Clearing metadata also deletes embedded video, edit history, and recoverable originals</string>
+    <string name="current_media_info">Current media information</string>
+    <string name="current_media_info_hint">Updates as you edit; tap the filename to view original file details</string>
+    <string name="dimensions">Dimensions</string>
+    <string name="media_metadata">Metadata</string>
+    <string name="edit_metadata">Edit metadata</string>
+    <string name="edit_metadata_hint">Tap an entry to edit or delete it</string>
+    <string name="invalid_metadata">Invalid metadata value; check its format and range</string>
+    <string name="metadata_not_saved">This format could not preserve the metadata change; choose another export format</string>
+    <string name="photo_metadata_format">Export as JPEG, PNG or WebP to save metadata changes</string>
 </resources>

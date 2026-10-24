@@ -65,7 +65,7 @@ internal data class PhotoState(
     val frame
         get() = history.getOrNull(position)
     val pending
-        get() = editor?.pending(checkNotNull(info), frame?.source != null).orEmpty()
+        get() = editor?.pending(checkNotNull(info)).orEmpty()
 }
 
 internal data class Notice(val message: Int, val argument: String? = null, val argumentRes: Int? = null)
@@ -79,6 +79,7 @@ internal data class LabState(
     val confirmation: Confirmation? = null,
     val colorLosses: List<Int> = emptyList(),
     val busy: Boolean = false,
+    val showProgress: Boolean = false,
     val refreshingMedia: Boolean = false,
     val stage: Int = R.string.loading_photo,
     val error: String? = null,
@@ -136,13 +137,13 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
         }
     }
 
-    private fun work(stage: Int, action: suspend () -> Unit) =
-        task(stage) { workspace.access.withLock { action() } }
+    private fun work(stage: Int, showProgress: Boolean = true, action: suspend () -> Unit) =
+        task(stage, showProgress) { workspace.access.withLock { action() } }
 
-    private fun task(stage: Int, action: suspend () -> Unit) {
+    private fun task(stage: Int, showProgress: Boolean = true, action: suspend () -> Unit) {
         if (state.value.busy) return
         mutable.update {
-            it.copy(busy = true, stage = stage, error = null)
+            it.copy(busy = true, showProgress = showProgress, stage = stage, error = null)
         }
         job = viewModelScope.launch {
             try {
@@ -155,7 +156,7 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
             } catch (error: OutOfMemoryError) {
                 mutable.update { it.copy(error = context.getString(R.string.memory_error)) }
             } finally {
-                mutable.update { it.copy(busy = false) }
+                mutable.update { it.copy(busy = false, showProgress = false) }
             }
         }
     }
@@ -186,6 +187,12 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
 
     fun clearNotice() {
         mutable.update { it.copy(notice = null) }
+    }
+
+    private fun historyNotice(direction: Int, action: Int) {
+        mutable.update {
+            it.copy(notice = Notice(if (direction < 0) R.string.undone else R.string.redone, argumentRes = action))
+        }
     }
 
     fun clearCache() =
@@ -256,8 +263,9 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
         }
     }
 
-    private suspend fun confirmColor(forceSrgb: Boolean = false): Boolean {
-        val losses = checkNotNull(state.value.photo.info).color.losses(forceSrgb)
+    private suspend fun confirmColor(forceSrgb: Boolean = false, keepHdr: Boolean = false): Boolean {
+        val info = checkNotNull(state.value.photo.info)
+        val losses = info.color.losses(forceSrgb, keepHdr && info.canKeepHdr)
         return losses.isEmpty() || confirm(Confirmation.CONVERT_COLOR, losses)
     }
 
@@ -338,7 +346,7 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
             } finally {
                 if (frame !== state.value.photo.frame) {
                     preview?.recycle()
-                    frame.release()
+                    frame.image.release()
                 }
             }
         } finally {
@@ -376,10 +384,23 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
         oldExport?.delete()
     }
 
-    private fun historyNotice(direction: Int, action: Int) {
-        mutable.update {
-            it.copy(notice = Notice(if (direction < 0) R.string.undone else R.string.redone, argumentRes = action))
+    fun editPhotoMetadata(changes: Map<String, String?>, done: () -> Unit) = work(R.string.apply, showProgress = false) {
+        val photo = state.value.photo
+        val frame = checkNotNull(photo.frame)
+        require(changes.keys.all { key -> PhotoMetadata.retained(frame.info.metadata).any { it.first == key } })
+        val normalized = PhotoMetadata.normalize(workspace.work, changes)
+        val metadata = frame.info.metadata.mapNotNull { (key, value) ->
+            (if (key in normalized) normalized[key] else value)?.let { key to it }
         }
+        if (metadata == frame.info.metadata) {
+            withContext(Dispatchers.Main) { done() }
+            return@work
+        }
+        val info = frame.info.copy(metadata = metadata,
+            metadataEdits = frame.info.metadataEdits + normalized)
+        checkNotNull(history).append(PhotoFrame(frame.image, info), action = R.string.media_metadata)
+        publish(checkNotNull(photo.preview), restoredEditor = photo.editor)
+        withContext(Dispatchers.Main) { done() }
     }
 
     private fun discardResize(retained: Bitmap? = null) {
@@ -444,11 +465,18 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
             val history = checkNotNull(history)
             val position = (history.position + direction).coerceIn(history.frames.indices)
             if (position == history.position) return@work
-            if (state.value.photo.pending.isNotEmpty() && !confirm(
+            val metadataOnly = history.frames[position].image === history.current.image
+            if (!metadataOnly && state.value.photo.pending.isNotEmpty() && !confirm(
                     if (direction < 0) Confirmation.UNDO else Confirmation.REDO
                 )) return@work
             val frame = history.frames[position]
             val action = history.actions[if (direction < 0) history.position else position]
+            if (metadataOnly) {
+                history.move(position)
+                publish(checkNotNull(state.value.photo.preview), notice = null, restoredEditor = state.value.photo.editor)
+                historyNotice(direction, action ?: R.string.media_metadata)
+                return@work
+            }
             // Redo also restores the next operation's unapplied draft.
             val draft = history.drafts.getOrNull(if (direction < 0) history.position else position + 1)
             val preview =
@@ -457,7 +485,7 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
             val editor = PhotoEditorState(frame.info, preview.hasAlpha(), state.value.photo.editor)
             if (draft != null) {
                 val sourcePreview = if (draft.mask != null && frame.info.color.losses().isNotEmpty())
-                    Photos.preview(history.bitmap(frame)) else preview
+                    Photos.preview(history.bitmap(frame), keepHdr = false) else preview
                 draft.restore(editor, sourcePreview)
                 editor.tool = draft.tool
             }
@@ -487,7 +515,7 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
         transform: suspend (Bitmap) -> Unit = {},
     ) {
         discardResize()
-        val bitmap = checkNotNull(history).copy(crop)
+        val bitmap = checkNotNull(history).copy(crop, keepHdr = tool == PhotoTool.CROP)
         try {
             transform(bitmap)
             currentCoroutineContext().ensureActive()
@@ -500,7 +528,7 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
 
     fun crop(rect: Rect, lossless: Boolean) =
         work(R.string.preparing_image) {
-            if (!lossless && !confirmColor()) return@work
+            if (!lossless && !confirmColor(keepHdr = true)) return@work
             if (!canApply(PhotoTool.CROP)) return@work
             if (lossless) {
                 val photo = state.value.photo
@@ -522,7 +550,7 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
                         rect.width(),
                         rect.height(),
                     )
-                    PhotoMetadata.write(target, info.metadata, rect.width(), rect.height())
+                    PhotoMetadata.write(target, info.metadata, rect.width(), rect.height(), info.metadataEdits)
                     currentCoroutineContext().ensureActive()
                     push(target, PhotoTool.CROP)
                 } catch (error: Exception) {
@@ -556,13 +584,13 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
 
     fun rotate(selection: RotationSelection, color: Int) =
         work(R.string.preparing_image) {
-            if (!confirmColor()) return@work
+            if (!confirmColor(keepHdr = selection.keepsHdr)) return@work
             if (!selection.changed || !canApply(PhotoTool.ROTATE)) return@work
             discardResize()
             val history = checkNotNull(history)
             val source = history.bitmap()
             val size = selection.size(source.width, source.height)
-            history.reserve(size.width.toLong() * size.height * if (source.config == Bitmap.Config.RGBA_F16) 8 else 4)
+            history.reserve(bitmapBytes(source) * size.width * size.height / source.width / source.height)
             val bitmap = Photos.rotate(source, selection, color)
             try {
                 currentCoroutineContext().ensureActive()
@@ -575,7 +603,7 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
 
     fun resize(width: Int, height: Int, method: Int) =
         work(R.string.preparing_image) {
-            if (!confirmColor()) return@work
+            if (!confirmColor(keepHdr = true)) return@work
             if (!canApply(PhotoTool.RESIZE)) return@work
             val result = resized(width, height, method)
             push(result.bitmap, PhotoTool.RESIZE, result.preview)
@@ -592,7 +620,7 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
         val history = checkNotNull(history)
         resizePreview
             ?.takeIf {
-                it.source === history.current &&
+                it.source.image === history.current.image &&
                     it.width == width &&
                     it.height == height &&
                     it.method == method
@@ -602,8 +630,7 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
             }
         discardResize()
         val source = history.bitmap()
-        val bytesPerPixel = if (source.config == Bitmap.Config.RGBA_F16) 8 else 4
-        history.reserve(width.toLong() * height * bytesPerPixel)
+        history.reserve(bitmapBytes(source) * width * height / source.width / source.height)
         val scaled = Photos.resize(source, width, height, method)
         val bitmap =
             if (scaled === source) checkNotNull(source.copy(source.config!!, true)) else scaled
@@ -652,7 +679,7 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
                 mutable.update { it.copy(stage = stage) }
             }
             val mask = CutoutMask.Inferred(values, model)
-            val preview = if (converts) Photos.preview(bitmap) else checkNotNull(photo.preview)
+            val preview = if (converts) Photos.preview(bitmap, keepHdr = false) else checkNotNull(photo.preview)
             val maskPreview = Photos.maskPreview(mask, preview.width, preview.height, bitmap.width, bitmap.height)
             currentCoroutineContext().ensureActive()
             val elapsed = SystemClock.elapsedRealtime() - started
@@ -686,7 +713,7 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
         if (!confirmColor()) return@work
         discardResize()
         val preview =
-            if (converts) Photos.preview(checkNotNull(history).bitmap()) else checkNotNull(photo.preview)
+            if (converts) Photos.preview(checkNotNull(history).bitmap(), keepHdr = false) else checkNotNull(photo.preview)
         val maskPreview = Photos.maskPreview(mask, preview.width, preview.height)
         currentCoroutineContext().ensureActive()
         withContext(Dispatchers.Main) {
@@ -768,12 +795,9 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
             val photo = state.value.photo
             val frame = checkNotNull(photo.frame)
             val options = ExportOptions(metadata = metadata, static = static, flatten = flatten, keepColor = keepColor)
-            if (!options.preservesSource(frame.info) && !confirmColor(forceSrgb = !keepColor)) return@work
-            val convert = !keepColor && frame.info.colorSpace?.isSrgb == false
-            if (frame.source == null && !convert && (!metadata || frame.info.metadata.isEmpty())) {
-                mutable.update { it.copy(notice = Notice(R.string.changes_applied)) }
-                return@work
-            }
+            if (!canClean(frame.info, options, frame.source != null)) return@work
+            if (!options.preservesSource(frame.info) && !confirmColor(forceSrgb = !keepColor, keepHdr = keepColor)) return@work
+            val convert = !keepColor && (frame.info.colorSpace?.isSrgb == false || frame.info.gainmap)
             if (!canApply(PhotoTool.CLEAN)) return@work
             if (frame.source == null) {
                 if (convert) {
@@ -789,7 +813,11 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
                         bitmap.recycle()
                         throw error
                     }
-                } else bitmapEdit(PhotoTool.CLEAN, clearMetadata = true)
+                } else {
+                    checkNotNull(history).append(PhotoFrame(frame.image,
+                        frame.info.copy(metadata = emptyList(), metadataEdits = emptyMap())), action = PhotoTool.CLEAN.label)
+                    publish(checkNotNull(photo.preview))
+                }
                 return@work
             }
             discardResize()
@@ -817,8 +845,8 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
             else {
                 val history = checkNotNull(history)
                 val bitmap = history.bitmap(frame)
-                if ((options.format == ImageFormat.JPEG && bitmap.hasAlpha()) ||
-                    (!options.keepColor && bitmap.colorSpace?.isSrgb == false)
+                if ((options.encodedFormat(frame.info) == ImageFormat.JPEG && bitmap.hasAlpha()) ||
+                    (!options.keepColor && (bitmap.colorSpace?.isSrgb == false || frame.info.gainmap))
                 ) history.reserve(
                     if (options.keepColor) bitmap.allocationByteCount.toLong()
                     else bitmap.width.toLong() * bitmap.height * 4

@@ -35,7 +35,7 @@ class EditorInteractionTest {
         assertFalse(clean.preservesSource(info.copy(orientation = 6)))
         assertFalse(clean.preservesSource(info.copy(mime = "image/heif")))
         assertFalse(ExportOptions(format = ImageFormat.PNG).preservesSource(info))
-        assertTrue(hasPendingCleanup(info.copy(color = p3), ExportOptions(metadata = false, keepColor = false), false))
+        assertTrue(canClean(info.copy(color = p3), ExportOptions(metadata = false, keepColor = false), false))
     }
 
     @Test
@@ -82,15 +82,15 @@ class EditorInteractionTest {
     }
 
     @Test
-    fun cleanupOnlyWarnsForChangedOptionsWithAnApplicableAction() {
+    fun cleanupRequiresAnApplicableSelection() {
         val info = PhotoInfo(1, 1, 1, 1, 1, "image/png", null, PhotoColor(), null, emptyList())
         val defaults = ExportOptions(metadata = true, static = true, flatten = true)
-        assertFalse(hasPendingCleanup(info, defaults, hasSource = true))
-        assertFalse(hasPendingCleanup(info, defaults.copy(metadata = false), hasSource = true))
+        assertTrue(canClean(info, defaults, hasSource = true))
+        assertFalse(canClean(info, defaults.copy(metadata = false), hasSource = true))
         val changed = defaults.copy(keepColor = false)
-        assertTrue(hasPendingCleanup(info, changed, hasSource = true))
-        assertFalse(hasPendingCleanup(info, changed, hasSource = false))
-        assertTrue(hasPendingCleanup(info.copy(metadata = listOf("Software" to "Camera")), changed, hasSource = false))
+        assertTrue(canClean(info, changed, hasSource = true))
+        assertFalse(canClean(info, changed, hasSource = false))
+        assertTrue(canClean(info.copy(metadata = listOf("Software" to "Camera")), changed, hasSource = false))
     }
 
     @Test

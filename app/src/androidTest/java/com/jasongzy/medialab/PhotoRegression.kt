@@ -16,6 +16,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.exifinterface.media.ExifInterface
 import androidx.lifecycle.ViewModelStore
 import java.io.File
+import java.io.IOException
 import java.nio.ByteBuffer
 import kotlin.coroutines.CoroutineContext
 import kotlin.math.abs
@@ -299,6 +300,36 @@ internal class PhotoRegression(
                 val preview = Photos.preview(file)
                 val info = try { Photos.info(file, preview) } finally { preview.recycle() }
                 check(info.color.losses() == listOf(R.string.hdr))
+                val changed = Photos.export(app.cacheDir, file, info.copy(
+                    metadataEdits = mapOf(ExifInterface.TAG_ARTIST to "MediaLab HDR")), ExportOptions())
+                check(Photos.info(changed).color.hdr == true)
+                check(ExifInterface(changed).getAttribute(ExifInterface.TAG_ARTIST) == "MediaLab HDR")
+                val hdr = Photos.decode(changed, Photos.info(changed), keepHdr = true)
+                val ratioMax = hdr.gainmap!!.ratioMax
+                val first = PhotoFrame(null, Photos.rasterInfo(hdr), hdr)
+                val history = PhotoHistory(app.cacheDir, first, memoryBudget = 1)
+                try {
+                    val crop = Photos.cropBitmap(hdr, Rect(1, 2, 3, 5), true)
+                    check(crop.hasGainmap() && crop.gainmap!!.gainmapContents.width == 1)
+                    val rotated = Photos.rotate(crop, RotationSelection(angle = 90, flipHorizontal = true), Color.WHITE)
+                    crop.recycle()
+                    val nearest = Photos.resize(rotated, 12, 8, 0)
+                    check(nearest.hasGainmap())
+                    nearest.recycle()
+                    val scaled = Photos.resize(rotated, 12, 8, 2)
+                    rotated.recycle()
+                    val next = PhotoFrame(null, Photos.rasterInfo(scaled, listOf(ExifInterface.TAG_ARTIST to "HDR edit")), scaled)
+                    history.append(next)
+                    check(first.pixels == null && first.files.size == 2)
+                    val restored = history.bitmap(first)
+                    check(restored.hasGainmap() && restored.gainmap!!.ratioMax.contentEquals(ratioMax))
+                    val output = Photos.export(app.cacheDir, history.bitmap(next), next.info, ExportOptions())
+                    val saved = Photos.info(output)
+                    check(saved.color.hdr == true && saved.width == 12 && saved.height == 8)
+                    check(saved.metadata.contains(ExifInterface.TAG_ARTIST to "HDR edit"))
+                    val clean = Photos.export(app.cacheDir, output, saved, ExportOptions(metadata = true))
+                    check(Photos.info(clean).color.hdr == true && ExifInterface(clean).getAttribute(ExifInterface.TAG_ARTIST) == null)
+                } finally { history.close() }
                 val edited = Photos.decode(file, info)
                 try {
                     check(!edited.hasGainmap() && edited.colorSpace?.isWideGamut == true)
@@ -409,8 +440,10 @@ internal class PhotoRegression(
             instrumentation.runOnMainSync { model.undo(-1) }
             idle(model)
             check(model.state.value.photo.frame === cropped)
+            check(model.state.value.photo.pending == listOf(PhotoTool.ROTATE))
+            check(model.state.value.photo.editor!!.rotationHistory.canUndo)
             instrumentation.runOnMainSync { model.undo(1) }
-            idle(model)
+            answer(model, Confirmation.REDO, true)
             check(model.state.value.photo.frame === rotated)
         } finally {
             source.recycle()
@@ -484,7 +517,7 @@ internal class PhotoRegression(
                 check(history.frames == listOf(first, branch) && discarded.none { it.exists() })
 
                 first.snapshot!!.writeBytes(byteArrayOf(0))
-                check(runCatching { history.bitmap(first) }.isFailure)
+                check(runCatching { history.bitmap(first) }.exceptionOrNull() is IOException)
                 check(history.current === branch && history.position == 1)
                 check(history.bitmap().getPixel(0, 0) == Color.BLACK)
                 val cancelled = Job().apply { cancel() }
@@ -748,7 +781,7 @@ internal class PhotoRegression(
             model = LabViewModel(app)
             store.put("photo-test", model)
         }
-        val input = File(app.filesDir, "fixture.jpg")
+        val input = File(app.filesDir, "fixture.bin")
         val generated = fixture()
         try {
             input.outputStream().use {
@@ -785,6 +818,8 @@ internal class PhotoRegression(
             }
             val originalBytes = input.readBytes()
             val info = Photos.info(input)
+            check(PhotoMetadata.normalize(app.cacheDir, mapOf("GPSLatitude" to "31/1,12/1,0/1"))["GPSLatitude"] != null)
+            check(runCatching { PhotoMetadata.normalize(app.cacheDir, mapOf("GPSLatitude" to "91/1,0/1,0/1")) }.isFailure)
             check(info.color == PhotoColor("sRGB", "YCbCr", false, false))
             for ((x, y) in listOf(0 to 0, 16 to 8, 63 to 47))
                 check(Photos.pixel(input, info, x, y) == reference.getPixel(x, y)) {
@@ -802,6 +837,36 @@ internal class PhotoRegression(
             }
             idle(model)
             val draft = checkNotNull(model.state.value.photo.editor)
+            instrumentation.runOnMainSync {
+                draft.cropHistory.change(FrameSelection(Rect(1, 2, 32, 24)))
+                model.editPhotoMetadata(mapOf(ExifInterface.TAG_SOFTWARE to "Edited camera")) {}
+            }
+            idle(model)
+            instrumentation.runOnMainSync { model.editPhotoMetadata(mapOf(ExifInterface.TAG_DATETIME_ORIGINAL to null)) {} }
+            idle(model)
+            for (direction in listOf(-1, 1)) {
+                instrumentation.runOnMainSync { model.undo(direction) }
+                idle(model)
+                check(model.state.value.photo.editor === draft && draft.cropHistory.canUndo)
+                check(model.state.value.photo.pending == listOf(PhotoTool.CROP))
+            }
+            val metadataFrame = checkNotNull(model.state.value.photo.frame)
+            for (format in listOf(ImageFormat.ORIGINAL, ImageFormat.PNG, ImageFormat.WEBP_LOSSLESS)) {
+                val exported = Photos.export(app.cacheDir, checkNotNull(metadataFrame.source), metadataFrame.info, ExportOptions(format))
+                check(exported.extension == if (format == ImageFormat.ORIGINAL) "jpg" else format.extension)
+                val exif = ExifInterface(exported)
+                check(exif.getAttribute(ExifInterface.TAG_SOFTWARE) == "Edited camera")
+                check(exif.getAttribute(ExifInterface.TAG_DATETIME_ORIGINAL) == null)
+                exported.delete()
+            }
+            check(input.readBytes().contentEquals(originalBytes))
+            val croppedMetadata = File(app.cacheDir, "metadata-crop.jpg")
+            JpegNative.crop(checkNotNull(metadataFrame.source).path, croppedMetadata.path, 0, 0, 16, 16)
+            PhotoMetadata.write(croppedMetadata, metadataFrame.info.metadata, 16, 16, metadataFrame.info.metadataEdits)
+            check(ExifInterface(croppedMetadata).getAttribute(ExifInterface.TAG_DATETIME_ORIGINAL) == null)
+            check(ExifInterface(croppedMetadata).getAttribute(ExifInterface.TAG_SOFTWARE) == "Edited camera")
+            repeat(2) { instrumentation.runOnMainSync { model.undo(-1) }; idle(model) }
+            instrumentation.runOnMainSync { draft.cropHistory.undo() }
             val mask = CutoutMask.Inferred(FloatArray(ImageMath.SIZE * ImageMath.SIZE) { 0.5f }, BackgroundModel.RMBG20)
             val maskPreview = Photos.maskPreview(mask, reference.width, reference.height)
             val cutout = CutoutDraft(mask, model.state.value.photo.preview!!, maskPreview)
@@ -1047,6 +1112,13 @@ internal class PhotoRegression(
             idle(model)
             check(model.state.value.photo.frame!!.pixels!!.sameAs(reference))
             val beforeClean = checkNotNull(model.state.value.photo.frame)
+            instrumentation.runOnMainSync {
+                val editor = checkNotNull(model.state.value.photo.editor)
+                editor.cleanup = editor.cleanup.copy(static = false, flatten = false)
+                model.clean(false, false, false, true)
+            }
+            idle(model)
+            check(model.state.value.photo.frame === beforeClean && model.state.value.photo.pending.isEmpty())
             instrumentation.runOnMainSync { model.clean(false, false, true, true) }
             idle(model)
             val cleaned = checkNotNull(model.state.value.photo.frame)

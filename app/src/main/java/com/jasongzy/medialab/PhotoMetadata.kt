@@ -1,9 +1,132 @@
 package com.jasongzy.medialab
 
 import androidx.exifinterface.media.ExifInterface
+import android.graphics.Bitmap
 import java.io.File
+import java.io.RandomAccessFile
+import java.time.LocalDateTime
+import java.time.format.DateTimeFormatter
+import java.time.format.ResolverStyle
+import kotlin.math.abs
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 
 internal object PhotoMetadata {
+    fun group(key: String, metadata: List<Pair<String, String>>): List<Pair<String, String>> {
+        val groups = listOf(
+            listOf("GPSLatitude", "GPSLatitudeRef", "GPSLongitude", "GPSLongitudeRef"),
+            listOf("GPSAltitude", "GPSAltitudeRef"),
+            listOf("GPSDateStamp", "GPSTimeStamp"),
+            listOf("DateTime", "OffsetTime", "SubSecTime"),
+            listOf("DateTimeOriginal", "OffsetTimeOriginal", "SubSecTimeOriginal"),
+            listOf("DateTimeDigitized", "OffsetTimeDigitized", "SubSecTimeDigitized"),
+        )
+        val keys = groups.firstOrNull { key in it } ?: listOf(key)
+        return keys.mapNotNull { tag -> metadata.firstOrNull { it.first == tag } }
+    }
+
+    suspend fun normalize(directory: File, changes: Map<String, String?>): Map<String, String?> {
+        if (retained(changes.map { it.key to it.value.orEmpty() }).size != changes.size ||
+            changes.any { (key, value) -> !validValue(key, value) })
+            throw UnsupportedMediaException(R.string.invalid_metadata)
+        val file = MediaFiles.temporary(directory, "png")
+        val bitmap = Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888)
+        try {
+            file.outputStream().use { check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)) }
+            val exif = ExifInterface(file)
+            changes.forEach { (key, value) -> exif.setAttribute(key, value) }
+            return changes.mapValues { (key, value) ->
+                val normalized = exif.getAttribute(key)
+                if (!sameValue(value, normalized)) throw UnsupportedMediaException(R.string.invalid_metadata)
+                normalized
+            }
+        } finally {
+            bitmap.recycle()
+            file.delete()
+        }
+    }
+
+    private fun validValue(key: String, value: String?): Boolean {
+        if (value == null) return true
+        if (value.length > 32768 || '\u0000' in value) return false
+        return try {
+            when {
+                key.startsWith("DateTime") -> LocalDateTime.parse(value,
+                    DateTimeFormatter.ofPattern("uuuu:MM:dd HH:mm:ss").withResolverStyle(ResolverStyle.STRICT))
+                key.startsWith("OffsetTime") -> java.time.ZoneOffset.of(value)
+                key.startsWith("SubSecTime") -> require(value.all(Char::isDigit))
+                key == "GPSLatitudeRef" -> require(value in listOf("N", "S"))
+                key == "GPSLongitudeRef" -> require(value in listOf("E", "W"))
+                key == "GPSLatitude" || key == "GPSLongitude" -> {
+                    val parts = value.split(',').map { requireNotNull(number(it)) }
+                    val limit = if (key == "GPSLatitude") 90.0 else 180.0
+                    require(parts.size == 3 && parts[0] in 0.0..limit &&
+                        parts[1] >= 0 && parts[1] < 60 && parts[2] >= 0 && parts[2] < 60 &&
+                        parts[0] + parts[1] / 60 + parts[2] / 3600 <= limit)
+                }
+                key == "GPSAltitudeRef" -> require(value in listOf("0", "1"))
+                key == "GPSAltitude" -> require(requireNotNull(number(value)) >= 0)
+            }
+            true
+        } catch (_: IllegalArgumentException) { false }
+        catch (_: java.time.DateTimeException) { false }
+    }
+
+    private fun sameValue(expected: String?, actual: String?): Boolean {
+        if (expected == actual) return true
+        if (expected == null || actual == null) return false
+        val a = expected.split(',')
+        val b = actual.split(',')
+        return a.size == b.size && a.indices.all {
+            val x = number(a[it])
+            val y = number(b[it])
+            x != null && y != null && abs(x - y) <= maxOf(1e-9, abs(x) * 1e-6)
+        }
+    }
+
+    private fun number(value: String): Double? {
+        val parts = value.trim().split('/')
+        val numerator = parts.first().toDoubleOrNull() ?: return null
+        val result = when (parts.size) {
+            1 -> numerator
+            2 -> numerator / (parts[1].toDoubleOrNull() ?: return null)
+            else -> return null
+        }
+        return result.takeIf { it.isFinite() }
+    }
+
+    suspend fun update(source: File, target: File, changes: Map<String, String?>) {
+        val coroutine = currentCoroutineContext()
+        val container = Containers.inspect(source)
+        val working = if (container == null) target else MediaFiles.temporary(checkNotNull(target.parentFile), "jpg")
+        try {
+            working.outputStream().use { output ->
+                if (container == null) source.inputStream().use { MediaFiles.copy(it, output) }
+                else RandomAccessFile(source, "r").use {
+                    Containers.copyRange(it, output, ByteRange(0, container.jpeg.end)) { coroutine.ensureActive() }
+                }
+            }
+            ExifInterface(working).apply {
+                changes.forEach { (key, value) -> setAttribute(key, value) }
+                saveAttributes()
+                changes.forEach { (key, value) ->
+                    if (!sameValue(value, getAttribute(key))) throw UnsupportedMediaException(R.string.metadata_not_saved)
+                }
+            }
+            if (container != null) {
+                val exif = Containers.jpeg(working).parts.first {
+                    it.marker == 0xe1 && it.payload.take(6) == "Exif\u0000\u0000".toByteArray().toList()
+                }.payload
+                Containers.replaceExif(source, target, exif) { coroutine.ensureActive() }
+            }
+            val result = ExifInterface(target)
+            changes.forEach { (key, value) ->
+                if (!sameValue(value, result.getAttribute(key))) throw UnsupportedMediaException(R.string.metadata_not_saved)
+            }
+        } finally {
+            if (working != target) working.delete()
+        }
+    }
     fun read(exif: ExifInterface): List<Pair<String, String>> {
         return ExifInterface::class.java.fields
             .filter { it.name.startsWith("TAG_") && it.type == String::class.java }
@@ -67,9 +190,24 @@ internal object PhotoMetadata {
     fun retained(metadata: List<Pair<String, String>>): List<Pair<String, String>> =
         metadata.filter { (tag, _) -> tag in captureTags || tag.startsWith("GPS") }
 
-    fun write(file: File, metadata: List<Pair<String, String>>, width: Int, height: Int) {
-        val values = retained(metadata)
+    suspend fun write(file: File, metadata: List<Pair<String, String>>, width: Int, height: Int,
+        changes: Map<String, String?> = emptyMap()) {
+        val values = retained(metadata).toMap() + changes
         if (values.isEmpty()) return
+        if (Containers.inspect(file)?.gainmap != null) {
+            val target = MediaFiles.temporary(checkNotNull(file.parentFile), "jpg")
+            try {
+                update(file, target, values + mapOf(
+                    ExifInterface.TAG_ORIENTATION to ExifInterface.ORIENTATION_NORMAL.toString(),
+                    ExifInterface.TAG_IMAGE_WIDTH to width.toString(),
+                    ExifInterface.TAG_IMAGE_LENGTH to height.toString(),
+                    ExifInterface.TAG_PIXEL_X_DIMENSION to width.toString(),
+                    ExifInterface.TAG_PIXEL_Y_DIMENSION to height.toString(),
+                ))
+                java.nio.file.Files.move(target.toPath(), file.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+            } finally { target.delete() }
+            return
+        }
         ExifInterface(file).apply {
             values.forEach { (tag, value) -> setAttribute(tag, value) }
             setAttribute(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL.toString())

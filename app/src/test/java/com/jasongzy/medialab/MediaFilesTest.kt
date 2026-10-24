@@ -102,8 +102,6 @@ class MediaFilesTest {
             val history = listOf(file(first.work, "original.jpg"), file(first.work, "edited.png"))
             val info = PhotoInfo(1, 1, 1, 1, 1, "image/png", 5, PhotoColor(), null, emptyList())
             val frames = history.map { PhotoFrame(it, info) }
-            val snapshot = file(first.work, "history.pixels")
-            frames.last().snapshot = snapshot
             val audio = file(first.work, "tagged.mp3")
             val export = file(first.work, "export.webp")
             val shared = file(first.exports, "shared.png")

@@ -21,9 +21,10 @@ A native Android media toolbox
 - Cover or erase areas with rectangles, ellipses, freehand selections, and brushes
 - Resize with interpolation, adjust compression quality, and export PNG, JPEG, or WebP
 - Pick pixel colors, copy HEX codes, and extract representative colors from images
-- Clean metadata, extract still images from Motion Photos, and finalize Xiaomi recoverable edits
+- Edit or delete metadata
+- Extract still images from Motion Photos; finalize Xiaomi recoverable edits
 
-Supports static JPEG, PNG, WebP, BMP, and device-supported HEIF/AVIF images. Editing and export preserve supported SDR color spaces, including Display P3 and Adobe RGB. Pixel editing and format conversion reduce HDR to SDR; JPEG and WebP export use 8-bit channels. Editing and format conversion preserve relevant EXIF metadata, such as capture dates and camera details, by default.
+Supports importing JPEG, PNG, WebP, BMP, and other image formats, plus device-supported HEIF/AVIF; supports exporting JPEG, PNG, and WebP. Editing and export preserve supported color spaces (such as Display P3 and Adobe RGB) and relevant EXIF metadata, including capture dates and camera details, by default.
 
 Supports importing phone DNG and LibRaw-supported camera RAW files, developed into full-resolution sRGB images for editing.
 

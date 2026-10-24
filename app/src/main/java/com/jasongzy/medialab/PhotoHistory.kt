@@ -1,10 +1,8 @@
 package com.jasongzy.medialab
 
 import android.graphics.Bitmap
-import android.graphics.ColorSpace
 import android.graphics.Rect
 import java.io.File
-import java.util.UUID
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 
@@ -17,17 +15,21 @@ internal object BitmapPixels {
     external fun writeRow(bitmap: Bitmap, y: Int, row: FloatArray)
 }
 
-internal class PhotoFrame(val source: File?, val info: PhotoInfo, internal var pixels: Bitmap? = null) {
-    internal var snapshot: File? = null
-    internal var config = info.config
-    internal var colorSpace: ColorSpace? = null
-    internal var alpha = true
-    internal var premultiplied = true
-    internal var density = Bitmap.DENSITY_NONE
-    internal var rowBytes = 0
+internal class PhotoFrame(val image: PhotoPixels, val info: PhotoInfo) {
+    constructor(source: File?, info: PhotoInfo, pixels: Bitmap? = null) :
+        this(PhotoPixels(source, info.config, pixels), info)
+
+    val source = image.source
+    val pixels get() = image.pixels
+    val snapshot get() = image.snapshot?.file
+    val files get() = image.files
+}
+
+internal class PhotoPixels(val source: File?, val config: Bitmap.Config, internal var pixels: Bitmap?) {
+    internal var snapshot: PixelSnapshot? = null
 
     val files: List<File>
-        get() = listOfNotNull(source, snapshot)
+        get() = listOfNotNull(source) + snapshot?.files.orEmpty()
 
     internal fun release() {
         pixels?.recycle()
@@ -53,14 +55,14 @@ internal class PhotoHistory(
     val current: PhotoFrame
         get() = frames[position]
     val residentBytes: Long
-        get() = frames.distinct().sumOf { it.pixels?.allocationByteCount?.toLong() ?: 0 }
+        get() = frames.map { it.image }.distinct().sumOf { it.pixels?.let(::bitmapBytes) ?: 0 }
 
     suspend fun reserve(bytes: Long, keep: PhotoFrame? = current) {
         require(bytes >= 0)
         val retained = retainedBytes()
-        for (frame in frames.distinct()) {
+        for (frame in frames.distinctBy { it.image }) {
             if (residentBytes + retained + bytes <= memoryBudget) break
-            if (frame !== keep) detach(frame)?.recycle()
+            if (frame.image !== keep?.image) detach(frame)?.recycle()
         }
         if (residentBytes + retained + bytes >= Runtime.getRuntime().maxMemory() * 0.7)
             throw OutOfMemoryError("Image operation exceeds the memory budget")
@@ -69,35 +71,16 @@ internal class PhotoHistory(
     suspend fun bitmap(frame: PhotoFrame = current): Bitmap {
         frame.pixels?.let { return it }
         val bytes = frame.info.width.toLong() * frame.info.height *
-            if (frame.config == Bitmap.Config.RGBA_F16) 8 else 4
+            (if (frame.image.config == Bitmap.Config.RGBA_F16) 8 else 4) * if (frame.info.gainmap) 2 else 1
         reserve(bytes, frame)
         val bitmap =
-            if (frame.source != null) Photos.decode(frame.source, frame.info)
-            else {
-                val file = checkNotNull(frame.snapshot)
-                Bitmap.createBitmap(
-                    frame.info.width,
-                    frame.info.height,
-                    frame.config,
-                    frame.alpha,
-                    checkNotNull(frame.colorSpace),
-                ).also {
-                    try {
-                        check(it.rowBytes == frame.rowBytes) { "Unexpected snapshot row size" }
-                        it.density = frame.density
-                        it.setPremultiplied(frame.premultiplied)
-                        BitmapPixels.readSnapshot(it, file.path)
-                    } catch (error: Throwable) {
-                        it.recycle()
-                        throw error
-                    }
-                }
-            }
-        frame.pixels = bitmap
+            if (frame.source != null) Photos.decode(frame.source, frame.info, keepHdr = true)
+            else checkNotNull(frame.image.snapshot).read()
+        frame.image.pixels = bitmap
         return bitmap
     }
 
-    suspend fun copy(crop: Rect? = null): Bitmap {
+    suspend fun copy(crop: Rect? = null, keepHdr: Boolean = false): Bitmap {
         val frame = current
         if (crop != null) require(
             !crop.isEmpty && crop.left >= 0 && crop.top >= 0 &&
@@ -105,26 +88,27 @@ internal class PhotoHistory(
         )
         val width = crop?.width() ?: frame.info.width
         val height = crop?.height() ?: frame.info.height
-        if (frame.pixels == null && frame.source != null) {
-            reserve(width.toLong() * height * if (frame.config == Bitmap.Config.RGBA_F16) 8 else 4)
-            return Photos.decode(frame.source, frame.info, crop)
+        if (frame.image.pixels == null && frame.source != null && !(keepHdr && frame.info.canKeepHdr)) {
+            reserve(width.toLong() * height * if (frame.image.config == Bitmap.Config.RGBA_F16) 8 else 4)
+            return Photos.decode(frame.source, frame.info, crop, keepHdr)
         }
         val source = bitmap()
         if (width == source.width && height == source.height && source.isMutable &&
-            source.allocationByteCount.toLong() * 2 + retainedBytes() > memoryBudget
+            bitmapBytes(source) * 2 + retainedBytes() > memoryBudget
         ) {
             reserve(0)
-            return checkNotNull(detach(frame))
+            return checkNotNull(detach(frame)).also { if (!keepHdr) Photos.clearGainmap(it) }
         }
-        reserve(source.allocationByteCount.toLong() * width * height / source.width / source.height)
+        reserve(bitmapBytes(source) * width * height / source.width / source.height)
         val result =
             if (crop == null) source
-            else Bitmap.createBitmap(source, crop.left, crop.top, width, height)
-        return if (result === source) checkNotNull(source.copy(source.config!!, true)) else result
+            else Photos.cropBitmap(source, crop, keepHdr)
+        return (if (result === source) checkNotNull(source.copy(source.config!!, true)) else result)
+            .also { if (!keepHdr) Photos.clearGainmap(it) }
     }
 
     suspend fun append(frame: PhotoFrame, draft: PhotoDraft? = null, action: Int? = draft?.tool?.label) {
-        if (frame !in frames) reserve(frame.pixels?.allocationByteCount?.toLong() ?: 0, keep = null)
+        if (frames.none { it.image === frame.image }) reserve(frame.pixels?.let(::bitmapBytes) ?: 0, keep = null)
         currentCoroutineContext().ensureActive()
         val discarded = frames.drop(position + 1)
         frames = frames.take(position + 1) + frame
@@ -137,7 +121,7 @@ internal class PhotoHistory(
             drafts = drafts.toMutableList().also { it[oldest] = null }
         }
         position = frames.lastIndex
-        discarded.distinct().filter { it !in frames }.forEach { it.release() }
+        discarded.map { it.image }.distinct().filter { image -> frames.none { it.image === image } }.forEach { it.release() }
     }
 
     fun move(position: Int) {
@@ -146,7 +130,7 @@ internal class PhotoHistory(
     }
 
     fun close() {
-        frames.distinct().forEach { it.release() }
+        frames.map { it.image }.distinct().forEach { it.release() }
         frames = emptyList()
         drafts = emptyList()
         actions = emptyList()
@@ -154,26 +138,11 @@ internal class PhotoHistory(
 
     private suspend fun detach(frame: PhotoFrame): Bitmap? {
         val bitmap = frame.pixels ?: return null
-        if (frame.source == null && frame.snapshot == null) {
-            directory.mkdirs()
-            val file = File(directory, "${UUID.randomUUID()}.pixels")
-            try {
-                BitmapPixels.writeSnapshot(bitmap, file.path)
-                currentCoroutineContext().ensureActive()
-                frame.config = checkNotNull(bitmap.config)
-                frame.colorSpace = checkNotNull(bitmap.colorSpace)
-                frame.alpha = bitmap.hasAlpha()
-                frame.premultiplied = bitmap.isPremultiplied
-                frame.density = bitmap.density
-                frame.rowBytes = bitmap.rowBytes
-                frame.snapshot = file
-            } catch (error: Throwable) {
-                file.delete()
-                throw error
-            }
+        if (frame.source == null && frame.image.snapshot == null) {
+            frame.image.snapshot = PixelSnapshot.write(directory, bitmap)
         }
         currentCoroutineContext().ensureActive()
-        frame.pixels = null
+        frame.image.pixels = null
         return bitmap
     }
 }

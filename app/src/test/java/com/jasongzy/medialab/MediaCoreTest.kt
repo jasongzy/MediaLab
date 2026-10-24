@@ -46,6 +46,16 @@ class MediaCoreTest {
         assertNotNull(before.video)
         assertNotNull(before.edit)
         assertNotNull(before.gainmap)
+        val tagged = folder.newFile("tagged.jpg")
+        Containers.replaceExif(source, tagged, "Exif\u0000\u0000updated-tag".toByteArray())
+        val taggedInfo = Containers.inspect(tagged)!!
+        assertArrayEquals(scan(source, before.jpeg), scan(tagged, taggedInfo.jpeg))
+        assertArrayEquals(range(source, before.gainmap!!), range(tagged, taggedInfo.gainmap!!))
+        assertArrayEquals(range(source, before.video!!), range(tagged, taggedInfo.video!!))
+        assertArrayEquals(range(source, before.edit!!), range(tagged, taggedInfo.edit!!))
+        assertArrayEquals(before.jpeg.parts.first { it.marker == 0xe1 }.payload,
+            taggedInfo.jpeg.parts.first { it.marker == 0xe1 &&
+                it.payload.toString(Charsets.UTF_8).startsWith("http://ns.adobe.com/xap/1.0/") }.payload)
         val target = folder.newFile("static.jpg")
         Containers.clean(source, target, static = true, flatten = true, metadata = true)
         val after = Containers.inspect(target)!!
@@ -59,7 +69,7 @@ class MediaCoreTest {
         assertEquals(after.gainmap!!.end, target.length())
         assertArrayEquals(scan(source, before.jpeg), scan(target, after.jpeg))
         assertArrayEquals(
-            scan(source, Containers.jpeg(source, before.gainmap!!.start)),
+            scan(source, Containers.jpeg(source, before.gainmap.start)),
             scan(target, Containers.jpeg(target, after.gainmap.start)),
         )
         assertFalse(target.readBytes().toString(Charsets.ISO_8859_1).contains("private-location"))
@@ -73,11 +83,11 @@ class MediaCoreTest {
         Containers.clean(source, motion, static = false, flatten = true, metadata = false)
         val motionInfo = Containers.inspect(motion)!!
         assertNull(motionInfo.edit)
-        assertArrayEquals(range(source, before.video!!), range(motion, motionInfo.video!!))
+        assertArrayEquals(range(source, before.video), range(motion, motionInfo.video!!))
         val unchanged = folder.newFile("retained.jpg")
         Containers.clean(source, unchanged, static = false, flatten = false, metadata = false)
         assertArrayEquals(
-            range(source, before.edit!!),
+            range(source, before.edit),
             range(unchanged, Containers.inspect(unchanged)!!.edit!!),
         )
     }

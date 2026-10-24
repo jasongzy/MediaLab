@@ -65,6 +65,8 @@ internal data class RotationSelection(
 
     val changed: Boolean
         get() = angle != 0 || flipHorizontal || flipVertical
+    val keepsHdr: Boolean
+        get() = angle % 90 == 0 && (!lockCanvas || angle % 180 == 0)
     private val cosine: Double
         get() = when (angle) {
             0 -> 1.0

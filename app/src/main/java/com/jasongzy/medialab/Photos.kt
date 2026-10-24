@@ -36,11 +36,11 @@ internal data class PhotoColor(
     val hdr: Boolean? = null,
     val convertsToSrgb: Boolean = false,
 ) {
-    fun losses(forceSrgb: Boolean = false): List<Int> =
+    fun losses(forceSrgb: Boolean = false, keepHdr: Boolean = false): List<Int> =
         listOfNotNull(
             (if (wide == true) R.string.wide_gamut else R.string.source_color_space)
                 .takeIf { (convertsToSrgb || forceSrgb) && space != null && space != "sRGB" },
-            R.string.hdr.takeIf { hdr == true },
+            R.string.hdr.takeIf { hdr == true && !keepHdr },
         )
 }
 
@@ -57,7 +57,11 @@ internal data class PhotoInfo(
     val metadata: List<Pair<String, String>>,
     val colorSpace: ColorSpace? = null,
     val config: Bitmap.Config = Bitmap.Config.ARGB_8888,
-)
+    val metadataEdits: Map<String, String?> = emptyMap(),
+    val gainmap: Boolean = false,
+) {
+    val canKeepHdr get() = Build.VERSION.SDK_INT >= 34 && gainmap && !color.convertsToSrgb
+}
 
 internal enum class CoverShape(val label: Int) {
     RECTANGLE(R.string.rectangle),
@@ -136,6 +140,11 @@ internal data class ExportOptions(
     val keepColor: Boolean = true,
     val background: Int = -1,
 ) {
+    fun encodedFormat(info: PhotoInfo): ImageFormat = if (format != ImageFormat.ORIGINAL) format
+        else if (keepColor && info.canKeepHdr) ImageFormat.JPEG else ImageFormat.PNG
+
+    fun keepsHdr(info: PhotoInfo): Boolean = keepColor && info.canKeepHdr && encodedFormat(info) == ImageFormat.JPEG
+
     fun preservesSource(info: PhotoInfo): Boolean =
         format == ImageFormat.ORIGINAL && keepColor &&
             (!metadata || (info.mime in listOf("image/jpeg", "image/png", "image/webp") && info.orientation == 1))
@@ -179,6 +188,7 @@ internal object Photos {
             if (options.outConfig == Bitmap.Config.RGBA_F16 || preview?.config == Bitmap.Config.RGBA_F16 ||
                 (Build.VERSION.SDK_INT >= 33 && options.outConfig == Bitmap.Config.RGBA_1010102))
                 Bitmap.Config.RGBA_F16 else Bitmap.Config.ARGB_8888,
+            gainmap = container?.gainmap != null || (Build.VERSION.SDK_INT >= 34 && preview?.hasGainmap() == true),
         )
     }
 
@@ -193,7 +203,7 @@ internal object Photos {
             )
         }
 
-    fun preview(bitmap: Bitmap): Bitmap {
+    fun preview(bitmap: Bitmap, keepHdr: Boolean = true): Bitmap {
         val scale = minOf(1.0, 1800.0 / maxOf(bitmap.width, bitmap.height))
         val preview = Bitmap.createScaledBitmap(
             bitmap,
@@ -201,7 +211,8 @@ internal object Photos {
             maxOf(1, (bitmap.height * scale).toInt()),
             true,
         )
-        return if (preview === bitmap) checkNotNull(bitmap.copy(bitmap.config!!, false)) else preview
+        return (if (preview === bitmap) checkNotNull(bitmap.copy(bitmap.config!!, false)) else preview)
+            .also { if (!keepHdr) clearGainmap(it) }
     }
 
     fun rasterInfo(bitmap: Bitmap, metadata: List<Pair<String, String>> = emptyList()) = PhotoInfo(
@@ -210,13 +221,14 @@ internal object Photos {
         bitmap.width,
         bitmap.height,
         1,
-        "image/png",
+        if (Build.VERSION.SDK_INT >= 34 && bitmap.hasGainmap()) "image/jpeg" else "image/png",
         null,
         colorInfo(bitmap.colorSpace, bitmap.colorSpace?.model?.name, Build.VERSION.SDK_INT >= 34 && bitmap.hasGainmap()),
         null,
         PhotoMetadata.retained(metadata),
         bitmap.colorSpace,
         bitmap.config!!,
+        gainmap = Build.VERSION.SDK_INT >= 34 && bitmap.hasGainmap(),
     )
 
     private fun colorInfo(space: ColorSpace?, model: String?, gainmap: Boolean): PhotoColor {
@@ -240,11 +252,15 @@ internal object Photos {
             throw OutOfMemoryError("Image operation exceeds the memory budget: $width × $height")
     }
 
-    fun decode(file: File, info: PhotoInfo, crop: Rect? = null): Bitmap {
+    fun clearGainmap(bitmap: Bitmap) {
+        if (Build.VERSION.SDK_INT >= 34) bitmap.gainmap = null
+    }
+
+    fun decode(file: File, info: PhotoInfo, crop: Rect? = null, keepHdr: Boolean = false): Bitmap {
         val space = if (info.color.convertsToSrgb) ColorSpace.get(ColorSpace.Named.SRGB)
             else info.colorSpace ?: ColorSpace.get(ColorSpace.Named.SRGB)
         fun finish(bitmap: Bitmap): Bitmap {
-            if (Build.VERSION.SDK_INT >= 34) bitmap.gainmap = null
+            if (!keepHdr || !info.canKeepHdr) clearGainmap(bitmap)
             if (info.color.convertsToSrgb && bitmap.config != Bitmap.Config.ARGB_8888)
                 return try { convert(bitmap, ColorSpace.get(ColorSpace.Named.SRGB)) } finally { bitmap.recycle() }
             if (bitmap.config == Bitmap.Config.ARGB_8888 || bitmap.config == Bitmap.Config.RGBA_F16) return bitmap
@@ -266,6 +282,10 @@ internal object Photos {
                     crop.bottom <= info.height &&
                     !crop.isEmpty
             )
+            if (keepHdr && info.canKeepHdr) {
+                val bitmap = decode(file, info, keepHdr = true)
+                return try { cropBitmap(bitmap, crop, true) } finally { bitmap.recycle() }
+            }
             val corners =
                 listOf(
                         crop.left to crop.top,
@@ -317,6 +337,25 @@ internal object Photos {
         }
         budget(info.width, info.height, if (info.config == Bitmap.Config.RGBA_F16) 4 else 2)
         return decodeImage()
+    }
+
+    fun cropBitmap(bitmap: Bitmap, crop: Rect, keepHdr: Boolean): Bitmap {
+        val selected = Bitmap.createBitmap(bitmap, crop.left, crop.top, crop.width(), crop.height())
+        val output = if (selected === bitmap) checkNotNull(bitmap.copy(bitmap.config!!, true)) else selected
+        if (keepHdr && Build.VERSION.SDK_INT >= 34) bitmap.gainmap?.let { gainmap ->
+            val source = gainmap.gainmapContents
+            val sx = source.width.toFloat() / bitmap.width
+            val sy = source.height.toFloat() / bitmap.height
+            val contents = Bitmap.createBitmap(maxOf(1, (crop.width() * sx).roundToInt()),
+                maxOf(1, (crop.height() * sy).roundToInt()), source.config!!)
+            Canvas(contents).apply {
+                scale(contents.width.toFloat() / crop.width() / sx, contents.height.toFloat() / crop.height() / sy)
+                translate(-crop.left * sx, -crop.top * sy)
+                drawBitmap(source, 0f, 0f, Paint(Paint.FILTER_BITMAP_FLAG))
+            }
+            output.gainmap = GainmapParameters(gainmap).create(contents)
+        }
+        return output
     }
 
     private fun rawPoint(x: Int, y: Int, info: PhotoInfo): Pair<Int, Int> =
@@ -666,6 +705,11 @@ internal object Photos {
 
     fun rotate(bitmap: Bitmap, selection: RotationSelection, color: Int): Bitmap {
         val size = selection.size(bitmap.width, bitmap.height)
+        if (selection.keepsHdr) {
+            val matrix = Matrix().apply { setValues(selection.matrixValues(bitmap.width, bitmap.height)) }
+            val output = Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, false)
+            return if (output === bitmap) checkNotNull(bitmap.copy(bitmap.config!!, true)) else output
+        }
         budget(size.width, size.height, if (bitmap.config == Bitmap.Config.RGBA_F16) 2 else 1)
         val alpha = bitmap.hasAlpha() || Color.alpha(color) < 255
         val output = Bitmap.createBitmap(size.width, size.height, bitmap.config!!, alpha, bitmap.colorSpace!!)
@@ -698,7 +742,11 @@ internal object Photos {
     suspend fun resize(bitmap: Bitmap, width: Int, height: Int, method: Int): Bitmap {
         require(method in 0..2)
         budget(width, height, if (bitmap.config == Bitmap.Config.RGBA_F16) 6 else 3)
-        if (method == 0) return Bitmap.createScaledBitmap(bitmap, width, height, false)
+        if (method == 0) {
+            val scaled = Bitmap.createScaledBitmap(bitmap, width, height, false)
+            if (scaled !== bitmap) resizeGainmap(bitmap, scaled, false)
+            return scaled
+        }
         val space = bitmap.colorSpace!!
         val output = Bitmap.createBitmap(width, height, bitmap.config!!, bitmap.hasAlpha(), space)
         try {
@@ -754,10 +802,23 @@ internal object Photos {
                 }
                 BitmapPixels.writeRow(output, y, row)
             }
+            resizeGainmap(bitmap, output, true)
             return output
         } catch (error: Throwable) {
             output.recycle()
             throw error
+        }
+    }
+
+    private fun resizeGainmap(bitmap: Bitmap, output: Bitmap, filter: Boolean) {
+        if (Build.VERSION.SDK_INT >= 34) bitmap.gainmap?.let { gainmap ->
+            val source = gainmap.gainmapContents
+            val contents = Bitmap.createBitmap(
+                maxOf(1, (source.width.toDouble() * output.width / bitmap.width).roundToInt()),
+                maxOf(1, (source.height.toDouble() * output.height / bitmap.height).roundToInt()), source.config!!)
+            Canvas(contents).drawBitmap(source, null, Rect(0, 0, contents.width, contents.height),
+                Paint(if (filter) Paint.FILTER_BITMAP_FLAG else 0))
+            output.gainmap = GainmapParameters(gainmap).create(contents)
         }
     }
 
@@ -779,18 +840,31 @@ internal object Photos {
     ): File {
         val coroutine = currentCoroutineContext()
         val original = options.preservesSource(info)
-        val format = if (options.format == ImageFormat.ORIGINAL) ImageFormat.PNG else options.format
+        val extension = when (info.mime) {
+            "image/jpeg" -> "jpg"
+            "image/png" -> "png"
+            "image/webp" -> "webp"
+            else -> source.extension
+        }
+        if (original && !options.metadata && info.metadataEdits.isNotEmpty()) {
+            if (info.mime !in listOf("image/jpeg", "image/png", "image/webp"))
+                throw UnsupportedMediaException(R.string.photo_metadata_format)
+            val edited = MediaFiles.temporary(directory, extension)
+            try {
+                PhotoMetadata.update(source, edited, info.metadataEdits)
+                if (!options.static && !options.flatten) return edited
+                return export(directory, edited, info.copy(container = Containers.inspect(edited), metadataEdits = emptyMap()), options)
+                    .also { edited.delete() }
+            } catch (error: Throwable) {
+                edited.delete()
+                throw error
+            }
+        }
+        val format = options.encodedFormat(info)
         val target =
             MediaFiles.temporary(
                 directory,
-                if (original)
-                    when (info.mime) {
-                        "image/jpeg" -> "jpg"
-                        "image/png" -> "png"
-                        "image/webp" -> "webp"
-                        else -> source.extension
-                    }
-                else format.extension,
+                if (original) extension else format.extension,
             )
         try {
             if (
@@ -813,9 +887,9 @@ internal object Photos {
             } else if (original && info.mime in listOf("image/png", "image/webp")) {
                 RasterMetadata.clean(source, target, info.mime, { coroutine.ensureActive() })
             } else {
-                val bitmap = decode(source, info)
+                val bitmap = decode(source, info, keepHdr = options.keepsHdr(info))
                 try {
-                    encode(bitmap, target, options, info.metadata)
+                    encode(bitmap, target, options.copy(format = format), info.metadata)
                 } finally {
                     bitmap.recycle()
                 }
@@ -829,10 +903,10 @@ internal object Photos {
     }
 
     suspend fun export(directory: File, bitmap: Bitmap, info: PhotoInfo, options: ExportOptions): File {
-        val format = if (options.format == ImageFormat.ORIGINAL) ImageFormat.PNG else options.format
+        val format = options.encodedFormat(info)
         val target = MediaFiles.temporary(directory, format.extension)
         try {
-            encode(bitmap, target, options, info.metadata)
+            encode(bitmap, target, options.copy(format = format), info.metadata)
             currentCoroutineContext().ensureActive()
             return target
         } catch (error: Throwable) {
@@ -861,7 +935,7 @@ internal object Photos {
         }
     }
 
-    private fun encode(
+    private suspend fun encode(
         bitmap: Bitmap,
         target: File,
         options: ExportOptions,
@@ -869,7 +943,9 @@ internal object Photos {
     ) {
         val background = options.background.takeIf { options.format == ImageFormat.JPEG && bitmap.hasAlpha() }
         val space = if (options.keepColor) bitmap.colorSpace!! else ColorSpace.get(ColorSpace.Named.SRGB)
-        val flat = if (background != null || bitmap.colorSpace != space) convert(bitmap, space, background) else bitmap
+        val flat = if (background != null || bitmap.colorSpace != space ||
+            (!options.keepColor && Build.VERSION.SDK_INT >= 34 && bitmap.hasGainmap()))
+            convert(bitmap, space, background) else bitmap
         try {
             val compression = when (options.format) {
                 ImageFormat.JPEG -> Bitmap.CompressFormat.JPEG

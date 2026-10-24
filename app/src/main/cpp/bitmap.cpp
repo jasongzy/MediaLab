@@ -32,7 +32,9 @@ static void transfer(JNIEnv *env, jobject bitmap, jstring path, bool write) {
                 throw std::runtime_error("Cannot read bitmap snapshot");
         }
     } catch (const std::exception &error) {
-        env->ThrowNew(env->FindClass("java/io/IOException"), error.what());
+        if (pixels) AndroidBitmap_unlockPixels(env, bitmap);
+        if (!env->ExceptionCheck()) env->ThrowNew(env->FindClass("java/io/IOException"), error.what());
+        return;
     }
     if (pixels) AndroidBitmap_unlockPixels(env, bitmap);
 }
@@ -81,7 +83,10 @@ static void row(JNIEnv *env, jobject bitmap, jint y, jfloatArray values, bool wr
             }
         }
     } catch (const std::exception &error) {
-        env->ThrowNew(env->FindClass("java/lang/IllegalArgumentException"), error.what());
+        if (pixels) AndroidBitmap_unlockPixels(env, bitmap);
+        if (channels) env->ReleaseFloatArrayElements(values, channels, JNI_ABORT);
+        if (!env->ExceptionCheck()) env->ThrowNew(env->FindClass("java/lang/IllegalArgumentException"), error.what());
+        return;
     }
     if (pixels) AndroidBitmap_unlockPixels(env, bitmap);
     if (channels) env->ReleaseFloatArrayElements(values, channels, write ? JNI_ABORT : 0);

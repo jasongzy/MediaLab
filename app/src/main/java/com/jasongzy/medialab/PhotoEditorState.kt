@@ -59,7 +59,7 @@ internal class PhotoEditorState(info: PhotoInfo, hasAlpha: Boolean, previous: Ph
     var cutoutBackground: Int by mutableIntStateOf(previous?.cutoutBackground ?: Color.TRANSPARENT)
     var backgroundModel: BackgroundModel by mutableStateOf(previous?.backgroundModel ?: BackgroundModel.RMBG14)
     var cutout by mutableStateOf<CutoutDraft?>(null)
-    var cleanup by mutableStateOf(defaultCleanup)
+    var cleanup by mutableStateOf(ExportOptions(metadata = true, static = true, flatten = true))
     var fill: Boolean by mutableStateOf(previous?.fill ?: true)
     var fillShape: CoverShape by mutableStateOf(previous?.fillShape ?: CoverShape.RECTANGLE)
     var brushWidth: Float by mutableFloatStateOf(previous?.brushWidth ?: 40f)
@@ -154,7 +154,7 @@ internal class PhotoEditorState(info: PhotoInfo, hasAlpha: Boolean, previous: Ph
         return PhotoDraft(applied, cutout?.mask?.takeIf { applied == PhotoTool.BACKGROUND }, restore)
     }
 
-    fun pending(info: PhotoInfo, hasSource: Boolean): List<PhotoTool> = buildList {
+    fun pending(info: PhotoInfo): List<PhotoTool> = buildList {
         val fullBounds = Rect(0, 0, info.width, info.height)
         if (cropHistory.value.bounds != fullBounds) add(PhotoTool.CROP)
         if (canvasHistory.value.bounds != fullBounds) add(PhotoTool.EXPAND)
@@ -162,17 +162,13 @@ internal class PhotoEditorState(info: PhotoInfo, hasAlpha: Boolean, previous: Ph
         if (cutout != null) add(PhotoTool.BACKGROUND)
         if (coverHistory.value.isNotEmpty()) add(PhotoTool.COVER)
         if (resize.width != info.width || resize.height != info.height) add(PhotoTool.RESIZE)
-        if (hasPendingCleanup(info, cleanup, hasSource)) add(PhotoTool.CLEAN)
     }
 }
 
-private val defaultCleanup = ExportOptions(metadata = true, static = true, flatten = true)
-
-internal fun hasPendingCleanup(info: PhotoInfo, options: ExportOptions, hasSource: Boolean): Boolean =
-    options != defaultCleanup &&
-        if (hasSource) {
-            options.metadata || !options.keepColor ||
-                (options.static && info.container?.video != null) ||
-                (options.flatten && info.container?.edit != null)
-        } else (options.metadata && info.metadata.isNotEmpty()) ||
-            (!options.keepColor && info.color.space != null && info.color.space != "sRGB")
+internal fun canClean(info: PhotoInfo, options: ExportOptions, hasSource: Boolean): Boolean =
+    if (hasSource) {
+        options.metadata || !options.keepColor ||
+            (options.static && info.container?.video != null) ||
+            (options.flatten && info.container?.edit != null)
+    } else (options.metadata && info.metadata.isNotEmpty()) ||
+        (!options.keepColor && (info.gainmap || (info.color.space != null && info.color.space != "sRGB")))

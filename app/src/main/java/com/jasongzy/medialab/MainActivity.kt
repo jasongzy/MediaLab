@@ -219,7 +219,7 @@ private fun LabApp(model: LabViewModel, state: LabState, exit: () -> Unit) {
             },
         )
     }
-    if (state.busy && state.confirmation == null && (!settings || !clearingCache))
+    if (state.busy && state.showProgress && state.confirmation == null && (!settings || !clearingCache))
         Dialog(onDismissRequest = {}) {
             Surface(shape = MaterialTheme.shapes.extraLarge, tonalElevation = 6.dp) {
                 Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {

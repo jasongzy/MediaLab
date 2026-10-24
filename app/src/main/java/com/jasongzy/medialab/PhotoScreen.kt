@@ -20,7 +20,6 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -499,62 +498,12 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
                                     )
                                 },
                                 Modifier.align(Alignment.End),
+                                enabled = canClean(info, cleanup, photo.frame?.source != null),
                             ) {
                                 Text(stringResource(R.string.apply))
                             }
                         }
-                        PhotoTool.INFO ->
-                            SelectionContainer {
-                                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                                    Text(
-                                        listOfNotNull(
-                                                info.mime,
-                                                info.bytes?.let {
-                                                    Formatter.formatFileSize(
-                                                        LocalContext.current,
-                                                        it,
-                                                    )
-                                                },
-                                            )
-                                            .joinToString(" · ")
-                                    )
-                                    if (info.container?.video != null)
-                                        Text(stringResource(R.string.motion_photo))
-                                    if (info.container?.edit != null)
-                                        Text(stringResource(R.string.editable_photo))
-                                    MediaDetail(
-                                        stringResource(R.string.color_space),
-                                        info.color.space ?: stringResource(R.string.unknown),
-                                    )
-                                    MediaDetail(
-                                        stringResource(R.string.wide_gamut),
-                                        stringResource(when (info.color.wide) {
-                                            true -> R.string.yes
-                                            false -> R.string.no
-                                            null -> R.string.unknown
-                                        }),
-                                    )
-                                    info.color.model?.let { model ->
-                                        MediaDetail(
-                                            stringResource(R.string.color_model),
-                                            if (model == "Gray") stringResource(R.string.grayscale) else model,
-                                        )
-                                    }
-                                    MediaDetail(
-                                        stringResource(R.string.dynamic_range),
-                                        stringResource(when (info.color.hdr) {
-                                            true -> R.string.hdr
-                                            false -> R.string.sdr
-                                            null -> R.string.unknown
-                                        }),
-                                    )
-                                    info.metadata.filterNot { (key, _) ->
-                                        (key == "ColorSpace" && info.color.space != null) ||
-                                            (key == "PhotometricInterpretation" && info.color.model != null)
-                                    }
-                                        .forEach { (key, value) -> MediaDetail(key, value.take(8192)) }
-                                }
-                            }
+                        PhotoTool.INFO -> PhotoInformation(info, model)
                         PhotoTool.EXPORT -> {
                             if (pending.isNotEmpty()) Text(
                                 stringResource(
@@ -1448,7 +1397,10 @@ private fun ExportPanel(model: LabViewModel, state: LabState) {
             style = MaterialTheme.typography.bodySmall,
         )
     }
-    val losses = info.color.losses(forceSrgb = !options.keepColor)
+    if (options.format == ImageFormat.ORIGINAL && info.metadataEdits.isNotEmpty() &&
+        state.photo.frame?.source != null && info.mime !in listOf("image/jpeg", "image/png", "image/webp"))
+        Text(stringResource(R.string.photo_metadata_format), style = MaterialTheme.typography.bodySmall)
+    val losses = info.color.losses(forceSrgb = !options.keepColor, keepHdr = options.keepsHdr(info))
     if (
         losses.isNotEmpty() &&
             (state.photo.frame?.source == null || !options.preservesSource(info))

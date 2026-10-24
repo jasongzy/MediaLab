@@ -48,7 +48,7 @@ Java_com_jasongzy_medialab_JpegNative_crop(JNIEnv *env, jobject, jstring input,
         if (!target.write(reinterpret_cast<char *>(result), size) || !target.flush())
             throw std::runtime_error("Cannot write JPEG");
     } catch (const std::exception &error) {
-        env->ThrowNew(env->FindClass("java/io/IOException"), error.what());
+        if (!env->ExceptionCheck()) env->ThrowNew(env->FindClass("java/io/IOException"), error.what());
     }
     tj3Free(result);
     if (handle) tj3Destroy(handle);

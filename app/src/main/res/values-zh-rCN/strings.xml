@@ -244,4 +244,13 @@
     <string name="export_size">导出文件大小：%1$s</string>
     <string name="cleanup_motion_edits">转为静态图会同时删除内嵌视频、恢复记录和原图，保留当前画面；清理元数据也会删除这些内容</string>
     <string name="cleanup_attachments">清理元数据会同时删除图像中的动态视频，以及用于恢复编辑的记录和原图</string>
+    <string name="current_media_info">当前媒体信息</string>
+    <string name="current_media_info_hint">随编辑而更新；点击文件名可查看原文件信息</string>
+    <string name="dimensions">尺寸</string>
+    <string name="media_metadata">元数据</string>
+    <string name="edit_metadata">编辑元数据</string>
+    <string name="edit_metadata_hint">点击条目以修改或删除</string>
+    <string name="invalid_metadata">元数据值无效，请检查格式和取值范围</string>
+    <string name="metadata_not_saved">此格式无法保存该元数据修改，请选择其他导出格式</string>
+    <string name="photo_metadata_format">请选择 JPEG、PNG 或 WebP 以保存元数据修改</string>
 </resources>
