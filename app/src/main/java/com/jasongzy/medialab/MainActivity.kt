@@ -22,6 +22,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.platform.ClipEntry
@@ -87,6 +88,7 @@ class MainActivity : AppCompatActivity() {
 @Composable
 private fun LabApp(model: LabViewModel, state: LabState, exit: () -> Unit) {
     val batch by NcmBatch.state.collectAsStateWithLifecycle()
+    val pages = rememberSaveableStateHolder()
     var settings by rememberSaveable { mutableStateOf(false) }
     val clearingCache = state.busy && state.stage == R.string.clearing_cache
     var confirmExit by rememberSaveable { mutableStateOf(false) }
@@ -128,15 +130,17 @@ private fun LabApp(model: LabViewModel, state: LabState, exit: () -> Unit) {
         label = "settings",
     ) { showSettings ->
         if (showSettings)
-            SettingsScreen(
-                state.mode,
-                model::mode,
-                clearingCache,
-                model::clearCache,
-                state.refreshingMedia,
-                model::refreshMediaIndex,
-            ) {
-                settings = false
+            pages.SaveableStateProvider("settings") {
+                SettingsScreen(
+                    state.mode,
+                    model::mode,
+                    clearingCache,
+                    model::clearCache,
+                    state.refreshingMedia,
+                    model::refreshMediaIndex,
+                ) {
+                    settings = false
+                }
             }
         else
             Scaffold(
@@ -179,20 +183,28 @@ private fun LabApp(model: LabViewModel, state: LabState, exit: () -> Unit) {
                     transitionSpec = { pageTransition(targetState > initialState) },
                     label = "workspace",
                 ) { tab ->
-                    if (tab == 0) PhotoScreen(model, state)
+                    if (tab == 0)
+                        pages.SaveableStateProvider("image") {
+                            key(state.photo.editor) { PhotoScreen(model, state) }
+                        }
                     else
                         AnimatedContent(
                             targetState = state.batchPage,
                             transitionSpec = { pageTransition(targetState) },
                             label = "audio-page",
                         ) { showBatch ->
-                            if (showBatch) NcmScreen(model, batch)
+                            if (showBatch)
+                                pages.SaveableStateProvider("batch") { NcmScreen(model, batch) }
                             else
-                                AudioScreen(
-                                    model,
-                                    state,
-                                    active = !settings && state.tab == 1 && !state.batchPage,
-                                )
+                                pages.SaveableStateProvider("audio") {
+                                    key(state.audio?.editor) {
+                                        AudioScreen(
+                                            model,
+                                            state,
+                                            active = !settings && state.tab == 1 && !state.batchPage,
+                                        )
+                                    }
+                                }
                         }
                 }
             }
