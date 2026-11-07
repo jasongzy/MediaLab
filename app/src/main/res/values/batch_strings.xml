@@ -2,6 +2,8 @@
     <string name="batch_cache_busy">Wait for the batch task to finish before clearing the cache.</string>
     <string name="batch_ambiguous_name">Multiple files have this name. Choose another output folder.</string>
     <string name="batch_same_file">The source and output are the same file. Choose another output folder or use Rename.</string>
+    <string name="batch_uncertain_identity">Could not confirm that the files are separate. The existing file was kept</string>
+    <string name="batch_protected_output">This file is needed by another batch item. Choose another output folder or use Rename</string>
     <string name="batch_verification_failed">The saved file could not be verified. The source has been kept.</string>
     <string name="batch_invalid_name">This file or folder name is not supported.</string>
     <string name="batch_delete_failed">The file could not be deleted. Check the folder permission.</string>
@@ -51,7 +53,7 @@
     <string name="batch_selected">Selected: %1$d / %2$d</string>
     <string name="batch_failures">Failed only</string>
     <string name="batch_summary">Completed: %1$d · Skipped: %2$d · Failed: %3$d</string>
-    <string name="batch_retry">Retry failed</string>
+    <string name="batch_retry">Retry unlocking</string>
     <string name="batch_start">Start</string>
     <string name="batch_open_output">Open output folder</string>
     <string name="batch_open_output_failed">Could not open the output folder.</string>
@@ -62,12 +64,12 @@
     <string name="batch_confirm">Start processing?</string>
     <string name="batch_overwrite_confirm">Existing output files with the same name will be replaced.</string>
     <string name="batch_delete_confirm">After each output is saved and verified, its source file will be permanently deleted.</string>
-    <string name="batch_cleanup_empty">No matching unlocked originals were found.</string>
+    <string name="batch_cleanup_empty">No unlocked audio matched the selected originals.</string>
     <string name="batch_delete_title">Permanently delete originals?</string>
     <string name="batch_delete_permanently">Delete permanently</string>
     <plurals name="batch_cleanup_confirm">
-        <item quantity="one">%1$d original has verified matching audio in the output folder. Permanently delete this original?</item>
-        <item quantity="other">%1$d originals have verified matching audio in the output folder. Permanently delete these originals?</item>
+        <item quantity="one">Media Lab verified matching audio for %1$d original.</item>
+        <item quantity="other">Media Lab verified matching audio for %1$d originals.</item>
     </plurals>
     <string name="batch_rename_failed">The replacement was saved but could not be renamed.</string>
     <string name="batch_invalid_ncm">This NCM file is damaged or unsupported.</string>

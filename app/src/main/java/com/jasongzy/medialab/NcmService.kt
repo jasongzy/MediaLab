@@ -109,7 +109,7 @@ class NcmService : Service() {
                                             R.string.batch_summary,
                                             state.items.count { it.status == BatchStatus.SUCCESS },
                                             state.items.count { it.status == BatchStatus.SKIPPED },
-                                            state.items.count { it.status == BatchStatus.FAILED },
+                                            state.items.count { it.status.failed },
                                         )
                                     )
                                     .setContentIntent(openIntent())

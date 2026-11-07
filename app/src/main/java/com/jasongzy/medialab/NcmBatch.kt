@@ -32,7 +32,10 @@ internal enum class BatchStatus(val label: Int) {
     RUNNING(R.string.batch_running),
     SUCCESS(R.string.batch_success),
     SKIPPED(R.string.batch_skipped),
-    FAILED(R.string.batch_failed),
+    UNLOCK_FAILED(R.string.batch_failed),
+    CLEANUP_FAILED(R.string.batch_failed);
+
+    val failed get() = this == UNLOCK_FAILED || this == CLEANUP_FAILED
 }
 
 internal data class BatchOptions(
@@ -58,7 +61,20 @@ internal data class CleanupCandidate(
     val output: BatchFile,
     val sourceDigest: String,
     val outputDigest: String,
-)
+) {
+    suspend fun deleteSource(context: Context) {
+        check(
+            BatchFiles.digest(context, source.uri) == sourceDigest &&
+                BatchFiles.digest(context, output.uri) == outputDigest
+        ) {
+            context.getString(R.string.batch_source_changed)
+        }
+        if (sourceDigest == outputDigest)
+            BatchFiles.requireDistinct(context, source.uri, output.uri, R.string.batch_same_file, identicalBytes = true)
+        currentCoroutineContext().ensureActive()
+        BatchFiles.delete(context, source.uri)
+    }
+}
 
 internal data class BatchState(
     val items: List<BatchItem> = emptyList(),
@@ -79,7 +95,16 @@ internal data class BatchState(
         get() = items.filter {
             it.selected &&
                 !it.sourceDeleted &&
-                it.status in setOf(BatchStatus.PENDING, BatchStatus.FAILED)
+                (it.status == BatchStatus.PENDING || it.status.failed)
+        }
+
+    val protectedFiles
+        get() = items.mapNotNull { item ->
+            when {
+                item.sourceDeleted -> item.output
+                item.file.ncm || (options.copyAudio && item.selected) -> item.file
+                else -> null
+            }
         }
 }
 
@@ -274,12 +299,13 @@ internal object NcmBatch {
         val snapshot = state.value
         val items =
             if (failuresOnly)
-                snapshot.items.filter { it.status == BatchStatus.FAILED && !it.sourceDeleted }
+                snapshot.pending.filter { it.status == BatchStatus.UNLOCK_FAILED }
             else snapshot.pending
         if (items.isEmpty()) return
         launch(context, R.string.unlocking, sharedInputs(items)) { app ->
             val output = BatchFiles(app, snapshot.outputTree)
-            process(app, items) { item, directory ->
+            val protectedFiles = snapshot.protectedFiles.toMutableList()
+            process(app, items, BatchStatus.UNLOCK_FAILED) { item, directory ->
                 if (!item.file.ncm && !snapshot.options.copyAudio) {
                     update(item.file.key) {
                         it.copy(
@@ -289,36 +315,31 @@ internal object NcmBatch {
                     }
                     return@process
                 }
-                val existing =
-                    if (snapshot.options.conflict == ConflictPolicy.SKIP) {
-                        val names =
-                            if (item.file.ncm)
-                                listOf("mp3", "flac").map {
-                                    Ncm.outputName(item.file.name, it)
-                                }
-                            else listOf(item.file.name)
-                        names.filter { output.find(item.file.directory, it) != null }.toSet()
-                    } else emptySet()
-                if (!item.file.ncm && existing.isNotEmpty()) throw ExistingOutput()
+                val existing = if (snapshot.options.conflict == ConflictPolicy.SKIP)
+                    output.namesIn(item.file.directory) else emptySequence()
+                fun skipExisting(name: String) {
+                    if (existing.any { it.equals(name, ignoreCase = true) }) throw ExistingOutput()
+                }
+                if (!item.file.ncm) skipExisting(item.file.name)
                 val (decoded, sourceDigest) =
                     prepare(app, item.file, directory) { extension ->
-                        if (Ncm.outputName(item.file.name, extension) in existing)
-                            throw ExistingOutput()
+                        skipExisting(Ncm.outputName(item.file.name, extension))
                     }
                 val name =
                     if (item.file.ncm) Ncm.outputName(item.file.name, decoded.extension)
                     else item.file.name
-                val saved =
+                val result =
                     output.write(
                         decoded,
                         item.file.directory,
                         name,
                         snapshot.options.conflict,
                         item.file.uri,
+                        protectedFiles,
                     ) { progress ->
                         mutable.update { it.copy(progress = progress) }
                     }
-                if (saved == null) {
+                if (result == null) {
                     update(item.file.key) {
                         it.copy(
                             status = BatchStatus.SKIPPED,
@@ -326,17 +347,14 @@ internal object NcmBatch {
                         )
                     }
                 } else {
+                    val (saved, outputDigest) = result
                     update(item.file.key) {
                         it.copy(output = saved, outputTree = snapshot.outputTree)
                     }
                     if (snapshot.options.deleteOriginal) {
-                        check(!BatchFiles.sameFile(app, item.file.uri, saved.uri)) {
-                            app.getString(R.string.batch_same_file)
-                        }
-                        check(BatchFiles.digest(app, item.file.uri) == sourceDigest) {
-                            app.getString(R.string.batch_source_changed)
-                        }
-                        BatchFiles.delete(app, item.file.uri)
+                        CleanupCandidate(item.file, saved, sourceDigest, outputDigest).deleteSource(app)
+                        protectedFiles.remove(item.file)
+                        protectedFiles += saved
                     }
                     update(item.file.key) {
                         it.copy(
@@ -356,48 +374,31 @@ internal object NcmBatch {
         launch(context, R.string.batch_checking, sharedInputs(items)) { app ->
             val output = BatchFiles(app, snapshot.outputTree)
             val candidates = mutableListOf<CleanupCandidate>()
-            val failures = process(app, items) { item, directory ->
+            val failures = process(app, items, BatchStatus.CLEANUP_FAILED) { item, directory ->
                 val (decoded, sourceDigest) =
                     prepare(app, item.file, directory, restoreMetadata = false)
-                val expected = Ncm.outputName(item.file.name, decoded.extension)
-                val saved =
-                    item.output?.takeIf { item.outputTree == snapshot.outputTree }
-                        ?: output.find(item.file.directory, expected)
-                if (saved != null && !BatchFiles.sameFile(app, saved.uri, item.file.uri)) {
-                    val copy = File(directory, "existing.${decoded.extension}")
-                    BatchFiles.openForVerification(app, saved.uri).use { input ->
-                        copy.outputStream().use { MediaFiles.copy(input, it) }
+                val candidate = output.matchUnlocked(item, decoded, sourceDigest)
+                if (candidate == null) {
+                    update(item.file.key) {
+                        it.copy(
+                            status = BatchStatus.PENDING,
+                            output = null,
+                            outputTree = null,
+                            detail = app.getString(R.string.batch_unmatched),
+                        )
                     }
-                    val coroutine = currentCoroutineContext()
-                    if (
-                        AudioFingerprint.payload(decoded, decoded.extension) {
-                            coroutine.ensureActive()
-                        } ==
-                            AudioFingerprint.payload(copy, decoded.extension) {
-                                coroutine.ensureActive()
-                            }
-                    ) {
-                        val digest =
-                            copy.inputStream().use {
-                                AudioFingerprint.digest(it) { coroutine.ensureActive() }
-                            }
-                        candidates += CleanupCandidate(item.file, saved, sourceDigest, digest)
-                        update(item.file.key) {
-                            it.copy(
-                                status = BatchStatus.SUCCESS,
-                                output = saved,
-                                outputTree = snapshot.outputTree,
-                                detail = app.getString(R.string.batch_matched),
-                            )
-                        }
-                        return@process
+                } else {
+                    candidates += candidate
+                    val savedTree = if (candidate.output.uri == item.output?.uri) item.outputTree else snapshot.outputTree
+                    update(item.file.key) {
+                        it.copy(
+                            status = if (savedTree == snapshot.outputTree && candidate.output.directory == item.file.directory)
+                                BatchStatus.SUCCESS else item.status,
+                            output = candidate.output,
+                            outputTree = savedTree,
+                            detail = app.getString(R.string.batch_matched),
+                        )
                     }
-                }
-                update(item.file.key) {
-                    it.copy(
-                        status = BatchStatus.PENDING,
-                        detail = app.getString(R.string.batch_unmatched),
-                    )
                 }
             }
             if (candidates.isNotEmpty() || failures == 0)
@@ -414,18 +415,9 @@ internal object NcmBatch {
         val byKey = candidates.associateBy { it.source.key }
         val items = state.value.items.filter { it.file.key in byKey }
         launch(context, R.string.batch_deleting, sharedInputs(items)) { app ->
-            process(app, items) { item, _ ->
+            process(app, items, BatchStatus.CLEANUP_FAILED) { item, _ ->
                 val candidate = byKey.getValue(item.file.key)
-                check(!BatchFiles.sameFile(app, candidate.source.uri, candidate.output.uri)) {
-                    app.getString(R.string.batch_same_file)
-                }
-                check(
-                    BatchFiles.digest(app, candidate.source.uri) == candidate.sourceDigest &&
-                        BatchFiles.digest(app, candidate.output.uri) == candidate.outputDigest
-                ) {
-                    app.getString(R.string.batch_source_changed)
-                }
-                BatchFiles.delete(app, candidate.source.uri)
+                candidate.deleteSource(app)
                 update(item.file.key) {
                     it.copy(
                         status = BatchStatus.SUCCESS,
@@ -434,7 +426,6 @@ internal object NcmBatch {
                     )
                 }
             }
-            dismissCandidates()
         }
     }
 
@@ -504,6 +495,7 @@ internal object NcmBatch {
     private suspend fun process(
         context: Context,
         items: List<BatchItem>,
+        failureStatus: BatchStatus,
         run: suspend (BatchItem, File) -> Unit,
     ): Int {
         val directory = File(context.cacheDir, "ncm")
@@ -517,7 +509,7 @@ internal object NcmBatch {
             try {
                 run(item, directory)
             } catch (cancelled: CancellationException) {
-                update(item.file.key) { it.copy(status = BatchStatus.PENDING) }
+                update(item.file.key) { it.copy(status = item.status, detail = item.detail) }
                 throw cancelled
             } catch (_: ExistingOutput) {
                 update(item.file.key) {
@@ -531,7 +523,7 @@ internal object NcmBatch {
                 val cause = (error as? BatchOutputException)?.cause ?: error
                 update(item.file.key) {
                     it.copy(
-                        status = BatchStatus.FAILED,
+                        status = failureStatus,
                         detail = friendly(context, cause),
                         output = (error as? BatchOutputException)?.output ?: it.output,
                         outputTree =

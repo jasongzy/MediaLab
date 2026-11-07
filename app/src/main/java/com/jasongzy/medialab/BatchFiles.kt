@@ -9,10 +9,15 @@ import android.provider.DocumentsContract
 import android.provider.DocumentsContract.Document
 import android.provider.MediaStore
 import android.provider.OpenableColumns
+import android.system.Os
+import android.system.OsConstants
+import java.io.EOFException
 import java.io.File
 import java.io.FileNotFoundException
 import java.io.IOException
 import java.io.InputStream
+import java.security.DigestInputStream
+import java.security.MessageDigest
 import java.util.UUID
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
@@ -44,13 +49,55 @@ internal class BatchFiles(private val context: Context, val tree: Uri?) {
     private val folders = mutableMapOf<String, Uri>()
     private val entries = mutableMapOf<String, MutableList<BatchFile>>()
 
-    suspend fun find(directory: String, name: String): BatchFile? =
-        contents(directory)
-            .filter { it.name.equals(name, true) }
-            .let {
-                check(it.size <= 1) { context.getString(R.string.batch_ambiguous_name) }
-                it.firstOrNull()
+    suspend fun namesIn(directory: String): Sequence<String> = contents(directory).asSequence().map { it.name }
+
+    private fun List<BatchFile>.uniqueMatch(name: String): BatchFile? {
+        val matches = filter { it.name.equals(name, ignoreCase = true) }
+        check(matches.size <= 1) { context.getString(R.string.batch_ambiguous_name) }
+        return matches.firstOrNull()
+    }
+
+    suspend fun matchUnlocked(item: BatchItem, decoded: File, sourceDigest: String): CleanupCandidate? {
+        val extension = decoded.extension
+        val coroutine = currentCoroutineContext()
+        val check = { coroutine.ensureActive() }
+        val tried = mutableSetOf(item.file.key)
+        val expected by lazy(LazyThreadSafetyMode.NONE) { AudioFingerprint.payload(decoded, extension, check) }
+        suspend fun match(saved: BatchFile?): CleanupCandidate? {
+            if (saved == null || !tried.add(saved.key)) return null
+            val input = try {
+                openInput(context, saved.uri)
+            } catch (_: FileNotFoundException) {
+                return null
             }
+            val copy = File(decoded.parentFile, "existing.$extension")
+            val hash = MessageDigest.getInstance("SHA-256")
+            DigestInputStream(input, hash).use { stream ->
+                copy.outputStream().use { MediaFiles.copy(stream, it) }
+            }
+            val actual = try {
+                AudioFingerprint.payload(copy, extension, check)
+            } catch (_: EOFException) {
+                return null
+            } catch (_: IllegalArgumentException) {
+                return null
+            }
+            if (actual != expected) return null
+            return CleanupCandidate(item.file, saved, sourceDigest, AudioFingerprint.hex(hash.digest()))
+        }
+        val name = Ncm.outputName(item.file.name, extension)
+        val directory = item.file.directory
+        if (item.outputTree == tree && item.output?.directory == directory)
+            match(item.output)?.let { return it }
+        val files = contents(directory)
+        match(files.uniqueMatch(name)?.copy(directory = directory))?.let { return it }
+        val numbered = Regex(Regex.escape(name.substringBeforeLast('.')) +
+            " \\([1-9][0-9]*\\)\\." + Regex.escape(extension), RegexOption.IGNORE_CASE)
+        for (file in files) {
+            if (numbered.matches(file.name)) match(file.copy(directory = directory))?.let { return it }
+        }
+        return match(item.output)
+    }
 
     private suspend fun folder(path: String, create: Boolean = false): Uri? {
         folders[path]?.let {
@@ -107,22 +154,23 @@ internal class BatchFiles(private val context: Context, val tree: Uri?) {
         name: String,
         policy: ConflictPolicy,
         source: Uri,
+        protectedFiles: Collection<BatchFile> = emptyList(),
         progress: (Float) -> Unit,
-    ): BatchFile? {
+    ): Pair<BatchFile, String>? {
         require(validName(name))
-        val existing = find(directory, name)
-        if (existing != null && policy == ConflictPolicy.SKIP) return null
-        check(
-            policy == ConflictPolicy.RENAME ||
-                existing == null ||
-                !sameFile(context, existing.uri, source)
-        ) {
-            context.getString(R.string.batch_same_file)
-        }
         val all = contents(directory)
+        if (policy == ConflictPolicy.SKIP && all.any { it.name.equals(name, ignoreCase = true) }) return null
+        val replace = if (policy == ConflictPolicy.OVERWRITE) all.uniqueMatch(name) else null
+        if (replace != null) {
+            requireDistinct(context, replace.uri, source, R.string.batch_same_file)
+            for (protected in protectedFiles) {
+                if (protected.uri != source &&
+                    (protected.key == replace.key || protected.name.equals(replace.name, ignoreCase = true)))
+                    requireDistinct(context, replace.uri, protected.uri, R.string.batch_protected_output)
+            }
+        }
         val finalName =
             if (policy == ConflictPolicy.RENAME) uniqueName(name, all.map { it.name }) else name
-        val replace = existing?.takeIf { policy == ConflictPolicy.OVERWRITE }
         val stagingName =
             if (replace == null) finalName else "MediaLab-${UUID.randomUUID()}.${file.extension}"
         var uri =
@@ -200,7 +248,7 @@ internal class BatchFiles(private val context: Context, val tree: Uri?) {
                     }
                 }
             }
-            return info(context, uri).copy(directory = directory).also { all += it }
+            return info(context, uri).copy(directory = directory).also { all += it } to expected
         } catch (error: Exception) {
             if (!verified) runCatching { delete(context, uri) }
             else {
@@ -264,7 +312,23 @@ internal class BatchFiles(private val context: Context, val tree: Uri?) {
             else uri.toString()
         }
 
-        fun sameFile(context: Context, first: Uri, second: Uri): Boolean {
+        suspend fun requireDistinct(
+            context: Context,
+            first: Uri,
+            second: Uri,
+            conflict: Int,
+            identicalBytes: Boolean = false,
+        ) {
+            when (sameFile(context, first, second)) {
+                true -> error(context.getString(conflict))
+                null -> check(!identicalBytes && digest(context, first) != digest(context, second)) {
+                    context.getString(R.string.batch_uncertain_identity)
+                }
+                false -> Unit
+            }
+        }
+
+        private fun sameFile(context: Context, first: Uri, second: Uri): Boolean? {
             if (key(first) == key(second)) return true
             fun mediaPath(uri: Uri): Pair<String, String>? {
                 if (uri.authority == "com.android.externalstorage.documents") {
@@ -299,8 +363,20 @@ internal class BatchFiles(private val context: Context, val tree: Uri?) {
                         else null
                     }
             }
-            val firstPath = mediaPath(first) ?: return false
-            return firstPath == mediaPath(second)
+            val firstPath = mediaPath(first)
+            val secondPath = mediaPath(second)
+            if (firstPath != null && secondPath != null) {
+                if (firstPath == secondPath) return true
+                if (firstPath.first != secondPath.first || !firstPath.second.equals(secondPath.second, ignoreCase = true))
+                    return false
+                // Shared volumes can resolve case variants to the same file.
+            }
+            fun stat(uri: Uri) = context.contentResolver.openFileDescriptor(uri, "r")?.use {
+                Os.fstat(it.fileDescriptor).takeIf { stat -> OsConstants.S_ISREG(stat.st_mode) }
+            }
+            val a = stat(first) ?: return null
+            val b = stat(second) ?: return null
+            return if (a.st_dev == b.st_dev) a.st_ino == b.st_ino else null
         }
 
         private fun relativePath(path: String): String =
@@ -423,18 +499,14 @@ internal class BatchFiles(private val context: Context, val tree: Uri?) {
                 throw IOException(context.getString(R.string.batch_file_unavailable), error)
             }
 
-        fun openForVerification(context: Context, uri: Uri): InputStream =
-            try {
+        suspend fun digest(context: Context, uri: Uri): String {
+            val coroutine = currentCoroutineContext()
+            val input = try {
                 openInput(context, uri)
             } catch (error: IOException) {
                 throw IOException(context.getString(R.string.batch_verification_failed), error)
             }
-
-        suspend fun digest(context: Context, uri: Uri): String {
-            val coroutine = currentCoroutineContext()
-            return openForVerification(context, uri).use {
-                AudioFingerprint.digest(it) { coroutine.ensureActive() }
-            }
+            return input.use { AudioFingerprint.digest(it) { coroutine.ensureActive() } }
         }
 
         fun delete(context: Context, uri: Uri) {

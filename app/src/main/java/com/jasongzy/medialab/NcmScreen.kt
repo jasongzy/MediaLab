@@ -217,7 +217,7 @@ internal fun NcmScreen(model: LabViewModel, state: BatchState) {
             val scroll = rememberLazyListState()
             LazyColumn(Modifier.weight(1f).verticalScrollbar(scroll), state = scroll) {
                 items(
-                    state.items.filter { !failures || it.status == BatchStatus.FAILED },
+                    state.items.filter { !failures || it.status.failed },
                     key = { it.file.key },
                 ) { item ->
                     ListItem(
@@ -242,7 +242,7 @@ internal fun NcmScreen(model: LabViewModel, state: BatchState) {
                                 Text(
                                     item.detail ?: stringResource(item.status.label),
                                     color =
-                                        if (item.status == BatchStatus.FAILED)
+                                        if (item.status.failed)
                                             MaterialTheme.colorScheme.error
                                         else MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
@@ -309,26 +309,31 @@ internal fun NcmScreen(model: LabViewModel, state: BatchState) {
             } else {
                 val success = state.items.count { it.status == BatchStatus.SUCCESS }
                 val skipped = state.items.count { it.status == BatchStatus.SKIPPED }
-                val failed = state.items.count { it.status == BatchStatus.FAILED }
+                val failed = state.items.count { it.status.failed }
                 if (success + skipped + failed > 0)
                     Text(
                         stringResource(R.string.batch_summary, success, skipped, failed),
                         style = MaterialTheme.typography.bodySmall,
                     )
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (failed > 0)
-                        OutlinedButton({ start(true) }, Modifier.weight(1f)) {
+                    val pending = state.pending
+                    if (state.items.any { it.status == BatchStatus.UNLOCK_FAILED })
+                        OutlinedButton(
+                            { start(true) },
+                            Modifier.weight(1f),
+                            enabled = pending.any { it.status == BatchStatus.UNLOCK_FAILED },
+                        ) {
                             Text(stringResource(R.string.batch_retry))
                         }
                     Button(
                         { start(false) },
                         Modifier.weight(1f),
-                        enabled = state.pending.isNotEmpty(),
+                        enabled = pending.isNotEmpty(),
                     ) {
                         Text(stringResource(R.string.batch_start))
                     }
                 }
-                if (state.items.any { it.output != null })
+                if (state.items.any { it.output != null && it.outputTree == state.outputTree })
                     TextButton(
                         {
                             val uri =

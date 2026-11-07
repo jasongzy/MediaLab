@@ -122,7 +122,7 @@ internal class MediaStoreRegression(private val app: Context, private val fixtur
                     }
                 val output = BatchFiles(app, null)
                 source.writeBytes(original)
-                val saved =
+                val (saved, savedDigest) =
                     checkNotNull(
                         output.write(source, directory, name, policy, Uri.fromFile(source)) {}
                     )
@@ -140,8 +140,6 @@ internal class MediaStoreRegression(private val app: Context, private val fixtur
                             "primary:$relative$name",
                         )
                     check(BatchFiles.key(alias) != saved.key)
-                    check(BatchFiles.sameFile(app, alias, saved.uri))
-                    check(BatchFiles.sameFile(app, document, saved.uri))
                     val failure = runCatching {
                         output.write(source, directory, name, policy, alias) {}
                     }
@@ -152,6 +150,18 @@ internal class MediaStoreRegression(private val app: Context, private val fixtur
                     ) {
                         "An alternate URI must not overwrite its own source: $failure"
                     }
+                    val otherInput = BatchItem(BatchFile(document, name, ncm = true), selected = false)
+                    val batch = BatchState(items = listOf(otherInput))
+                    val protected = runCatching {
+                        output.write(source, directory, name, policy, Uri.fromFile(source), batch.protectedFiles) {}
+                    }.exceptionOrNull()
+                    check(protected?.message == app.getString(R.string.batch_protected_output))
+                    val caseAlias = DocumentsContract.buildDocumentUri(
+                        "com.android.externalstorage.documents", "primary:$relative${name.uppercase()}",
+                    )
+                    check(runCatching {
+                        output.write(source, directory, name, policy, Uri.fromFile(source), listOf(BatchFile(caseAlias, name))) {}
+                    }.isFailure)
                     verify(saved.uri, original)
                 }
                 source.writeBytes(replacement)
@@ -162,13 +172,45 @@ internal class MediaStoreRegression(private val app: Context, private val fixtur
                         verify(saved.uri, original)
                     }
                     ConflictPolicy.RENAME -> {
-                        check(again?.name == "rename (1).wav")
-                        verify(again.uri, replacement)
+                        val (renamed, digest) = checkNotNull(again)
+                        check(renamed.name == "rename (1).wav")
+                        verify(renamed.uri, replacement)
+                        val candidate = CleanupCandidate(saved, renamed, savedDigest, digest)
+                        BatchFiles.delete(app, renamed.uri)
+                        val failure = runCatching { candidate.deleteSource(app) }.exceptionOrNull()
+                        check(failure?.message == app.getString(R.string.batch_verification_failed))
                         verify(saved.uri, original)
+                        val decoded = fixture("mp3")
+                        val item = BatchItem(BatchFile(saved.uri, "song.ncm", directory), output = renamed)
+                        val (current, hash) = checkNotNull(
+                            output.write(decoded, directory, "song.ncm.mp3", policy, item.file.uri) {}
+                        )
+                        val offline = Uri.parse("content://test.offline/tree/old")
+                        val previous = item.copy(
+                            outputTree = offline,
+                            output = BatchFile(DocumentsContract.buildDocumentUriUsingTree(offline, "song"), current.name),
+                        )
+                        val otherDirectory = item.copy(output = BatchFile(Uri.fromFile(decoded), current.name, "nested"))
+                        for (entry in listOf(item, previous, otherDirectory)) {
+                            check(output.matchUnlocked(entry, decoded, savedDigest) ==
+                                CleanupCandidate(item.file, current, savedDigest, hash))
+                        }
+                        val fresh = item.copy(output = null)
+                        val (numbered, numberedHash) = checkNotNull(
+                            output.write(decoded, directory, current.name, policy, item.file.uri) {}
+                        )
+                        for (file in listOf(current, numbered)) {
+                            checkNotNull(resolver.openOutputStream(file.uri, "wt")).use { it.write(original) }
+                            val found = BatchFiles(app, null).matchUnlocked(fresh, decoded, savedDigest)
+                            if (file == current) check(found?.output?.uri == numbered.uri &&
+                                found.outputDigest == numberedHash) { "Expected ${numbered.uri}, found $found" }
+                            else check(found == null) { "Matched an unrelated file: $found" }
+                        }
                     }
                     ConflictPolicy.OVERWRITE -> {
-                        check(again?.name == name)
-                        verify(again.uri, replacement)
+                        val replaced = checkNotNull(again).first
+                        check(replaced.name == name)
+                        verify(replaced.uri, replacement)
                     }
                 }
             }

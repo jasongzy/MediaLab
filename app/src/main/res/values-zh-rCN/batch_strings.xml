@@ -2,6 +2,8 @@
     <string name="batch_cache_busy">请等待批处理结束后再清除缓存。</string>
     <string name="batch_ambiguous_name">有多个文件使用此名称，请选择其他输出文件夹。</string>
     <string name="batch_same_file">源文件和输出是同一个文件，请更换输出文件夹或选择重命名。</string>
+    <string name="batch_uncertain_identity">无法确认这两个文件彼此独立，已保留现有文件</string>
+    <string name="batch_protected_output">其他批处理条目还需要此文件，请更换输出文件夹或选择重命名</string>
     <string name="batch_verification_failed">保存的文件未通过校验，源文件已保留。</string>
     <string name="batch_invalid_name">暂不支持此文件或文件夹名称。</string>
     <string name="batch_delete_failed">无法删除文件，请检查文件夹访问权限。</string>
@@ -50,7 +52,7 @@
     <string name="batch_selected">已选 %1$d / %2$d 项</string>
     <string name="batch_failures">仅失败</string>
     <string name="batch_summary">完成 %1$d · 跳过 %2$d · 失败 %3$d</string>
-    <string name="batch_retry">重试失败项</string>
+    <string name="batch_retry">重试解锁</string>
     <string name="batch_start">开始</string>
     <string name="batch_open_output">打开输出文件夹</string>
     <string name="batch_open_output_failed">无法打开输出文件夹。</string>
@@ -61,11 +63,11 @@
     <string name="batch_confirm">开始处理？</string>
     <string name="batch_overwrite_confirm">输出文件夹中的同名文件将被替换。</string>
     <string name="batch_delete_confirm">每个输出文件保存并通过校验后，将永久删除对应的源文件。</string>
-    <string name="batch_cleanup_empty">未找到可核对的已解锁原文件。</string>
+    <string name="batch_cleanup_empty">未找到与所选原文件匹配的解锁音频。</string>
     <string name="batch_delete_title">永久删除原文件？</string>
     <string name="batch_delete_permanently">永久删除</string>
     <plurals name="batch_cleanup_confirm">
-        <item quantity="other">已核对 %1$d 个原文件与输出文件夹中的音频一致。确定永久删除这些原文件？</item>
+        <item quantity="other">已核对以下 %1$d 个原文件对应的解锁音频。</item>
     </plurals>
     <string name="batch_rename_failed">替换文件已保存，但重命名失败。</string>
     <string name="batch_invalid_ncm">此 NCM 文件已损坏或暂不支持。</string>
