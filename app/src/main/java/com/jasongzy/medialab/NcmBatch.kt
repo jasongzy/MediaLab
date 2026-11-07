@@ -79,8 +79,8 @@ internal data class CleanupCandidate(
 internal data class BatchState(
     val items: List<BatchItem> = emptyList(),
     val options: BatchOptions = BatchOptions(),
+    val inputTree: Uri? = null,
     val outputTree: Uri? = null,
-    val outputName: String = "Music/MediaLab",
     val busy: Boolean = false,
     val cancelling: Boolean = false,
     val stage: Int = R.string.unlock,
@@ -133,15 +133,11 @@ internal object NcmBatch {
             }
     }
 
-    fun output(context: Context, uri: Uri?) =
-        launch(context, R.string.batch_reading) { app ->
-            val name =
-                if (uri == null) "Music/MediaLab"
-                else BatchFiles.info(app, BatchFiles.document(uri)).name
+    fun output(uri: Uri?) {
+        if (!state.value.busy && state.value.outputTree != uri)
             mutable.update {
                 it.copy(
                     outputTree = uri,
-                    outputName = name,
                     candidates = null,
                     items =
                         it.items.map { item ->
@@ -151,7 +147,7 @@ internal object NcmBatch {
                         },
                 )
             }
-        }
+    }
 
     fun select(key: String?, selected: Boolean) {
         if (!state.value.busy)
@@ -219,6 +215,7 @@ internal object NcmBatch {
 
     fun addFolder(context: Context, tree: Uri) =
         launch(context, R.string.batch_scanning) { app ->
+            mutable.update { it.copy(inputTree = tree) }
             val recursive = state.value.options.recursive
             val output = state.value.outputTree?.let { BatchFiles.key(BatchFiles.document(it)) }
             val root = BatchFiles.document(tree)

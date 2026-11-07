@@ -47,6 +47,9 @@
     <string name="batch_cleanup">Check unlocked originals</string>
     <string name="batch_remove_selected">Remove selected files from list</string>
     <string name="batch_output">Output folder</string>
+    <string name="batch_input">Last input folder</string>
+    <string name="batch_same_as_input">Same as input folder</string>
+    <string name="batch_use_as_output">Use as output</string>
     <string name="batch_change">Change</string>
     <string name="batch_reset_output">Restore default</string>
     <string name="batch_empty">Choose NCM files or a folder to unlock</string>

@@ -46,6 +46,9 @@
     <string name="batch_cleanup">检查已解锁原文件</string>
     <string name="batch_remove_selected">从列表移除所选文件</string>
     <string name="batch_output">输出文件夹</string>
+    <string name="batch_input">最近的输入文件夹</string>
+    <string name="batch_same_as_input">与输入文件夹相同</string>
+    <string name="batch_use_as_output">设为输出</string>
     <string name="batch_change">更改</string>
     <string name="batch_reset_output">恢复默认</string>
     <string name="batch_empty">选择 NCM 文件或文件夹以解锁</string>

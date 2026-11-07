@@ -29,6 +29,25 @@ import androidx.compose.ui.unit.dp
 
 private enum class NotificationAction { CONVERT, RETRY, CLEANUP }
 
+@Composable
+private fun FolderRow(label: Int, path: String, actions: @Composable () -> Unit) {
+    Column(Modifier.fillMaxWidth().padding(bottom = 14.dp)) {
+        Row(Modifier.heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                stringResource(label),
+                Modifier.weight(1f),
+                style = MaterialTheme.typography.titleSmall,
+            )
+            actions()
+        }
+        Text(
+            path,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun NcmScreen(model: LabViewModel, state: BatchState) {
@@ -74,7 +93,7 @@ internal fun NcmScreen(model: LabViewModel, state: BatchState) {
         }
     val output =
         rememberNcmPicker(ActivityResultContracts.OpenDocumentTree()) {
-            NcmBatch.output(context, it.first())
+            NcmBatch.output(it.first())
         }
     val start: (Boolean) -> Unit = { retry ->
         if (state.options.deleteOriginal || state.options.conflict == ConflictPolicy.OVERWRITE)
@@ -149,29 +168,39 @@ internal fun NcmScreen(model: LabViewModel, state: BatchState) {
                 }
             }
         }
-        Row(
-            Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-            verticalAlignment = Alignment.CenterVertically,
+        Surface(
+            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+            shape = MaterialTheme.shapes.medium,
+            color = MaterialTheme.colorScheme.surfaceContainerLow,
         ) {
-            Column(Modifier.weight(1f)) {
-                Text(
-                    stringResource(R.string.batch_output),
-                    style = MaterialTheme.typography.labelMedium,
-                )
-                Text(
-                    state.outputName,
-                    style = MaterialTheme.typography.bodyMedium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-            TextButton({ output(state.outputTree) }, enabled = !state.busy) {
-                Text(stringResource(R.string.batch_change))
-            }
-            if (state.outputTree != null)
-                TextButton({ NcmBatch.output(context, null) }, enabled = !state.busy) {
-                    Text(stringResource(R.string.batch_reset_output))
+            Column(Modifier.padding(horizontal = 12.dp)) {
+                val inputTree = state.inputTree
+                val outputTree = state.outputTree
+                if (inputTree != null) {
+                    FolderRow(R.string.batch_input, DocumentsContract.getTreeDocumentId(inputTree)) {
+                        if (inputTree != outputTree)
+                            TextButton({ NcmBatch.output(inputTree) }, enabled = !state.busy) {
+                                Text(stringResource(R.string.batch_use_as_output))
+                            }
+                    }
+                    HorizontalDivider()
                 }
+                val destination =
+                    when (outputTree) {
+                        null -> "Music/MediaLab"
+                        inputTree -> stringResource(R.string.batch_same_as_input)
+                        else -> DocumentsContract.getTreeDocumentId(outputTree)
+                    }
+                FolderRow(R.string.batch_output, destination) {
+                    TextButton({ output(outputTree ?: inputTree) }, enabled = !state.busy) {
+                        Text(stringResource(R.string.batch_change))
+                    }
+                    if (outputTree != null)
+                        TextButton({ NcmBatch.output(null) }, enabled = !state.busy) {
+                            Text(stringResource(R.string.batch_reset_output))
+                        }
+                }
+            }
         }
         if (state.items.isEmpty() && !state.busy) {
             Column(
