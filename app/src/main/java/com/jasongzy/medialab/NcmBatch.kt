@@ -250,7 +250,7 @@ internal object NcmBatch {
                         val names =
                             if (item.file.ncm)
                                 listOf("mp3", "flac").map {
-                                    item.file.name.substringBeforeLast('.') + "." + it
+                                    Ncm.outputName(item.file.name, it)
                                 }
                             else listOf(item.file.name)
                         names.filter { output.find(item.file.directory, it) != null }.toSet()
@@ -258,12 +258,11 @@ internal object NcmBatch {
                 if (!item.file.ncm && existing.isNotEmpty()) throw ExistingOutput()
                 val (decoded, sourceDigest) =
                     prepare(app, item.file, directory) { extension ->
-                        if (item.file.name.substringBeforeLast('.') + "." + extension in existing)
+                        if (Ncm.outputName(item.file.name, extension) in existing)
                             throw ExistingOutput()
                     }
                 val name =
-                    if (item.file.ncm)
-                        item.file.name.substringBeforeLast('.') + "." + decoded.extension
+                    if (item.file.ncm) Ncm.outputName(item.file.name, decoded.extension)
                     else item.file.name
                 val saved =
                     output.write(
@@ -316,7 +315,7 @@ internal object NcmBatch {
             process(app, items) { item, directory ->
                 val (decoded, sourceDigest) =
                     prepare(app, item.file, directory, restoreMetadata = false)
-                val expected = item.file.name.substringBeforeLast('.') + "." + decoded.extension
+                val expected = Ncm.outputName(item.file.name, decoded.extension)
                 val saved =
                     item.output?.takeIf { item.outputTree == snapshot.outputTree }
                         ?: output.find(item.file.directory, expected)

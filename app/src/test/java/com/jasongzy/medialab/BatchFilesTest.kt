@@ -17,8 +17,11 @@ class BatchFilesTest {
             BatchFiles.uniqueName("song.flac", listOf("song 2.flac", "song.mp3")),
         )
         assertEquals(
-            "song (2).flac",
-            BatchFiles.uniqueName("song.flac", listOf("Song.FLAC", "song (1).flac")),
+            "歌曲.01.NCM (2).flac",
+            BatchFiles.uniqueName(
+                Ncm.outputName("歌曲.01.NCM", "flac"),
+                listOf("歌曲.01.ncm.FLAC", "歌曲.01.ncm (1).flac"),
+            ),
         )
         for (name in listOf("", ".", "..", "a/b", "a\\b", "a\u0000b")) assertFalse(
             BatchFiles.validName(name)

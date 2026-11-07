@@ -16,6 +16,8 @@ internal object Ncm {
     private val coreKey = "687a4852416d736f356b496e62617857".hex()
     private val metaKey = "2331346c6a6b5f215c5d2630553c2728".hex()
 
+    fun outputName(sourceName: String, extension: String): String = "$sourceName.$extension"
+
     fun matches(file: File): Boolean = file.inputStream().use(::matches)
 
     fun matches(input: InputStream): Boolean = "CTENFDAM".all { input.read() == it.code }
