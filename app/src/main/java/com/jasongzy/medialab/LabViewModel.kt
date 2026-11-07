@@ -30,9 +30,9 @@ import kotlinx.coroutines.withContext
 
 internal enum class Confirmation(val title: Int, val message: Int, val confirm: Int = R.string.discard) {
     IMAGE(R.string.replace_image, R.string.replace_message),
-    AUDIO(R.string.replace_audio, R.string.replace_audio_message),
-    VIDEO(R.string.replace_video, R.string.replace_video_message),
-    VIDEO_COLOR(R.string.convert_color, R.string.video_hdr_message, R.string.continue_action),
+    AUDIO(R.string.replace_audio, R.string.replace_message),
+    VIDEO(R.string.replace_video, R.string.replace_message),
+    VIDEO_COLOR(R.string.video_hdr_title, R.string.video_hdr_message, R.string.continue_action),
     RESTORE_AUDIO(R.string.restore_original_audio, R.string.discard_unapplied_message, R.string.restore_original_audio),
     EXPORT(R.string.export, R.string.export_pending, R.string.continue_action),
     RESTORE_VIDEO(R.string.restore_video, R.string.discard_unapplied_message, R.string.restore_video),
@@ -1241,7 +1241,7 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
             }
             currentCoroutineContext().ensureActive()
             commitAudio(audio, frame.copy(media = media),
-                if (merge == null) R.string.video_time else R.string.audio_channels)
+                if (merge == null) R.string.video_time else R.string.channels)
             mutable.update { it.copy(notice = Notice(R.string.changes_applied)) }
         } finally {
             if (target !in editor.files) target.delete()

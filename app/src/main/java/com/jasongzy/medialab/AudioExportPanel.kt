@@ -51,7 +51,7 @@ internal fun AudioExportPanel(audio: AudioDocument, model: LabViewModel) {
                         revision++
                     }
                     key(options.format, revision) {
-                        NumberField(R.string.audio_bitrate, options.bitrateKbps, Modifier.fillMaxWidth(),
+                        NumberField(R.string.bitrate_kbps, options.bitrateKbps, Modifier.fillMaxWidth(),
                             range = 32..maximum, onValidityChanged = { valid = it }) {
                             editor.exportOptions = options.copy(bitrateKbps = it)
                         }

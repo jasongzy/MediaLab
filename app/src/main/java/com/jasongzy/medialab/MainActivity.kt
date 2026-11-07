@@ -271,15 +271,12 @@ private fun LabApp(model: LabViewModel, state: LabState, exit: () -> Unit) {
             onDismissRequest = model::clearError,
             title = { Text(stringResource(R.string.error_title)) },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text(stringResource(R.string.error_message))
-                    SelectionContainer {
-                        Text(
-                            error,
-                            Modifier.heightIn(max = 240.dp).verticalScroll(rememberScrollState()),
-                            style = MaterialTheme.typography.bodySmall,
-                        )
-                    }
+                SelectionContainer {
+                    Text(
+                        error,
+                        Modifier.heightIn(max = 240.dp).verticalScroll(rememberScrollState()),
+                        style = MaterialTheme.typography.bodySmall,
+                    )
                 }
             },
             confirmButton = {

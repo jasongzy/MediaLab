@@ -52,7 +52,7 @@ class AudioEditsTest {
         editor.tool = AudioTool.CHANNELS
         editor.selectedChannels = setOf(0, 1)
         editor.audition = true
-        editor.commit(mono, R.string.audio_channels)
+        editor.commit(mono, R.string.channels)
         editor.resetPlayback()
         assertEquals(AudioTool.TAGS, editor.tool)
         assertTrue(editor.selectedChannels.isEmpty())

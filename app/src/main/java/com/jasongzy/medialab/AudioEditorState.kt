@@ -23,7 +23,7 @@ internal data class AudioFrame(val media: AudioMedia, val metadata: AudioMetadat
 
 internal enum class AudioTool(val label: Int, val icon: Int) {
     TIME(R.string.video_time, R.drawable.ic_time),
-    CHANNELS(R.string.audio_channels, R.drawable.ic_channels),
+    CHANNELS(R.string.channels, R.drawable.ic_channels),
     TAGS(R.string.tags, R.drawable.ic_tag),
     ARTWORK(R.string.artwork, R.drawable.ic_photo),
     INFO(R.string.info, R.drawable.ic_info),

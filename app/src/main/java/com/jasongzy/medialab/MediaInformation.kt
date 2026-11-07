@@ -106,7 +106,7 @@ internal fun VideoInformation(video: VideoDocument, model: LabViewModel) {
             stringResource(R.string.dimensions),
             "${edits.size.width} × ${edits.size.height} px",
         )
-        MediaDetail(stringResource(R.string.video_duration), mediaSeconds(edits.durationMs) + " s")
+        MediaDetail(stringResource(R.string.duration), mediaSeconds(edits.durationMs) + " s")
         MediaDetail(
             stringResource(R.string.video_audio_tracks),
             video.info.audioTracks.size.toString(),
@@ -218,7 +218,7 @@ internal fun VideoSourceDetails(info: VideoInfo) {
                     .joinToString(" · ")
                     .ifEmpty { stringResource(R.string.video_no_audio) },
             R.string.video_fps to "%.3f".format(Locale.ROOT, info.fps),
-            R.string.video_bitrate to (info.bitrate / 1000).toString(),
+            R.string.bitrate_kbps to (info.bitrate / 1000).toString(),
             R.string.dynamic_range to stringResource(if (info.hdr) R.string.hdr else R.string.sdr),
         )
         .forEach { (label, value) -> MediaDetail(stringResource(label), value) }

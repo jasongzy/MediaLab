@@ -430,7 +430,7 @@ internal fun VideoScreen(model: LabViewModel, state: LabState, active: Boolean) 
                                         }
                                         key(bitrateRevision) {
                                             NumberField(
-                                                R.string.video_bitrate,
+                                                R.string.bitrate_kbps,
                                                 edits.bitrateKbps,
                                                 Modifier.fillMaxWidth(),
                                                 100..200000,

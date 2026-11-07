@@ -23,6 +23,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -146,15 +147,6 @@ internal fun NcmScreen(model: LabViewModel, state: BatchState) {
                         onClick = {
                             menu = false
                             options = true
-                        },
-                    )
-                    DropdownMenuItem(
-                        text = { Text(stringResource(R.string.batch_cleanup)) },
-                        enabled =
-                            state.items.any { it.selected && it.file.ncm && !it.sourceDeleted },
-                        onClick = {
-                            menu = false
-                            notifyThen(NotificationAction.CLEANUP)
                         },
                     )
                     DropdownMenuItem(
@@ -302,32 +294,43 @@ internal fun NcmScreen(model: LabViewModel, state: BatchState) {
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             if (state.busy) {
-                Text(
-                    stringResource(if (state.cancelling) R.string.cancelling else state.stage),
-                    style = MaterialTheme.typography.labelLarge,
-                )
-                if (state.total > 0) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        stringResource(if (state.cancelling) R.string.cancelling else state.stage),
+                        Modifier.weight(1f),
+                        style = MaterialTheme.typography.labelLarge,
+                    )
+                    if (state.total > 0)
+                        Text(
+                            stringResource(R.string.batch_progress, state.completed, state.total),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                }
+                if (state.total > 0)
                     LinearWavyProgressIndicator(
                         progress = { (state.completed + (state.progress ?: 0f)) / state.total },
                         modifier = Modifier.fillMaxWidth(),
                     )
-                    Text(
-                        stringResource(R.string.batch_progress, state.completed, state.total),
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-                } else LinearWavyProgressIndicator(Modifier.fillMaxWidth())
-                if (state.current.isNotEmpty())
-                    Text(
-                        state.current,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-                if (state.progress != null)
-                    LinearWavyProgressIndicator(
-                        progress = { state.progress },
-                        modifier = Modifier.fillMaxWidth().height(12.dp),
-                    )
+                else LinearWavyProgressIndicator(Modifier.fillMaxWidth())
+                if (state.total > 0 || state.current.isNotEmpty())
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        if (state.total > 0)
+                            CircularWavyProgressIndicator(Modifier.size(24.dp).clearAndSetSemantics {})
+                        Text(
+                            state.current,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 OutlinedButton(
                     NcmBatch::cancel,
                     Modifier.fillMaxWidth(),
@@ -362,55 +365,61 @@ internal fun NcmScreen(model: LabViewModel, state: BatchState) {
                         Text(stringResource(R.string.batch_start))
                     }
                 }
-                if (state.items.any { it.output != null && it.outputTree == state.outputTree })
-                    TextButton(
-                        {
-                            val uri =
-                                state.outputTree?.let(BatchFiles::document)
-                                    ?: DocumentsContract.buildDocumentUri(
-                                        "com.android.externalstorage.documents",
-                                        "primary:Music/MediaLab",
-                                    )
-                            try {
-                                val manager =
-                                    context.packageManager
-                                        .resolveActivity(
-                                            Intent(Intent.ACTION_OPEN_DOCUMENT_TREE),
-                                            PackageManager.MATCH_SYSTEM_ONLY or
-                                                PackageManager.MATCH_DEFAULT_ONLY,
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    if (state.items.any { it.selected && it.file.ncm && !it.sourceDeleted })
+                        TextButton({ notifyThen(NotificationAction.CLEANUP) }) {
+                            Text(stringResource(R.string.batch_cleanup))
+                        }
+                    Spacer(Modifier.weight(1f))
+                    if (state.items.any { it.output != null && it.outputTree == state.outputTree })
+                        TextButton(
+                            {
+                                val uri =
+                                    state.outputTree?.let(BatchFiles::document)
+                                        ?: DocumentsContract.buildDocumentUri(
+                                            "com.android.externalstorage.documents",
+                                            "primary:Music/MediaLab",
                                         )
-                                        ?.activityInfo
-                                        ?.packageName
-                                        ?: throw android.content.ActivityNotFoundException()
-                                // DocumentsUI uses its own permission to browse document providers.
-                                context.startActivity(
-                                    Intent(Intent.ACTION_VIEW)
-                                        .setDataAndType(
-                                            uri,
-                                            DocumentsContract.Document.MIME_TYPE_DIR,
+                                try {
+                                    val manager =
+                                        context.packageManager
+                                            .resolveActivity(
+                                                Intent(Intent.ACTION_OPEN_DOCUMENT_TREE),
+                                                PackageManager.MATCH_SYSTEM_ONLY or
+                                                    PackageManager.MATCH_DEFAULT_ONLY,
+                                            )
+                                            ?.activityInfo
+                                            ?.packageName
+                                            ?: throw android.content.ActivityNotFoundException()
+                                    // DocumentsUI uses its own permission to browse document providers.
+                                    context.startActivity(
+                                        Intent(Intent.ACTION_VIEW)
+                                            .setDataAndType(
+                                                uri,
+                                                DocumentsContract.Document.MIME_TYPE_DIR,
+                                            )
+                                            .setPackage(manager)
+                                    )
+                                } catch (_: android.content.ActivityNotFoundException) {
+                                    Toast.makeText(
+                                            context,
+                                            R.string.batch_open_output_failed,
+                                            Toast.LENGTH_SHORT,
                                         )
-                                        .setPackage(manager)
-                                )
-                            } catch (_: android.content.ActivityNotFoundException) {
-                                Toast.makeText(
-                                        context,
-                                        R.string.batch_open_output_failed,
-                                        Toast.LENGTH_SHORT,
-                                    )
-                                    .show()
-                            } catch (_: SecurityException) {
-                                Toast.makeText(
-                                        context,
-                                        R.string.batch_open_output_failed,
-                                        Toast.LENGTH_SHORT,
-                                    )
-                                    .show()
-                            }
-                        },
-                        Modifier.align(Alignment.End),
-                    ) {
-                        Text(stringResource(R.string.batch_open_output))
-                    }
+                                        .show()
+                                } catch (_: SecurityException) {
+                                    Toast.makeText(
+                                            context,
+                                            R.string.batch_open_output_failed,
+                                            Toast.LENGTH_SHORT,
+                                        )
+                                        .show()
+                                }
+                            },
+                        ) {
+                            Text(stringResource(R.string.batch_open_output))
+                        }
+                }
             }
         }
     }

@@ -1,12 +1,12 @@
 <resources>
-    <string name="batch_cache_busy">Wait for the batch task to finish before clearing the cache.</string>
-    <string name="batch_ambiguous_name">Multiple files have this name. Choose another output folder.</string>
-    <string name="batch_same_file">The source and output are the same file. Choose another output folder or use Rename.</string>
+    <string name="batch_cache_busy">Wait for the batch task to finish before clearing the cache</string>
+    <string name="batch_ambiguous_name">Multiple files have this name. Choose another output folder</string>
+    <string name="batch_same_file">The source and output are the same file. Choose another output folder or use Rename</string>
     <string name="batch_uncertain_identity">Could not confirm that the files are separate. The existing file was kept</string>
     <string name="batch_protected_output">This file is needed by another batch item. Choose another output folder or use Rename</string>
-    <string name="batch_verification_failed">The saved file could not be verified. The source has been kept.</string>
-    <string name="batch_invalid_name">This file or folder name is not supported.</string>
-    <string name="batch_delete_failed">The file could not be deleted. Check the folder permission.</string>
+    <string name="batch_verification_failed">The saved file could not be verified. The source has been kept</string>
+    <string name="batch_invalid_name">This file or folder name is not supported</string>
+    <string name="batch_delete_failed">The file could not be deleted. Check the folder permission</string>
     <string name="batch_skip">Skip</string>
     <string name="batch_rename">Rename</string>
     <string name="batch_overwrite">Overwrite</string>
@@ -19,12 +19,12 @@
     <string name="batch_scanning">Scanning folder…</string>
     <string name="batch_folder_unavailable">The folder listing could not be loaded. Please try again</string>
     <plurals name="batch_unsupported">
-        <item quantity="one">Skipped %1$d unsupported file. Choose NCM or audio files.</item>
-        <item quantity="other">Skipped %1$d unsupported files. Choose NCM or audio files.</item>
+        <item quantity="one">Skipped %1$d unsupported file. Choose NCM or audio files</item>
+        <item quantity="other">Skipped %1$d unsupported files. Choose NCM or audio files</item>
     </plurals>
     <string name="batch_ordinary_skipped">Ordinary audio skipped</string>
     <string name="batch_exists">An output with this name already exists</string>
-    <string name="batch_source_changed">The source or output has changed. Check the files and try again.</string>
+    <string name="batch_source_changed">The source or output has changed. Check the files and try again</string>
     <string name="batch_file_unavailable">The source or output file could not be opened. Check that it is still in the same location</string>
     <string name="batch_provider_unavailable">The app providing these files is unavailable. Open that app, then return to Media Lab and try again</string>
     <string name="batch_provider_unavailable_named">%1$s, the app providing these files, is unavailable. Open it, then return to Media Lab and try again</string>
@@ -33,10 +33,9 @@
     <string name="batch_unmatched">A matching output could not be verified</string>
     <string name="batch_deleting">Deleting originals…</string>
     <string name="batch_deleted">Original deleted</string>
-    <string name="batch_empty_file">The file is empty.</string>
-    <string name="batch_busy">Wait for the current batch operation to finish.</string>
-    <string name="batch_permission_error">File access was denied. Select the file or folder again.</string>
-    <string name="batch_refresh_failed">The output folder could not be refreshed. Please try again.</string>
+    <string name="batch_busy">Wait for the current batch operation to finish</string>
+    <string name="batch_permission_error">File access was denied. Select the file or folder again</string>
+    <string name="batch_refresh_failed">The output folder could not be refreshed. Please try again</string>
     <string name="batch_progress">%1$d / %2$d</string>
     <string name="batch_stop">Stop</string>
     <string name="batch_add">Add</string>
@@ -44,7 +43,7 @@
     <string name="batch_add_folder">Choose folder</string>
     <string name="batch_actions">More actions</string>
     <string name="batch_options">Processing options</string>
-    <string name="batch_cleanup">Check unlocked originals</string>
+    <string name="batch_cleanup">Delete unlocked originals</string>
     <string name="batch_remove_selected">Remove selected files from list</string>
     <string name="batch_output">Output folder</string>
     <string name="batch_input">Last input folder</string>
@@ -59,7 +58,7 @@
     <string name="batch_retry">Retry unlocking</string>
     <string name="batch_start">Start</string>
     <string name="batch_open_output">Open output folder</string>
-    <string name="batch_open_output_failed">Could not open the output folder.</string>
+    <string name="batch_open_output_failed">Could not open the output folder</string>
     <string name="batch_recursive">Include subfolders</string>
     <string name="batch_copy_audio">Copy ordinary audio</string>
     <string name="batch_conflict">If output exists</string>
@@ -74,8 +73,8 @@
         <item quantity="one">Media Lab verified matching audio for %1$d original.</item>
         <item quantity="other">Media Lab verified matching audio for %1$d originals.</item>
     </plurals>
-    <string name="batch_rename_failed">The replacement was saved but could not be renamed.</string>
-    <string name="batch_invalid_ncm">This NCM file is damaged or unsupported.</string>
+    <string name="batch_rename_failed">The replacement was saved but could not be renamed</string>
+    <string name="batch_invalid_ncm">This NCM file is damaged or unsupported</string>
     <string name="batch_finished">Processing finished</string>
     <string name="batch_stopped">Processing stopped</string>
     <string name="batch_exit_message">The batch task is still running. Choose whether to continue in the background or stop it. Your editing workspace will be cleared.</string>

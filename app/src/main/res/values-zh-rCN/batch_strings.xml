@@ -1,12 +1,12 @@
 <resources>
-    <string name="batch_cache_busy">请等待批处理结束后再清除缓存。</string>
-    <string name="batch_ambiguous_name">有多个文件使用此名称，请选择其他输出文件夹。</string>
-    <string name="batch_same_file">源文件和输出是同一个文件，请更换输出文件夹或选择重命名。</string>
+    <string name="batch_cache_busy">请等待批处理结束后再清除缓存</string>
+    <string name="batch_ambiguous_name">有多个文件使用此名称，请选择其他输出文件夹</string>
+    <string name="batch_same_file">源文件和输出是同一个文件，请更换输出文件夹或选择重命名</string>
     <string name="batch_uncertain_identity">无法确认这两个文件彼此独立，已保留现有文件</string>
     <string name="batch_protected_output">其他批处理条目还需要此文件，请更换输出文件夹或选择重命名</string>
-    <string name="batch_verification_failed">保存的文件未通过校验，源文件已保留。</string>
-    <string name="batch_invalid_name">暂不支持此文件或文件夹名称。</string>
-    <string name="batch_delete_failed">无法删除文件，请检查文件夹访问权限。</string>
+    <string name="batch_verification_failed">保存的文件未通过校验，源文件已保留</string>
+    <string name="batch_invalid_name">暂不支持此文件或文件夹名称</string>
+    <string name="batch_delete_failed">无法删除文件，请检查文件夹访问权限</string>
     <string name="batch_skip">跳过</string>
     <string name="batch_rename">重命名</string>
     <string name="batch_overwrite">覆盖</string>
@@ -19,11 +19,11 @@
     <string name="batch_scanning">正在扫描文件夹…</string>
     <string name="batch_folder_unavailable">无法读取文件夹列表，请重试</string>
     <plurals name="batch_unsupported">
-        <item quantity="other">已跳过 %1$d 个不支持的文件，请选择 NCM 或音频文件。</item>
+        <item quantity="other">已跳过 %1$d 个不支持的文件，请选择 NCM 或音频文件</item>
     </plurals>
     <string name="batch_ordinary_skipped">已跳过普通音频</string>
     <string name="batch_exists">输出文件夹中已有同名文件</string>
-    <string name="batch_source_changed">源文件或输出文件已变化，请检查后重试。</string>
+    <string name="batch_source_changed">源文件或输出文件已变化，请检查后重试</string>
     <string name="batch_file_unavailable">无法打开源文件或输出文件，请检查文件是否仍在原位置</string>
     <string name="batch_provider_unavailable">暂时无法连接提供这些文件的应用。请先打开该应用，再返回 Media Lab 重试</string>
     <string name="batch_provider_unavailable_named">暂时无法连接提供这些文件的应用「%1$s」。请先打开该应用，再返回 Media Lab 重试</string>
@@ -32,10 +32,9 @@
     <string name="batch_unmatched">未能核对到匹配的输出文件</string>
     <string name="batch_deleting">正在删除原文件…</string>
     <string name="batch_deleted">原文件已删除</string>
-    <string name="batch_empty_file">文件内容为空。</string>
-    <string name="batch_busy">请等待当前批处理操作结束。</string>
-    <string name="batch_permission_error">文件访问被拒绝，请重新选择文件或文件夹。</string>
-    <string name="batch_refresh_failed">无法刷新输出文件夹，请稍后重试。</string>
+    <string name="batch_busy">请等待当前批处理操作结束</string>
+    <string name="batch_permission_error">文件访问被拒绝，请重新选择文件或文件夹</string>
+    <string name="batch_refresh_failed">无法刷新输出文件夹，请稍后重试</string>
     <string name="batch_progress">%1$d / %2$d 个文件</string>
     <string name="batch_stop">停止</string>
     <string name="batch_add">添加</string>
@@ -43,7 +42,7 @@
     <string name="batch_add_folder">选择文件夹</string>
     <string name="batch_actions">更多操作</string>
     <string name="batch_options">处理选项</string>
-    <string name="batch_cleanup">检查已解锁原文件</string>
+    <string name="batch_cleanup">删除已解锁原文件</string>
     <string name="batch_remove_selected">从列表移除所选文件</string>
     <string name="batch_output">输出文件夹</string>
     <string name="batch_input">最近的输入文件夹</string>
@@ -58,7 +57,7 @@
     <string name="batch_retry">重试解锁</string>
     <string name="batch_start">开始</string>
     <string name="batch_open_output">打开输出文件夹</string>
-    <string name="batch_open_output_failed">无法打开输出文件夹。</string>
+    <string name="batch_open_output_failed">无法打开输出文件夹</string>
     <string name="batch_recursive">包含子文件夹</string>
     <string name="batch_copy_audio">复制普通音频</string>
     <string name="batch_conflict">遇到同名输出</string>
@@ -72,8 +71,8 @@
     <plurals name="batch_cleanup_confirm">
         <item quantity="other">已核对以下 %1$d 个原文件对应的解锁音频。</item>
     </plurals>
-    <string name="batch_rename_failed">替换文件已保存，但重命名失败。</string>
-    <string name="batch_invalid_ncm">此 NCM 文件已损坏或暂不支持。</string>
+    <string name="batch_rename_failed">替换文件已保存，但重命名失败</string>
+    <string name="batch_invalid_ncm">此 NCM 文件已损坏或暂不支持</string>
     <string name="batch_finished">处理完成</string>
     <string name="batch_stopped">处理已停止</string>
     <string name="batch_exit_message">批处理仍在运行，可选择在后台继续或停止任务。本次编辑工作区将被清空。</string>
