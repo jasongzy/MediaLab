@@ -304,7 +304,7 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
                         context.contentResolver.openInputStream(uri)?.use { Ncm.matches(it) } ==
                             true)
             ) {
-                NcmBatch.addFiles(context, listOf(uri), shared = true)
+                NcmBatch.addFiles(context, listOf(uri), sharedNcm = true)
                 showBatch(true)
                 return@work
             }

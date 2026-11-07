@@ -3,7 +3,9 @@ package com.jasongzy.medialab
 import android.content.ClipData
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Process
 import android.util.Log
 import java.io.File
 import java.security.DigestInputStream
@@ -42,6 +44,7 @@ internal data class BatchOptions(
 
 internal data class BatchItem(
     val file: BatchFile,
+    val shared: Boolean = false,
     val selected: Boolean = true,
     val status: BatchStatus = BatchStatus.PENDING,
     val output: BatchFile? = null,
@@ -88,7 +91,6 @@ internal object NcmBatch {
     val cacheAccess = Mutex()
     private var action: (suspend (Context) -> Unit)? = null
     private var job: Job? = null
-    private val sharedUris = mutableSetOf<Uri>()
 
     fun configure(options: BatchOptions) {
         if (!state.value.busy)
@@ -141,21 +143,21 @@ internal object NcmBatch {
     }
 
     fun removeSelected() {
-        if (!state.value.busy)
-            mutable.update {
-                it.copy(
-                    items = it.items.filter { item -> !item.selected },
-                    candidates = null,
-                    completed = 0,
-                    total = 0,
-                )
-            }
+        if (state.value.busy) return
+        mutable.update {
+            it.copy(
+                items = it.items.filter { item -> !item.selected },
+                candidates = null,
+                completed = 0,
+                total = 0,
+            )
+        }
     }
 
-    fun clear() {
+    fun clear(context: Context) {
         if (!state.value.busy) {
             mutable.value = BatchState()
-            sharedUris.clear()
+            releaseNcmGrants(context)
         }
     }
 
@@ -167,26 +169,27 @@ internal object NcmBatch {
         mutable.update { it.copy(candidates = null) }
     }
 
-    fun addFiles(context: Context, uris: List<Uri>, shared: Boolean = false) =
-        launch(context, R.string.batch_reading, if (shared) uris else emptyList()) { app ->
-            if (shared) sharedUris.addAll(uris)
+    fun addFiles(context: Context, uris: List<Uri>, sharedNcm: Boolean = false) =
+        launch(context, R.string.batch_reading, if (sharedNcm) uris else emptyList()) { app ->
             var unsupported = 0
-            for (uri in uris.distinct()) {
-                currentCoroutineContext().ensureActive()
-                val file = BatchFiles.info(app, uri)
-                if (BatchFiles.supported(file.name)) append(listOf(file)) else unsupported++
+            val files = mutableListOf<BatchFile>()
+            val issues = linkedSetOf<String>()
+            val known = knownNcmKeys()
+            try {
+                for (uri in uris.distinct()) {
+                    currentCoroutineContext().ensureActive()
+                    val file = readInput(app, known, issues) {
+                        val info = BatchFiles.info(app, uri)
+                        if (sharedNcm) info.copy(ncm = true) else info
+                    } ?: continue
+                    if (BatchFiles.supports(file)) files += file else unsupported++
+                }
+            } finally {
+                append(files, shared = sharedNcm)
             }
             if (unsupported > 0)
-                mutable.update {
-                    it.copy(
-                        error =
-                            app.resources.getQuantityString(
-                                R.plurals.batch_unsupported,
-                                unsupported,
-                                unsupported,
-                            )
-                    )
-                }
+                issues += app.resources.getQuantityString(R.plurals.batch_unsupported, unsupported, unsupported)
+            if (issues.isNotEmpty()) mutable.update { it.copy(error = issues.joinToString("\n")) }
         }
 
     fun addFolder(context: Context, tree: Uri) =
@@ -196,6 +199,8 @@ internal object NcmBatch {
             val root = BatchFiles.document(tree)
             val directories = ArrayDeque<Pair<Uri, String>>()
             val visited = mutableSetOf<String>()
+            val known = knownNcmKeys()
+            val issues = linkedSetOf<String>()
             directories.add(root to "")
             while (directories.isNotEmpty()) {
                 currentCoroutineContext().ensureActive()
@@ -209,20 +214,59 @@ internal object NcmBatch {
                         directories.add(
                             file.uri to if (path.isEmpty()) file.name else "$path/${file.name}"
                         )
-                    else if (!isDirectory && BatchFiles.supported(file.name))
-                        files += file.copy(directory = path)
+                    else if (!isDirectory) {
+                        val input = readInput(app, known, issues) { file } ?: continue
+                        if (BatchFiles.supports(input)) files += input.copy(directory = path)
+                    }
                 }
-                append(files)
+                append(files, fromFolder = true)
             }
+            if (issues.isNotEmpty()) mutable.update { it.copy(error = issues.joinToString("\n")) }
         }
 
-    private fun append(files: List<BatchFile>) {
+    private fun knownNcmKeys() = state.value.items.mapNotNullTo(hashSetOf()) {
+        if (it.file.ncm && !it.sourceDeleted) it.file.key else null
+    }
+
+    private inline fun readInput(
+        context: Context,
+        known: Set<String>,
+        issues: MutableSet<String>,
+        read: () -> BatchFile,
+    ): BatchFile? =
+        try {
+            val file = read()
+            if (!file.ncm && file.key in known && BatchFiles.openInput(context, file.uri).use(Ncm::matches))
+                file.copy(ncm = true)
+            else file
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            issues += friendly(context, error)
+            null
+        }
+
+    private fun append(files: List<BatchFile>, shared: Boolean = false, fromFolder: Boolean = false) {
+        if (files.isEmpty()) return
         mutable.update { state ->
-            val keys = state.items.map { it.file.key }.toMutableSet()
-            state.copy(
-                items = state.items + files.filter { keys.add(it.key) }.map { BatchItem(it) },
-                candidates = null,
-            )
+            val items = state.items.associateByTo(linkedMapOf()) { it.file.key }
+            for (file in files) {
+                val old = items[file.key]
+                items[file.key] = when {
+                    old == null || old.sourceDeleted -> BatchItem(file, shared = shared)
+                    else -> {
+                        val input = if (fromFolder) file else file.copy(directory = old.file.directory)
+                        val changed = input.directory != old.file.directory || input.ncm != old.file.ncm
+                        old.copy(
+                            file = input,
+                            shared = shared,
+                            status = if (changed) BatchStatus.PENDING else old.status,
+                            detail = if (changed) null else old.detail,
+                        )
+                    }
+                }
+            }
+            state.copy(items = items.values.toList())
         }
     }
 
@@ -233,7 +277,7 @@ internal object NcmBatch {
                 snapshot.items.filter { it.status == BatchStatus.FAILED && !it.sourceDeleted }
             else snapshot.pending
         if (items.isEmpty()) return
-        launch(context, R.string.unlocking) { app ->
+        launch(context, R.string.unlocking, sharedInputs(items)) { app ->
             val output = BatchFiles(app, snapshot.outputTree)
             process(app, items) { item, directory ->
                 if (!item.file.ncm && !snapshot.options.copyAudio) {
@@ -309,10 +353,10 @@ internal object NcmBatch {
         val snapshot = state.value
         val items = snapshot.items.filter { it.selected && it.file.ncm && !it.sourceDeleted }
         if (items.isEmpty()) return
-        launch(context, R.string.batch_checking) { app ->
+        launch(context, R.string.batch_checking, sharedInputs(items)) { app ->
             val output = BatchFiles(app, snapshot.outputTree)
             val candidates = mutableListOf<CleanupCandidate>()
-            process(app, items) { item, directory ->
+            val failures = process(app, items) { item, directory ->
                 val (decoded, sourceDigest) =
                     prepare(app, item.file, directory, restoreMetadata = false)
                 val expected = Ncm.outputName(item.file.name, decoded.extension)
@@ -321,7 +365,7 @@ internal object NcmBatch {
                         ?: output.find(item.file.directory, expected)
                 if (saved != null && !BatchFiles.sameFile(app, saved.uri, item.file.uri)) {
                     val copy = File(directory, "existing.${decoded.extension}")
-                    checkNotNull(app.contentResolver.openInputStream(saved.uri)).use { input ->
+                    BatchFiles.openForVerification(app, saved.uri).use { input ->
                         copy.outputStream().use { MediaFiles.copy(input, it) }
                     }
                     val coroutine = currentCoroutineContext()
@@ -356,7 +400,8 @@ internal object NcmBatch {
                     )
                 }
             }
-            mutable.update { it.copy(candidates = candidates) }
+            if (candidates.isNotEmpty() || failures == 0)
+                mutable.update { it.copy(candidates = candidates) }
         }
     }
 
@@ -366,9 +411,10 @@ internal object NcmBatch {
             dismissCandidates()
             return
         }
-        launch(context, R.string.batch_deleting) { app ->
-            val byKey = candidates.associateBy { it.source.key }
-            process(app, state.value.items.filter { it.file.key in byKey }) { item, _ ->
+        val byKey = candidates.associateBy { it.source.key }
+        val items = state.value.items.filter { it.file.key in byKey }
+        launch(context, R.string.batch_deleting, sharedInputs(items)) { app ->
+            process(app, items) { item, _ ->
                 val candidate = byKey.getValue(item.file.key)
                 check(!BatchFiles.sameFile(app, candidate.source.uri, candidate.output.uri)) {
                     app.getString(R.string.batch_same_file)
@@ -401,7 +447,7 @@ internal object NcmBatch {
     ): Pair<File, String> {
         val hash = MessageDigest.getInstance("SHA-256")
         val output =
-            checkNotNull(context.contentResolver.openInputStream(source.uri)).use { stream ->
+            BatchFiles.openInput(context, source.uri).use { stream ->
                 DigestInputStream(stream, hash).use { input ->
                     if (source.ncm)
                         try {
@@ -459,10 +505,11 @@ internal object NcmBatch {
         context: Context,
         items: List<BatchItem>,
         run: suspend (BatchItem, File) -> Unit,
-    ) {
+    ): Int {
         val directory = File(context.cacheDir, "ncm")
         check(directory.mkdirs() || directory.isDirectory)
-        mutable.update { it.copy(total = items.size, completed = 0, candidates = null) }
+        mutable.update { it.copy(total = items.size, completed = 0) }
+        var failures = 0
         for (item in items) {
             currentCoroutineContext().ensureActive()
             mutable.update { it.copy(current = item.file.path, progress = 0f) }
@@ -480,22 +527,25 @@ internal object NcmBatch {
                     )
                 }
             } catch (error: Exception) {
+                failures++
+                val cause = (error as? BatchOutputException)?.cause ?: error
                 update(item.file.key) {
                     it.copy(
                         status = BatchStatus.FAILED,
-                        detail =
-                            friendly(context, (error as? BatchOutputException)?.cause ?: error),
+                        detail = friendly(context, cause),
                         output = (error as? BatchOutputException)?.output ?: it.output,
                         outputTree =
                             if (error is BatchOutputException) state.value.outputTree
                             else it.outputTree,
                     )
                 }
+                if (cause is BatchProviderUnavailable) throw cause
             } finally {
                 directory.listFiles()?.forEach { it.delete() }
             }
             mutable.update { it.copy(completed = it.completed + 1, progress = null) }
         }
+        return failures
     }
 
     private fun update(key: String, transform: (BatchItem) -> BatchItem) {
@@ -503,6 +553,8 @@ internal object NcmBatch {
             state.copy(items = state.items.map { if (it.file.key == key) transform(it) else it })
         }
     }
+
+    private fun sharedInputs(items: List<BatchItem>) = items.filter { it.shared }.map { it.file.uri }
 
     @Synchronized
     private fun launch(
@@ -526,10 +578,14 @@ internal object NcmBatch {
                 total = 0,
                 progress = null,
                 error = null,
+                candidates = null,
             )
         }
         try {
-            val uris = (grants + sharedUris).distinct()
+            val uris = grants.distinct().filter {
+                context.checkUriPermission(it, Process.myPid(), Process.myUid(), Intent.FLAG_GRANT_READ_URI_PERMISSION) ==
+                    PackageManager.PERMISSION_GRANTED
+            }
             val intent = Intent(context, NcmService::class.java)
             if (uris.isNotEmpty()) {
                 intent.clipData =
@@ -578,7 +634,16 @@ internal object NcmBatch {
     private fun friendly(context: Context, error: Exception): String {
         if (BuildConfig.DEBUG) Log.e("NcmBatch", "Batch operation failed", error)
         return when (error) {
+            is BatchProviderUnavailable -> {
+                val pm = context.packageManager
+                val appName =
+                    error.authority?.let { pm.resolveContentProvider(it, PackageManager.MATCH_DISABLED_COMPONENTS) }
+                        ?.applicationInfo?.loadLabel(pm)
+                if (appName.isNullOrBlank()) context.getString(R.string.batch_provider_unavailable)
+                else context.getString(R.string.batch_provider_unavailable_named, appName)
+            }
             is UnsupportedMediaException -> context.getString(error.messageRes)
+            is java.io.FileNotFoundException -> context.getString(R.string.batch_file_unavailable)
             is SecurityException -> context.getString(R.string.batch_permission_error)
             else ->
                 error.message?.takeIf { it.isNotBlank() }?.take(240)

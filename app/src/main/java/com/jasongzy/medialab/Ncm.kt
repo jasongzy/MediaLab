@@ -120,7 +120,7 @@ internal object Ncm {
                                     buffer.copyOfRange(0, 3).contentEquals("ID3".toByteArray()) ||
                                         ((buffer[0].toInt() and 255) == 255 &&
                                             (buffer[1].toInt() and 0xe0) == 0xe0) -> "mp3"
-                                    else -> error("Unsupported NCM audio format")
+                                    else -> throw IllegalArgumentException("Unsupported NCM audio format")
                                 }
                             onFormat(checkNotNull(extension))
                         }

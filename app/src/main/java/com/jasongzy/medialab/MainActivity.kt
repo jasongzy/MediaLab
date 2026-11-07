@@ -41,15 +41,19 @@ import kotlinx.coroutines.launch
 class MainActivity : AppCompatActivity() {
     private lateinit var model: LabViewModel
 
+    private companion object {
+        var instances = 0
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         if (
-            savedInstanceState == null &&
-                !NcmBatch.state.value.busy &&
-                !intent.getBooleanExtra("batch", false)
+            instances++ == 0 &&
+                (NcmBatch.state.value == BatchState() ||
+                    (savedInstanceState == null && !intent.getBooleanExtra("batch", false)))
         )
-            NcmBatch.clear()
+            NcmBatch.clear(this)
         model = ViewModelProvider(this)[LabViewModel::class.java]
         setContent {
             val state by model.state.collectAsStateWithLifecycle()
@@ -63,6 +67,11 @@ class MainActivity : AppCompatActivity() {
             MaterialTheme(colorScheme = colors) { LabApp(model, state, ::finish) }
         }
         if (savedInstanceState == null) receive(intent)
+    }
+
+    override fun onDestroy() {
+        if (--instances == 0 && isFinishing) NcmBatch.clear(this)
+        super.onDestroy()
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -87,6 +96,7 @@ class MainActivity : AppCompatActivity() {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun LabApp(model: LabViewModel, state: LabState, exit: () -> Unit) {
+    val context = LocalContext.current
     val batch by NcmBatch.state.collectAsStateWithLifecycle()
     val pages = rememberSaveableStateHolder()
     var settings by rememberSaveable { mutableStateOf(false) }
@@ -94,10 +104,7 @@ private fun LabApp(model: LabViewModel, state: LabState, exit: () -> Unit) {
     var confirmExit by rememberSaveable { mutableStateOf(false) }
     var stopAndExit by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(stopAndExit, batch.busy) {
-        if (stopAndExit && !batch.busy) {
-            NcmBatch.clear()
-            exit()
-        }
+        if (stopAndExit && !batch.busy) exit()
     }
     BackHandler(
         enabled =
@@ -110,7 +117,6 @@ private fun LabApp(model: LabViewModel, state: LabState, exit: () -> Unit) {
     ) {
         confirmExit = true
     }
-    val context = LocalContext.current
     val clipboard = LocalClipboard.current
     val scope = rememberCoroutineScope()
     val notice = state.notice?.let {
@@ -309,7 +315,6 @@ private fun LabApp(model: LabViewModel, state: LabState, exit: () -> Unit) {
             confirmButton = {
                 TextButton({
                     confirmExit = false
-                    if (!batch.busy) NcmBatch.clear()
                     exit()
                 }) {
                     Text(

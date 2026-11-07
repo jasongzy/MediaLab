@@ -15,12 +15,16 @@
     <string name="batch_failed">失败</string>
     <string name="batch_reading">正在读取文件…</string>
     <string name="batch_scanning">正在扫描文件夹…</string>
+    <string name="batch_folder_unavailable">无法读取文件夹列表，请重试</string>
     <plurals name="batch_unsupported">
         <item quantity="other">已跳过 %1$d 个不支持的文件，请选择 NCM 或音频文件。</item>
     </plurals>
     <string name="batch_ordinary_skipped">已跳过普通音频</string>
     <string name="batch_exists">输出文件夹中已有同名文件</string>
     <string name="batch_source_changed">源文件或输出文件已变化，请检查后重试。</string>
+    <string name="batch_file_unavailable">无法打开源文件或输出文件，请检查文件是否仍在原位置</string>
+    <string name="batch_provider_unavailable">暂时无法连接提供这些文件的应用。请先打开该应用，再返回 Media Lab 重试</string>
+    <string name="batch_provider_unavailable_named">暂时无法连接提供这些文件的应用「%1$s」。请先打开该应用，再返回 Media Lab 重试</string>
     <string name="batch_checking">正在核对已解锁的原文件…</string>
     <string name="batch_matched">已核对匹配的输出文件</string>
     <string name="batch_unmatched">未能核对到匹配的输出文件</string>

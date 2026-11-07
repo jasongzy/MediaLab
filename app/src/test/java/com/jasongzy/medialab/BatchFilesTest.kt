@@ -27,9 +27,6 @@ class BatchFilesTest {
             BatchFiles.validName(name)
         )
         assertTrue(BatchFiles.validName("歌曲 01.flac"))
-        assertTrue(BatchFiles.supported("song.NCM"))
-        assertTrue(BatchFiles.supported("song.flac"))
-        assertFalse(BatchFiles.supported("image.jpg"))
     }
 
     @Test

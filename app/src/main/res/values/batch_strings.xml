@@ -15,6 +15,7 @@
     <string name="batch_failed">Failed</string>
     <string name="batch_reading">Reading files…</string>
     <string name="batch_scanning">Scanning folder…</string>
+    <string name="batch_folder_unavailable">The folder listing could not be loaded. Please try again</string>
     <plurals name="batch_unsupported">
         <item quantity="one">Skipped %1$d unsupported file. Choose NCM or audio files.</item>
         <item quantity="other">Skipped %1$d unsupported files. Choose NCM or audio files.</item>
@@ -22,6 +23,9 @@
     <string name="batch_ordinary_skipped">Ordinary audio skipped</string>
     <string name="batch_exists">An output with this name already exists</string>
     <string name="batch_source_changed">The source or output has changed. Check the files and try again.</string>
+    <string name="batch_file_unavailable">The source or output file could not be opened. Check that it is still in the same location</string>
+    <string name="batch_provider_unavailable">The app providing these files is unavailable. Open that app, then return to Media Lab and try again</string>
+    <string name="batch_provider_unavailable_named">%1$s, the app providing these files, is unavailable. Open it, then return to Media Lab and try again</string>
     <string name="batch_checking">Checking unlocked originals…</string>
     <string name="batch_matched">Matching output verified</string>
     <string name="batch_unmatched">A matching output could not be verified</string>

@@ -3,10 +3,13 @@ package com.jasongzy.medialab
 import android.content.ContentValues
 import android.content.Context
 import android.content.res.AssetManager
+import android.database.MatrixCursor
 import android.graphics.Bitmap
 import android.net.Uri
+import android.os.Bundle
 import android.os.ParcelFileDescriptor
 import android.provider.DocumentsContract
+import android.provider.DocumentsContract.Document
 import android.provider.MediaStore
 import com.kyant.taglib.Picture
 import com.kyant.taglib.TagLib
@@ -17,6 +20,29 @@ import java.nio.ByteOrder
 import java.util.UUID
 
 internal class MediaStoreRegression(private val app: Context, private val fixtures: AssetManager) {
+    suspend fun directoryListing() {
+        val columns = arrayOf(Document.COLUMN_MIME_TYPE, Document.COLUMN_DOCUMENT_ID, Document.COLUMN_DISPLAY_NAME)
+        for (authority in listOf("test.files", "com.mixplorer.silver.doc")) {
+            val tree = DocumentsContract.buildTreeDocumentUri(authority, "ABCD-1234:Music")
+            var reads = 0
+            val entries = BatchFiles.readChildren(tree) {
+                MatrixCursor(columns).apply {
+                    val read = ++reads
+                    check(read <= 4)
+                    extras = Bundle().apply {
+                        putBoolean(DocumentsContract.EXTRA_LOADING, read < 3 || authority != "test.files")
+                    }
+                    addRow(arrayOf(Document.MIME_TYPE_DIR, "parent", ".."))
+                    if (read >= 2 || authority == "test.files") addRow(arrayOf("audio/mpeg", "one", "first.mp3"))
+                    if (read >= 3) addRow(arrayOf("application/octet-stream", "two", "second.ncm"))
+                }
+            }
+            check(entries.all { !it.second })
+            check(entries.map { it.first.name to DocumentsContract.getDocumentId(it.first.uri) } ==
+                listOf("first.mp3" to "one", "second.ncm" to "two"))
+        }
+    }
+
     private fun fixture(extension: String = "wav"): File =
         File(app.cacheDir, "${UUID.randomUUID()}.$extension").apply {
             if (extension != "wav") {

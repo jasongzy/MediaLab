@@ -65,16 +65,16 @@ internal fun NcmScreen(model: LabViewModel, state: BatchState) {
         } else perform(action)
     }
     val files =
-        rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) {
-            if (it.isNotEmpty()) NcmBatch.addFiles(context, it)
+        rememberNcmPicker(ActivityResultContracts.OpenMultipleDocuments()) {
+            NcmBatch.addFiles(context, it)
         }
     val folder =
-        rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) {
-            if (it != null) NcmBatch.addFolder(context, it)
+        rememberNcmPicker(ActivityResultContracts.OpenDocumentTree()) {
+            NcmBatch.addFolder(context, it.first())
         }
     val output =
-        rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) {
-            if (it != null) NcmBatch.output(context, it)
+        rememberNcmPicker(ActivityResultContracts.OpenDocumentTree()) {
+            NcmBatch.output(context, it.first())
         }
     val start: (Boolean) -> Unit = { retry ->
         if (state.options.deleteOriginal || state.options.conflict == ConflictPolicy.OVERWRITE)
@@ -102,14 +102,14 @@ internal fun NcmScreen(model: LabViewModel, state: BatchState) {
                         text = { Text(stringResource(R.string.batch_add_files)) },
                         onClick = {
                             addMenu = false
-                            files.launch(arrayOf("*/*"))
+                            files(arrayOf("*/*"))
                         },
                     )
                     DropdownMenuItem(
                         text = { Text(stringResource(R.string.batch_add_folder)) },
                         onClick = {
                             addMenu = false
-                            folder.launch(null)
+                            folder(null)
                         },
                     )
                 }
@@ -165,7 +165,7 @@ internal fun NcmScreen(model: LabViewModel, state: BatchState) {
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-            TextButton({ output.launch(state.outputTree) }, enabled = !state.busy) {
+            TextButton({ output(state.outputTree) }, enabled = !state.busy) {
                 Text(stringResource(R.string.batch_change))
             }
             if (state.outputTree != null)
@@ -184,10 +184,10 @@ internal fun NcmScreen(model: LabViewModel, state: BatchState) {
                     style = MaterialTheme.typography.bodyLarge,
                 )
                 Spacer(Modifier.height(16.dp))
-                Button({ files.launch(arrayOf("*/*")) }) {
+                Button({ files(arrayOf("*/*")) }) {
                     Text(stringResource(R.string.batch_add_files))
                 }
-                TextButton({ folder.launch(null) }) {
+                TextButton({ folder(null) }) {
                     Text(stringResource(R.string.batch_add_folder))
                 }
                 TextButton({ options = true }) { Text(stringResource(R.string.batch_options)) }
