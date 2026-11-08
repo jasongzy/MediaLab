@@ -1,5 +1,6 @@
 package com.jasongzy.medialab
 
+import android.content.ContentResolver
 import android.content.ContentValues
 import android.content.Context
 import android.content.ClipData
@@ -10,6 +11,7 @@ import android.net.Uri
 import android.os.Environment
 import android.provider.MediaStore
 import android.provider.OpenableColumns
+import android.util.Log
 import android.webkit.MimeTypeMap
 import java.io.BufferedInputStream
 import java.io.EOFException
@@ -21,6 +23,7 @@ import java.io.OutputStream
 import java.net.HttpURLConnection
 import java.net.Proxy
 import java.net.URI
+import java.net.URISyntaxException
 import java.nio.file.DirectoryNotEmptyException
 import java.nio.file.FileVisitResult
 import java.nio.file.Files
@@ -31,6 +34,7 @@ import java.nio.file.SimpleFileVisitor
 import java.nio.file.attribute.BasicFileAttributes
 import java.util.UUID
 import kotlin.coroutines.resume
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -105,9 +109,12 @@ internal object MediaFiles {
         })
     }
 
-    fun sourceName(context: Context, uri: Uri): String = readSource { name(context, uri) }
+    fun sourceName(context: Context, uri: Uri): String {
+        val name = if (uri.scheme == ContentResolver.SCHEME_CONTENT) displayName(context, uri) else null
+        return name ?: basename(uri.lastPathSegment) ?: "media"
+    }
 
-    inline fun <T> readSource(read: () -> T): T =
+    private inline fun <T> readSource(read: () -> T): T =
         try {
             read()
         } catch (error: Exception) {
@@ -115,17 +122,24 @@ internal object MediaFiles {
             throw UnsupportedMediaException(R.string.source_open_failed).apply { initCause(error) }
         }
 
-    private fun name(context: Context, uri: Uri): String {
-        val name =
-            if (uri.scheme == "http" || uri.scheme == "file") uri.lastPathSegment
-            else
-                context.contentResolver
-                    .query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
-                    ?.use { if (it.moveToFirst()) it.getString(0) else null }
-        return name
-            ?.substringAfterLast('/')
-            ?.substringAfterLast('\\')
-            ?.takeIf { it.isNotBlank() } ?: "media"
+    private fun basename(name: String?): String? =
+        name?.substringAfterLast('/')?.substringAfterLast('\\')?.takeIf { it.isNotBlank() }
+
+    private inline fun <T> sourceMetadata(read: () -> T): T? = try {
+        read()
+    } catch (error: Exception) {
+        if (error is CancellationException) throw error
+        if (BuildConfig.DEBUG) Log.w("MediaFiles", "Cannot read file metadata", error)
+        null
+    }
+
+    fun sourceMime(context: Context, uri: Uri) = sourceMetadata { context.contentResolver.getType(uri) }
+
+    private fun displayName(context: Context, uri: Uri): String? = sourceMetadata {
+        context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+            val index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+            if (index >= 0 && cursor.moveToFirst()) basename(cursor.getString(index)) else null
+        }
     }
 
     fun temporary(directory: File, extension: String): File =
@@ -133,20 +147,22 @@ internal object MediaFiles {
             it.parentFile!!.mkdirs()
         }
 
-    suspend fun copy(input: InputStream, output: OutputStream, progress: (Long) -> Unit = {}): Long {
+    suspend fun copy(input: InputStream, output: OutputStream, expected: Long = -1, progress: (Long) -> Unit = {}): Long {
         val coroutine = currentCoroutineContext()
         val buffer = ByteArray(256 * 1024)
         var done = 0L
         while (true) {
             coroutine.ensureActive()
             val count = input.read(buffer)
-            if (count < 0) return done
+            if (count < 0) break
             if (count > 0) {
                 output.write(buffer, 0, count)
                 done += count
                 progress(done)
             }
         }
+        if (expected >= 0 && done != expected) throw EOFException("Expected $expected bytes, received $done")
+        return done
     }
 
     suspend inline fun import(
@@ -157,24 +173,38 @@ internal object MediaFiles {
         try {
             if (uri.scheme == "http") file.outputStream().use { copyLocalStream(uri.toString(), it) }
             else {
-                val source = readSource { context.contentResolver.openInputStream(uri) }
-                    ?: throw UnsupportedMediaException(R.string.source_open_failed)
-                source.buffered().use { input ->
-                    inspectContent(input)
-                    file.outputStream().use { copy(input, it) }
+                val resolver = context.contentResolver
+                val asset = if (uri.scheme == ContentResolver.SCHEME_CONTENT)
+                    readSource { resolver.openAssetFileDescriptor(uri, "r") }
+                        ?: throw UnsupportedMediaException(R.string.source_open_failed)
+                else null
+                asset.use {
+                    val expected = asset?.length ?: -1
+                    val source = readSource { asset?.createInputStream() ?: resolver.openInputStream(uri) }
+                        ?: throw UnsupportedMediaException(R.string.source_open_failed)
+                    source.buffered().use { input ->
+                        inspectContent(input)
+                        file.outputStream().use { copy(input, it, expected) }
+                    }
                 }
             }
             if (file.length() == 0L) throw UnsupportedMediaException(R.string.empty_media_file)
             return file
-        } catch (error: Exception) {
+        } catch (error: Throwable) {
             file.delete()
+            if (error is IOException) {
+                currentCoroutineContext().ensureActive()
+                throw UnsupportedMediaException(R.string.incomplete_import).apply { initCause(error) }
+            }
             throw error
         }
     }
 
     suspend fun copyLocalStream(source: String, output: OutputStream) {
-        val uri = URI(source)
-        if (uri.scheme != "http" || uri.host != "127.0.0.1" || uri.userInfo != null)
+        val uri = try { URI(source) } catch (error: URISyntaxException) {
+            throw UnsupportedMediaException(R.string.media_stream_unavailable).apply { initCause(error) }
+        }
+        if (uri.scheme != "http" || uri.host != "127.0.0.1" || uri.userInfo != null || uri.port > 65535)
             throw UnsupportedMediaException(R.string.media_stream_unavailable)
         currentCoroutineContext().ensureActive()
         val connection = uri.toURL().openConnection(Proxy.NO_PROXY) as HttpURLConnection
@@ -188,9 +218,7 @@ internal object MediaFiles {
             }
             val status = connection.responseCode
             if (status != HttpURLConnection.HTTP_OK) throw IOException("HTTP $status")
-            val expected = connection.contentLengthLong
-            val copied = connection.inputStream.use { copy(it, output) }
-            if (expected >= 0 && copied != expected) throw EOFException("Incomplete media stream")
+            connection.inputStream.use { copy(it, output, connection.contentLengthLong) }
         } catch (error: IOException) {
             currentCoroutineContext().ensureActive()
             throw UnsupportedMediaException(R.string.media_stream_unavailable).apply {
@@ -348,7 +376,7 @@ internal object MediaFiles {
             values.clear()
             values.put(MediaStore.MediaColumns.IS_PENDING, 0)
             check(resolver.update(uri, values, null, null) == 1) { "Cannot publish output" }
-            return relativePath + name(context, uri)
+            return relativePath + sourceName(context, uri)
         } catch (error: Exception) {
             runCatching { resolver.delete(uri, null, null) }.onFailure(error::addSuppressed)
             throw error

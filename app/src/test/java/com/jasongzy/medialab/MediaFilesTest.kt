@@ -2,6 +2,7 @@ package com.jasongzy.medialab
 
 import com.sun.net.httpserver.HttpServer
 import java.io.ByteArrayOutputStream
+import java.io.EOFException
 import java.io.File
 import java.net.InetSocketAddress
 import java.util.concurrent.atomic.AtomicInteger
@@ -47,6 +48,13 @@ class MediaFilesTest {
     }
 
     @Test
+    fun copyingRejectsAnEarlyEndOfStream() {
+        assertThrows(EOFException::class.java) {
+            runBlocking { MediaFiles.copy(byteArrayOf(1).inputStream(), ByteArrayOutputStream(), expected = 2) }
+        }
+    }
+
+    @Test
     fun localImageStreamsPreserveBytesAndRestrictRequests() = runBlocking {
         val bytes = ByteArray(300_000) { it.toByte() }
         val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
@@ -71,6 +79,8 @@ class MediaFilesTest {
                 listOf(
                     "$base/redirect",
                     "$base/missing",
+                    "$base/bad%escape",
+                    "http://127.0.0.1:65536/image.webp",
                     "$base/image.webp".replace("127.0.0.1", "localhost"),
                     "$base/image.webp".replace("127.0.0.1", "user@127.0.0.1"),
                     "$base/image.webp".replace("http:", "https:"),

@@ -327,7 +327,7 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
             try {
                 preview = Photos.preview(checkNotNull(frame.pixels))
                 acceptPhoto(frame, preview, name, uri,
-                    MediaFiles.readSource { context.contentResolver.getType(uri) } ?: "application/octet-stream", source.length())
+                    MediaFiles.sourceMime(context, uri) ?: "application/octet-stream", source.length())
             } finally {
                 if (frame !== state.value.photo.frame) {
                     preview?.recycle()
