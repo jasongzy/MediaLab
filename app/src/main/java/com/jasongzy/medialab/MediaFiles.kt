@@ -133,14 +133,14 @@ internal object MediaFiles {
             it.parentFile!!.mkdirs()
         }
 
-    suspend fun copy(input: InputStream, output: OutputStream, progress: (Long) -> Unit = {}) {
+    suspend fun copy(input: InputStream, output: OutputStream, progress: (Long) -> Unit = {}): Long {
         val coroutine = currentCoroutineContext()
         val buffer = ByteArray(256 * 1024)
         var done = 0L
         while (true) {
             coroutine.ensureActive()
             val count = input.read(buffer)
-            if (count < 0) break
+            if (count < 0) return done
             if (count > 0) {
                 output.write(buffer, 0, count)
                 done += count
@@ -189,8 +189,7 @@ internal object MediaFiles {
             val status = connection.responseCode
             if (status != HttpURLConnection.HTTP_OK) throw IOException("HTTP $status")
             val expected = connection.contentLengthLong
-            var copied = 0L
-            connection.inputStream.use { copy(it, output) { count -> copied = count } }
+            val copied = connection.inputStream.use { copy(it, output) }
             if (expected >= 0 && copied != expected) throw EOFException("Incomplete media stream")
         } catch (error: IOException) {
             currentCoroutineContext().ensureActive()

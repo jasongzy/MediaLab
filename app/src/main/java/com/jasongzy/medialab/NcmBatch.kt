@@ -466,7 +466,7 @@ internal object NcmBatch {
                     else
                         File(directory, "copy.${source.name.substringAfterLast('.').lowercase()}")
                             .also { file ->
-                                file.outputStream().use { output ->
+                                val copied = file.outputStream().use { output ->
                                     MediaFiles.copy(input, output) { done ->
                                         if (source.size > 0)
                                             mutable.update {
@@ -480,6 +480,8 @@ internal object NcmBatch {
                                             }
                                     }
                                 }
+                                if (source.size >= 0 && copied != source.size)
+                                    throw UnsupportedMediaException(R.string.batch_source_changed)
                             }
                 }
             }

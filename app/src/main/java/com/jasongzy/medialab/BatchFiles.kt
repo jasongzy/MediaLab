@@ -198,15 +198,17 @@ internal class BatchFiles(private val context: Context, val tree: Uri?) {
             }
         var verified = false
         try {
+            val size = file.length()
+            val hash = MessageDigest.getInstance("SHA-256")
             checkNotNull(resolver.openOutputStream(uri, "w")).use { output ->
-                file.inputStream().use { input ->
-                    MediaFiles.copy(input, output) { progress(0.6f + 0.25f * it / file.length()) }
+                DigestInputStream(file.inputStream(), hash).use { input ->
+                    val copied = MediaFiles.copy(input, output) { progress(0.6f + 0.25f * it / size) }
+                    check(copied == size) { context.getString(R.string.batch_source_changed) }
                 }
             }
             progress(0.85f)
             val coroutine = currentCoroutineContext()
-            val expected =
-                file.inputStream().use { AudioFingerprint.digest(it) { coroutine.ensureActive() } }
+            val expected = AudioFingerprint.hex(hash.digest())
             check(digest(context, uri) == expected) {
                 context.getString(R.string.batch_verification_failed)
             }
