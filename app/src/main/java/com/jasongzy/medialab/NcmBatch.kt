@@ -54,6 +54,7 @@ internal data class BatchItem(
     val outputTree: Uri? = null,
     val detail: String? = null,
     val sourceDeleted: Boolean = false,
+    val pendingDeletion: CleanupCandidate? = null,
 )
 
 internal data class CleanupCandidate(
@@ -62,17 +63,23 @@ internal data class CleanupCandidate(
     val sourceDigest: String,
     val outputDigest: String,
 ) {
-    suspend fun deleteSource(context: Context) {
-        check(
-            BatchFiles.digest(context, source.uri) == sourceDigest &&
-                BatchFiles.digest(context, output.uri) == outputDigest
-        ) {
-            context.getString(R.string.batch_source_changed)
+    // A missing output can be written again; changed contents require a fresh check.
+    suspend fun complete(context: Context, deleteOriginal: Boolean): Boolean {
+        if (BatchFiles.digest(context, source.uri) != sourceDigest)
+            throw UnsupportedMediaException(R.string.batch_source_changed)
+        val savedDigest = BatchFiles.digestIfPresent(context, output.uri) ?: return false
+        if (savedDigest != outputDigest) throw UnsupportedMediaException(R.string.batch_source_changed)
+        if (deleteOriginal) {
+            if (sourceDigest == outputDigest)
+                BatchFiles.requireDistinct(context, source.uri, output.uri, R.string.batch_same_file, identicalBytes = true)
+            currentCoroutineContext().ensureActive()
+            BatchFiles.delete(context, source.uri)
         }
-        if (sourceDigest == outputDigest)
-            BatchFiles.requireDistinct(context, source.uri, output.uri, R.string.batch_same_file, identicalBytes = true)
-        currentCoroutineContext().ensureActive()
-        BatchFiles.delete(context, source.uri)
+        return true
+    }
+
+    suspend fun deleteSource(context: Context) {
+        check(complete(context, deleteOriginal = true)) { context.getString(R.string.batch_verification_failed) }
     }
 }
 
@@ -142,7 +149,7 @@ internal object NcmBatch {
                     items =
                         it.items.map { item ->
                             if (!item.sourceDeleted)
-                                item.copy(status = BatchStatus.PENDING, detail = null)
+                                item.copy(status = BatchStatus.PENDING, detail = null, pendingDeletion = null)
                             else item
                         },
                 )
@@ -278,12 +285,14 @@ internal object NcmBatch {
                     old == null || old.sourceDeleted -> BatchItem(file, shared = shared)
                     else -> {
                         val input = if (fromFolder) file else file.copy(directory = old.file.directory)
-                        val changed = input.directory != old.file.directory || input.ncm != old.file.ncm
+                        val changed = input.directory != old.file.directory || input.ncm != old.file.ncm ||
+                            input.name != old.file.name || (input.size >= 0 && old.file.size >= 0 && input.size != old.file.size)
                         old.copy(
                             file = input,
                             shared = shared,
                             status = if (changed) BatchStatus.PENDING else old.status,
                             detail = if (changed) null else old.detail,
+                            pendingDeletion = if (changed) null else old.pendingDeletion?.copy(source = input),
                         )
                     }
                 }
@@ -312,21 +321,20 @@ internal object NcmBatch {
                     }
                     return@process
                 }
-                val existing = if (snapshot.options.conflict == ConflictPolicy.SKIP)
-                    output.namesIn(item.file.directory) else emptySequence()
-                fun skipExisting(name: String) {
-                    if (existing.any { it.equals(name, ignoreCase = true) }) throw ExistingOutput()
-                }
-                if (!item.file.ncm) skipExisting(item.file.name)
-                val (decoded, sourceDigest) =
-                    prepare(app, item.file, directory) { extension ->
+                val pending = item.pendingDeletion
+                val savedOutput = if (pending != null && pending.complete(app, snapshot.options.deleteOriginal)) pending.output else {
+                    if (pending != null) update(item.file.key) { it.copy(pendingDeletion = null) }
+                    val existing = if (snapshot.options.conflict == ConflictPolicy.SKIP)
+                        output.namesIn(item.file.directory) else emptySequence()
+                    fun skipExisting(name: String) {
+                        if (existing.any { it.equals(name, ignoreCase = true) }) throw ExistingOutput()
+                    }
+                    if (!item.file.ncm) skipExisting(item.file.name)
+                    val (decoded, sourceDigest) = prepare(app, item.file, directory) { extension ->
                         skipExisting(Ncm.outputName(item.file.name, extension))
                     }
-                val name =
-                    if (item.file.ncm) Ncm.outputName(item.file.name, decoded.extension)
-                    else item.file.name
-                val result =
-                    output.write(
+                    val name = if (item.file.ncm) Ncm.outputName(item.file.name, decoded.extension) else item.file.name
+                    val (saved, outputDigest) = output.write(
                         decoded,
                         item.file.directory,
                         name,
@@ -335,30 +343,21 @@ internal object NcmBatch {
                         protectedFiles,
                     ) { progress ->
                         mutable.update { it.copy(progress = progress) }
-                    }
-                if (result == null) {
+                    } ?: throw ExistingOutput()
+                    val verified = CleanupCandidate(item.file, saved, sourceDigest, outputDigest)
                     update(item.file.key) {
-                        it.copy(
-                            status = BatchStatus.SKIPPED,
-                            detail = app.getString(R.string.batch_exists),
-                        )
+                        it.copy(output = saved, outputTree = snapshot.outputTree,
+                            pendingDeletion = verified.takeIf { snapshot.options.deleteOriginal })
                     }
-                } else {
-                    val (saved, outputDigest) = result
-                    update(item.file.key) {
-                        it.copy(output = saved, outputTree = snapshot.outputTree)
-                    }
-                    if (snapshot.options.deleteOriginal) {
-                        CleanupCandidate(item.file, saved, sourceDigest, outputDigest).deleteSource(app)
-                        protectedFiles.remove(item.file)
-                        protectedFiles += saved
-                    }
-                    update(item.file.key) {
-                        it.copy(
-                            status = BatchStatus.SUCCESS,
-                            sourceDeleted = snapshot.options.deleteOriginal,
-                        )
-                    }
+                    if (snapshot.options.deleteOriginal) verified.deleteSource(app)
+                    saved
+                }
+                if (snapshot.options.deleteOriginal) {
+                    protectedFiles.remove(item.file)
+                    protectedFiles += savedOutput
+                }
+                update(item.file.key) {
+                    it.copy(status = BatchStatus.SUCCESS, sourceDeleted = snapshot.options.deleteOriginal, pendingDeletion = null)
                 }
             }
         }
@@ -381,6 +380,7 @@ internal object NcmBatch {
                             status = BatchStatus.PENDING,
                             output = null,
                             outputTree = null,
+                            pendingDeletion = null,
                             detail = app.getString(R.string.batch_unmatched),
                         )
                     }
@@ -393,6 +393,7 @@ internal object NcmBatch {
                                 BatchStatus.SUCCESS else item.status,
                             output = candidate.output,
                             outputTree = savedTree,
+                            pendingDeletion = null,
                             detail = app.getString(R.string.batch_matched),
                         )
                     }
@@ -419,6 +420,7 @@ internal object NcmBatch {
                     it.copy(
                         status = BatchStatus.SUCCESS,
                         sourceDeleted = true,
+                        pendingDeletion = null,
                         detail = app.getString(R.string.batch_deleted),
                     )
                 }
@@ -525,6 +527,9 @@ internal object NcmBatch {
                         status = failureStatus,
                         detail = friendly(context, cause),
                         output = (error as? BatchOutputException)?.output ?: it.output,
+                        pendingDeletion = it.pendingDeletion.takeUnless {
+                            cause is UnsupportedMediaException && cause.messageRes == R.string.batch_source_changed
+                        },
                         outputTree =
                             if (error is BatchOutputException) state.value.outputTree
                             else it.outputTree,

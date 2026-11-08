@@ -497,14 +497,20 @@ internal class BatchFiles(private val context: Context, val tree: Uri?) {
                 requireProvider(context, uri)
                 throw error
             } catch (error: IllegalArgumentException) {
+                // A live DocumentsProvider may reject a deleted tree document's ID.
                 requireProvider(context, uri)
-                throw IOException(context.getString(R.string.batch_file_unavailable), error)
+                throw FileNotFoundException(context.getString(R.string.batch_file_unavailable)).apply { initCause(error) }
             }
 
-        suspend fun digest(context: Context, uri: Uri): String {
+        suspend fun digest(context: Context, uri: Uri): String =
+            digestIfPresent(context, uri) ?: throw IOException(context.getString(R.string.batch_verification_failed))
+
+        suspend fun digestIfPresent(context: Context, uri: Uri): String? {
             val coroutine = currentCoroutineContext()
             val input = try {
                 openInput(context, uri)
+            } catch (_: FileNotFoundException) {
+                return null
             } catch (error: IOException) {
                 throw IOException(context.getString(R.string.batch_verification_failed), error)
             }
@@ -512,14 +518,15 @@ internal class BatchFiles(private val context: Context, val tree: Uri?) {
         }
 
         fun delete(context: Context, uri: Uri) {
-            if (DocumentsContract.isDocumentUri(context, uri)) {
-                check(DocumentsContract.deleteDocument(context.contentResolver, uri)) {
-                    context.getString(R.string.batch_delete_failed)
-                }
-            } else
-                check(context.contentResolver.delete(uri, null, null) == 1) {
-                    context.getString(R.string.batch_delete_failed)
-                }
+            val resolver = context.contentResolver
+            val deleted = if (DocumentsContract.isDocumentUri(context, uri)) DocumentsContract.deleteDocument(resolver, uri)
+                else resolver.delete(uri, null, null) == 1
+            check(deleted) { context.getString(R.string.batch_delete_failed) }
+            val stillReadable = try {
+                openInput(context, uri).use { true }
+            } catch (_: FileNotFoundException) { false }
+            catch (_: SecurityException) { false } // A deleted document's URI grant can be revoked.
+            check(!stillReadable) { context.getString(R.string.batch_delete_failed) }
         }
     }
 }

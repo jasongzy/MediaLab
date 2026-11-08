@@ -54,7 +54,7 @@
     <string name="batch_selected">已选 %1$d / %2$d 项</string>
     <string name="batch_failures">仅失败</string>
     <string name="batch_summary">完成 %1$d · 跳过 %2$d · 失败 %3$d</string>
-    <string name="batch_retry">重试解锁</string>
+    <string name="batch_retry">重试处理</string>
     <string name="batch_start">开始</string>
     <string name="batch_open_output">打开输出文件夹</string>
     <string name="batch_open_output_failed">无法打开输出文件夹</string>

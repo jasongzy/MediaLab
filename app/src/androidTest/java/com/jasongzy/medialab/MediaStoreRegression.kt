@@ -176,6 +176,8 @@ internal class MediaStoreRegression(private val app: Context, private val fixtur
                         check(renamed.name == "rename (1).wav")
                         verify(renamed.uri, replacement)
                         val candidate = CleanupCandidate(saved, renamed, savedDigest, digest)
+                        check(candidate.complete(app, deleteOriginal = false))
+                        verify(saved.uri, original)
                         BatchFiles.delete(app, renamed.uri)
                         val failure = runCatching { candidate.deleteSource(app) }.exceptionOrNull()
                         check(failure?.message == app.getString(R.string.batch_verification_failed))
