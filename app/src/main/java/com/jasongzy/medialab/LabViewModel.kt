@@ -9,6 +9,7 @@ import android.os.SystemClock
 import android.util.Log
 import androidx.compose.runtime.snapshots.Snapshot
 import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.viewModelScope
 import com.kyant.taglib.Picture
 import java.io.File
@@ -100,10 +101,14 @@ internal data class LabState(
                 .toSet()
 }
 
-internal class LabViewModel(application: Application) : AndroidViewModel(application) {
+internal enum class WorkspaceOverlay { SETTINGS, CONFIRM_EXIT }
+
+internal class LabViewModel(application: Application, savedState: SavedStateHandle) : AndroidViewModel(application) {
     private val context = application
     private val mutable = MutableStateFlow(LabState())
     val state = mutable.asStateFlow()
+    private val overlay = savedState.getMutableStateFlow<WorkspaceOverlay?>("workspaceOverlay", null)
+    val workspaceOverlay = overlay.asStateFlow()
     private val workspace = WorkspaceCache(application.cacheDir, NcmBatch::retainsInput) { state.value.workingFiles }
     private var job: Job? = null
     private var pickJob: Job? = null
@@ -174,9 +179,16 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
         mutable.update { it.copy(tab = tab) }
     }
 
-    fun showBatch(show: Boolean) {
-        mutable.update { it.copy(batchPage = show, tab = ImportType.AUDIO.ordinal) }
+    fun showOverlay(value: WorkspaceOverlay?) {
+        overlay.value = value
     }
+
+    private inline fun enterWorkspace(update: (LabState) -> LabState) {
+        mutable.update(update)
+        showOverlay(null)
+    }
+
+    fun showBatch(show: Boolean) = enterWorkspace { it.copy(batchPage = show, tab = ImportType.AUDIO.ordinal) }
 
     fun playbackPosition(file: File): Long =
         playbackPositions[file] ?: 0
@@ -348,7 +360,7 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
         val oldExport = state.value.exportFile
         discardResize()
         history = next
-        mutable.update {
+        enterWorkspace {
             it.copy(photo = photo, tab = ImportType.IMAGE.ordinal, exportFile = null, exportPreview = null)
         }
         old?.close()
@@ -412,7 +424,7 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
                     val document = checkNotNull(audio)
                     currentCoroutineContext().ensureActive()
                     val old = state.value.audio?.files.orEmpty()
-                    mutable.update {
+                    enterWorkspace {
                         it.copy(audio = document, batchPage = false, tab = type.ordinal)
                     }
                     old.forEach { it.delete() }
@@ -427,7 +439,7 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
                         throw cancelled
                     }
                     val old = state.value.video
-                    mutable.update { it.copy(video = document, tab = type.ordinal) }
+                    enterWorkspace { it.copy(video = document, tab = type.ordinal) }
                     old?.files?.forEach { it.delete() }
                 }
             }

@@ -100,23 +100,17 @@ private fun LabApp(model: LabViewModel, state: LabState, exit: () -> Unit) {
     val context = LocalContext.current
     val batch by NcmBatch.state.collectAsStateWithLifecycle()
     val pages = rememberSaveableStateHolder()
-    var settings by rememberSaveable { mutableStateOf(false) }
+    val overlay by model.workspaceOverlay.collectAsStateWithLifecycle()
+    val settings = overlay == WorkspaceOverlay.SETTINGS
     val clearingCache = state.busy && state.stage == R.string.clearing_cache
-    var confirmExit by rememberSaveable { mutableStateOf(false) }
     var stopAndExit by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(stopAndExit, batch.busy) {
         if (stopAndExit && !batch.busy) exit()
     }
-    BackHandler(
-        enabled =
-            !settings &&
-                (state.photo.frame != null ||
-                    state.audio != null ||
-                    state.video != null ||
-                    batch.items.isNotEmpty() ||
-                    batch.busy)
-    ) {
-        confirmExit = true
+    val hasWorkspace = state.photo.frame != null || state.audio != null || state.video != null ||
+        batch.items.isNotEmpty() || batch.busy
+    BackHandler(enabled = !settings && hasWorkspace) {
+        model.showOverlay(WorkspaceOverlay.CONFIRM_EXIT)
     }
     val clipboard = LocalClipboard.current
     val scope = rememberCoroutineScope()
@@ -129,7 +123,7 @@ private fun LabApp(model: LabViewModel, state: LabState, exit: () -> Unit) {
             model.clearNotice()
         }
     }
-    BackHandler(enabled = settings) { settings = false }
+    BackHandler(enabled = settings) { model.showOverlay(null) }
     BackHandler(enabled = !settings && state.tab == ImportType.AUDIO.ordinal && state.batchPage) { model.showBatch(false) }
     AnimatedContent(
         targetState = settings,
@@ -147,7 +141,7 @@ private fun LabApp(model: LabViewModel, state: LabState, exit: () -> Unit) {
                     state.refreshingMedia,
                     model::refreshMediaIndex,
                 ) {
-                    settings = false
+                    model.showOverlay(null)
                 }
             }
         else
@@ -163,7 +157,7 @@ private fun LabApp(model: LabViewModel, state: LabState, exit: () -> Unit) {
                                     Text(stringResource(R.string.unlock))
                                 }
                             ToolButton(R.drawable.ic_settings, R.string.settings) {
-                                settings = true
+                                model.showOverlay(WorkspaceOverlay.SETTINGS)
                             }
                         },
                     )
@@ -299,9 +293,9 @@ private fun LabApp(model: LabViewModel, state: LabState, exit: () -> Unit) {
             },
         )
     }
-    if (confirmExit)
+    if (overlay == WorkspaceOverlay.CONFIRM_EXIT && hasWorkspace && !state.busy && state.error == null)
         AlertDialog(
-            onDismissRequest = { confirmExit = false },
+            onDismissRequest = { model.showOverlay(null) },
             title = { Text(stringResource(R.string.exit_confirmation)) },
             text = {
                 Text(
@@ -312,7 +306,7 @@ private fun LabApp(model: LabViewModel, state: LabState, exit: () -> Unit) {
             },
             confirmButton = {
                 TextButton({
-                    confirmExit = false
+                    model.showOverlay(null)
                     exit()
                 }) {
                     Text(
@@ -324,7 +318,7 @@ private fun LabApp(model: LabViewModel, state: LabState, exit: () -> Unit) {
                 Row {
                     if (batch.busy)
                         TextButton({
-                            confirmExit = false
+                            model.showOverlay(null)
                             stopAndExit = true
                             NcmBatch.cancel()
                         }) {
@@ -333,7 +327,7 @@ private fun LabApp(model: LabViewModel, state: LabState, exit: () -> Unit) {
                                 color = MaterialTheme.colorScheme.error,
                             )
                         }
-                    TextButton({ confirmExit = false }) { Text(stringResource(R.string.cancel)) }
+                    TextButton({ model.showOverlay(null) }) { Text(stringResource(R.string.cancel)) }
                 }
             },
         )

@@ -4,6 +4,7 @@ import android.app.Application
 import android.app.Instrumentation
 import android.graphics.Bitmap
 import android.net.Uri
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModelStore
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
@@ -177,7 +178,7 @@ internal object AudioRegression {
         }
         try {
             instrumentation.runOnMainSync {
-                model = LabViewModel(app)
+                model = LabViewModel(app, SavedStateHandle())
                 store.put("audio", model)
                 model.open(Uri.fromFile(input), ImportType.AUDIO)
             }

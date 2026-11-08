@@ -8,6 +8,7 @@ import android.net.Uri
 import android.provider.MediaStore
 import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.IntSize
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModelStore
 import java.io.File
 import java.util.UUID
@@ -693,7 +694,7 @@ internal object VideoRegression {
         }
         try {
             onMain {
-                model = LabViewModel(app)
+                model = LabViewModel(app, SavedStateHandle())
                 store.put("video-test", model)
                 model.open(Uri.fromFile(multi), null)
             }

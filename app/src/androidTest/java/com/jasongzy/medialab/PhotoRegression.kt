@@ -14,6 +14,7 @@ import android.os.Build
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.exifinterface.media.ExifInterface
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModelStore
 import java.io.File
 import java.io.IOException
@@ -344,7 +345,7 @@ internal class PhotoRegression(
         val store = ViewModelStore()
         lateinit var model: LabViewModel
         instrumentation.runOnMainSync {
-            model = LabViewModel(app)
+            model = LabViewModel(app, SavedStateHandle())
             store.put("expansion-test", model)
         }
         val source = fixture().apply {
@@ -587,7 +588,7 @@ internal class PhotoRegression(
         }
         try {
             instrumentation.runOnMainSync {
-                model = LabViewModel(app)
+                model = LabViewModel(app, SavedStateHandle())
                 store.put("raw-test", model)
                 model.openRaw(Uri.fromFile(input))
             }
@@ -686,7 +687,7 @@ internal class PhotoRegression(
         }
         try {
             instrumentation.runOnMainSync {
-                model = LabViewModel(app)
+                model = LabViewModel(app, SavedStateHandle())
                 store.put("import-test", model)
                 check(!model.state.value.busy) { "Startup cleanup blocks the workspace" }
                 model.open(Uri.fromFile(image), ImportType.IMAGE)
@@ -771,7 +772,10 @@ internal class PhotoRegression(
                 check(model.state.value.photo === photo && model.state.value.audio === editedAudio)
                 check(work.listFiles()!!.toSet() == before)
             }
-            instrumentation.runOnMainSync { model.open(Uri.fromFile(File(app.filesDir, "missing.jpg")), null) }
+            instrumentation.runOnMainSync {
+                model.showOverlay(WorkspaceOverlay.SETTINGS)
+                model.open(Uri.fromFile(File(app.filesDir, "missing.jpg")), null)
+            }
             idle(model)
             check(model.state.value.notice?.message == R.string.source_open_failed && model.state.value.photo === photo)
             instrumentation.runOnMainSync { model.open(Uri.fromFile(audio), null) }
@@ -779,9 +783,11 @@ internal class PhotoRegression(
             instrumentation.runOnMainSync { model.cancel() }
             idle(model)
             check(model.state.value.confirmation == null && model.state.value.audio === editedAudio)
+            check(model.workspaceOverlay.value == WorkspaceOverlay.SETTINGS)
             check(work.listFiles()!!.toSet() == before)
             instrumentation.runOnMainSync { model.open(Uri.fromFile(audio), null) }
             answer(model, Confirmation.AUDIO, true)
+            check(model.workspaceOverlay.value == null)
             check(!model.state.value.audioDirty && model.state.value.audio != null)
             check(!editedAudio.file.exists() && model.state.value.photo === photo)
             instrumentation.runOnMainSync { model.receive(Uri.fromFile(image)) }
@@ -814,7 +820,7 @@ internal class PhotoRegression(
         val store = ViewModelStore()
         lateinit var model: LabViewModel
         instrumentation.runOnMainSync {
-            model = LabViewModel(app)
+            model = LabViewModel(app, SavedStateHandle())
             store.put("photo-test", model)
         }
         val input = File(app.filesDir, "fixture.bin")
