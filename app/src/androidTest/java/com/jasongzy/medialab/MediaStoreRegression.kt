@@ -253,10 +253,12 @@ internal class MediaStoreRegression(private val app: Context, private val fixtur
     private suspend fun verifyArtwork(source: File, format: Bitmap.CompressFormat, mime: String) {
         val original = source.readBytes()
         val document = AudioFiles.read(source, source.name)
+        val copy = exportAudio(app.cacheDir, document, AudioExportOptions())
+        try { check(copy.readBytes().contentEquals(original)) } finally { copy.delete() }
         check(document.properties != null)
         check(document.technical.any { it.first == "mime" })
         check(document.technical.none { it.first in listOf("durationUs", "bitrate", "sample-rate", "channel-count") })
-        val propertyName = if (source.extension == "flac") "CUSTOM" else "说明🧪"
+        val propertyName = if (source.extension == "flac") "CUSTOM".repeat(50) else "说明🧪"
         val tags =
             document.tags +
                 mapOf(

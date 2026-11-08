@@ -436,7 +436,6 @@ internal fun AudioScreen(model: LabViewModel, state: LabState, active: Boolean) 
                     },
                     enabled =
                         normalized.isNotBlank() &&
-                            normalized.length <= 256 &&
                             (original.isNotBlank() || normalized !in editor.tags.value),
                 ) {
                     Text(stringResource(android.R.string.ok))

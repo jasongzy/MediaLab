@@ -186,29 +186,28 @@ internal object AudioFiles {
         pictures: List<Picture>,
     ) {
         val original = requireNotNull(TagLib.getMetadata(fd(target)))
-        val originalKeys = original.propertyMap.keys
-        require(
-            tags.keys.all { it.isNotBlank() && it.length <= 256 } &&
-                pictures.sumOf { it.data.size.toLong() } <= 64 * 1024 * 1024
-        )
+        val originalTags = original.propertyMap
+        val tagsChanged = originalTags.keys != tags.keys ||
+            tags.any { (key, values) -> originalTags[key]?.asList() != values }
+        val picturesChanged = !samePictures(original.pictures.toList(), pictures)
         currentCoroutineContext().ensureActive()
-        check(
-            TagLib.savePropertyMap(
-                fd(target, true),
-                HashMap(tags.mapValues { it.value.toTypedArray() }),
-            )
-        ) {
-            "Cannot save audio tags"
+        if (!tagsChanged && !picturesChanged) return
+        if (tagsChanged) {
+            check(TagLib.savePropertyMap(fd(target, true), HashMap(tags.mapValues { it.value.toTypedArray() }))) {
+                "Cannot save audio tags"
+            }
         }
-        if (!samePictures(original.pictures.toList(), pictures))
+        if (picturesChanged) {
+            require(pictures.sumOf { it.data.size.toLong() } <= 64 * 1024 * 1024)
             check(TagLib.savePictures(fd(target, true), pictures.toTypedArray())) {
                 "Cannot save cover art"
             }
+        }
         val result = requireNotNull(TagLib.getMetadata(fd(target)))
         for ((key, values) in tags) check(sameTagValues(key, values, result.propertyMap[key]?.toList().orEmpty())) {
             "Tag verification failed: $key"
         }
-        check((originalKeys - tags.keys).none { it in result.propertyMap }) {
+        check((originalTags.keys - tags.keys).none { it in result.propertyMap }) {
             "Tag removal verification failed"
         }
         if (!samePictures(result.pictures.toList(), pictures))
