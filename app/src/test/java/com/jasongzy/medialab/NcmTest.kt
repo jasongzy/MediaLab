@@ -1,6 +1,8 @@
 package com.jasongzy.medialab
 
 import java.io.File
+import java.io.FilterInputStream
+import java.security.DigestInputStream
 import java.security.MessageDigest
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
@@ -33,7 +35,15 @@ class NcmTest {
         val source = fixture()
         val output = folder.newFile()
         var completed = 0L
-        val result = Ncm.decode(source, output) { done, _ -> completed = done }
+        val digest = MessageDigest.getInstance("SHA-256")
+        val shortReads = object : FilterInputStream(source.inputStream()) {
+            override fun read(bytes: ByteArray, offset: Int, length: Int) =
+                `in`.read(bytes, offset, minOf(length, 3))
+        }
+        val result = DigestInputStream(shortReads, digest).use {
+            Ncm.decode(it, output) { done, _ -> completed = done }
+        }
+        assertArrayEquals(MessageDigest.getInstance("SHA-256").digest(source.readBytes()), digest.digest())
         assertEquals("flac", result.extension)
         assertEquals(150004L, output.length())
         assertEquals(
@@ -53,24 +63,6 @@ class NcmTest {
     }
 
     @Test
-    fun decodesShortReadsAndHashesTheEntireContainer() {
-        val source = fixture()
-        val output = folder.newFile()
-        val digest = MessageDigest.getInstance("SHA-256")
-        val shortReads =
-            object : java.io.FilterInputStream(source.inputStream()) {
-                override fun read(bytes: ByteArray, offset: Int, length: Int): Int =
-                    `in`.read(bytes, offset, minOf(length, 3))
-            }
-        java.security.DigestInputStream(shortReads, digest).use { Ncm.decode(it, output) }
-        assertArrayEquals(
-            MessageDigest.getInstance("SHA-256").digest(source.readBytes()),
-            digest.digest(),
-        )
-        assertEquals(150004L, output.length())
-    }
-
-    @Test
     fun truncatedOrCancelledInputDoesNotLeaveOutput() {
         val source = fixture()
         val output = folder.newFile()
@@ -87,12 +79,10 @@ class NcmTest {
             }
         }
         assertFalse(output.exists())
-        assertThrows(InterruptedException::class.java) {
-            Ncm.decode(source, output) { _, _ -> throw InterruptedException() }
+        val truncated = source.readBytes().copyOf(20)
+        assertThrows(IllegalArgumentException::class.java) {
+            Ncm.decode(truncated.inputStream(), output, truncated.size.toLong())
         }
-        assertFalse(output.exists())
-        source.writeBytes(source.readBytes().copyOf(20))
-        assertThrows(IllegalArgumentException::class.java) { Ncm.decode(source, output) }
         assertFalse(output.exists())
     }
 

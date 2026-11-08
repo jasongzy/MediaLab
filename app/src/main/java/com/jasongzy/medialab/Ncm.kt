@@ -30,13 +30,6 @@ internal object Ncm {
     }
 
     fun decode(
-        source: File,
-        output: File,
-        progress: (Long, Long) -> Unit = { _, _ -> },
-    ): NcmResult =
-        source.inputStream().use { decode(it, output, source.length(), progress = progress) }
-
-    fun decode(
         source: InputStream,
         output: File,
         total: Long = -1,
@@ -104,40 +97,33 @@ internal object Ncm {
                     input.readFully(buffer, 0, count)
                     padding -= count
                 }
-                var offset = 0L
-                var extension: String? = null
-                output.outputStream().buffered().use { target ->
-                    while (true) {
-                        progress(counted.position, total)
-                        val count =
-                            if (offset == 0L) {
-                                input.readFully(buffer, 0, 4)
-                                4
-                            } else input.read(buffer)
-                        if (count < 0) break
-                        if (count == 0) continue
-                        for (i in 0 until count) buffer[i] =
-                            (buffer[i].toInt() xor stream[((offset + i) and 255).toInt()]).toByte()
-                        if (extension == null) {
-                            require(count >= 4)
-                            extension =
-                                when {
-                                    buffer.copyOfRange(0, 4).contentEquals("fLaC".toByteArray()) ->
-                                        "flac"
-                                    buffer.copyOfRange(0, 3).contentEquals("ID3".toByteArray()) ||
-                                        ((buffer[0].toInt() and 255) == 255 &&
-                                            (buffer[1].toInt() and 0xe0) == 0xe0) -> "mp3"
-                                    else -> throw IllegalArgumentException("Unsupported NCM audio format")
-                                }
-                            onFormat(checkNotNull(extension))
+                val extension = output.outputStream().buffered().use { target ->
+                    var offset = 0L
+                    fun write(start: Int, count: Int) {
+                        for (i in 0 until count) {
+                            val keyByte = stream[((offset + i) and 255).toInt()]
+                            buffer[start + i] = (buffer[start + i].toInt() xor keyByte).toByte()
                         }
-                        target.write(buffer, 0, count)
+                        target.write(buffer, start, count)
                         offset += count
                     }
+                    val format = readNcmAudioFormat(buffer) { start, count ->
+                        progress(counted.position, total)
+                        input.readFully(buffer, start, count)
+                        write(start, count)
+                    }
+                    onFormat(format)
+                    while (true) {
+                        progress(counted.position, total)
+                        val count = input.read(buffer)
+                        if (count < 0) break
+                        write(0, count)
+                    }
+                    format
                 }
                 require(total < 0 || counted.position == total) { "Truncated NCM audio" }
                 progress(counted.position, counted.position)
-                return NcmResult(checkNotNull(extension), metadata, cover)
+                return NcmResult(extension, metadata, cover)
             }
         } catch (error: Exception) {
             output.delete()

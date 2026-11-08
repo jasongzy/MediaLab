@@ -33,15 +33,9 @@ class BatchFilesTest {
     fun cleanupComparesEncodedAudioAcrossTagChanges() {
         val audio = byteArrayOf(-1, -5) + ByteArray(512) { it.toByte() }
         val plain = file(audio)
-        val tagged =
-            file(
-                "ID3".toByteArray() +
-                    byteArrayOf(4, 0, 0, 0, 0, 0, 5) +
-                    ByteArray(5) { 1 } +
-                    audio +
-                    "TAG".toByteArray() +
-                    ByteArray(125)
-            )
+        val id3 = "ID3".toByteArray() + byteArrayOf(4, 0, 0, 0, 0, 0, 12) +
+            "TIT2".toByteArray() + byteArrayOf(0, 0, 0, 2, 0, 0, 3, 65)
+        val tagged = file(id3 + audio + "TAG".toByteArray() + ByteArray(125))
         assertEquals(
             AudioFingerprint.payload(plain, "mp3"),
             AudioFingerprint.payload(tagged, "mp3"),
@@ -51,8 +45,12 @@ class BatchFilesTest {
             AudioFingerprint.payload(plain, "mp3"),
             AudioFingerprint.payload(different, "mp3"),
         )
-        assertThrows(IllegalArgumentException::class.java) {
-            AudioFingerprint.payload(file("ID3".toByteArray() + ByteArray(16)), "mp3")
+        for (invalid in listOf(
+            "ID3".toByteArray() + ByteArray(16), byteArrayOf(-1, -15) + ByteArray(16),
+            audio.copyOf().apply { this[1] = 0xfd.toByte() }, // MPEG Layer II
+            audio.copyOf().apply { this[2] = 0xf0.toByte() }, audio.copyOf().apply { this[2] = 0x0c },
+        )) {
+            assertThrows(IllegalArgumentException::class.java) { AudioFingerprint.payload(file(invalid), "mp3") }
         }
 
         val frames = byteArrayOf(-1, -8) + ByteArray(512) { it.toByte() }
@@ -60,7 +58,7 @@ class BatchFilesTest {
         val flac = file("fLaC".toByteArray() + byteArrayOf(-128, 0, 0, 34) + streamInfo + frames)
         val withTags =
             file(
-                "fLaC".toByteArray() +
+                id3 + "fLaC".toByteArray() +
                     byteArrayOf(0, 0, 0, 34) +
                     streamInfo +
                     byteArrayOf(-124, 0, 0, 5) +
