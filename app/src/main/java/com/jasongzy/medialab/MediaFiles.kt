@@ -11,8 +11,10 @@ import android.os.Environment
 import android.provider.MediaStore
 import android.provider.OpenableColumns
 import android.webkit.MimeTypeMap
+import java.io.BufferedInputStream
 import java.io.EOFException
 import java.io.File
+import java.io.FileNotFoundException
 import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
@@ -103,7 +105,17 @@ internal object MediaFiles {
         })
     }
 
-    fun name(context: Context, uri: Uri): String {
+    fun sourceName(context: Context, uri: Uri): String = readSource { name(context, uri) }
+
+    inline fun <T> readSource(read: () -> T): T =
+        try {
+            read()
+        } catch (error: Exception) {
+            if (error !is FileNotFoundException && error !is SecurityException) throw error
+            throw UnsupportedMediaException(R.string.source_open_failed).apply { initCause(error) }
+        }
+
+    private fun name(context: Context, uri: Uri): String {
         val name =
             if (uri.scheme == "http" || uri.scheme == "file") uri.lastPathSegment
             else
@@ -137,19 +149,23 @@ internal object MediaFiles {
         }
     }
 
-    suspend fun import(context: Context, uri: Uri, directory: File): Pair<File, String> {
-        val name = name(context, uri)
+    suspend inline fun import(
+        context: Context, uri: Uri, directory: File, name: String = sourceName(context, uri),
+        inspectContent: (BufferedInputStream) -> Unit = {},
+    ): File {
         val file = temporary(directory, name.substringAfterLast('.', "bin").lowercase().take(10))
         try {
-            file.outputStream().buffered().use { output ->
-                if (uri.scheme == "http") copyLocalStream(uri.toString(), output)
-                else
-                    checkNotNull(context.contentResolver.openInputStream(uri)).use {
-                        copy(it, output)
-                    }
+            if (uri.scheme == "http") file.outputStream().use { copyLocalStream(uri.toString(), it) }
+            else {
+                val source = readSource { context.contentResolver.openInputStream(uri) }
+                    ?: throw UnsupportedMediaException(R.string.source_open_failed)
+                source.buffered().use { input ->
+                    inspectContent(input)
+                    file.outputStream().use { copy(input, it) }
+                }
             }
             if (file.length() == 0L) throw UnsupportedMediaException(R.string.empty_media_file)
-            return file to name
+            return file
         } catch (error: Exception) {
             file.delete()
             throw error

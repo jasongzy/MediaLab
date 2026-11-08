@@ -258,7 +258,7 @@ internal object NcmBatch {
     ): BatchFile? =
         try {
             val file = read()
-            if (!file.ncm && file.key in known && BatchFiles.openInput(context, file.uri).use(Ncm::matches))
+            if (!file.ncm && file.key in known && BatchFiles.openInput(context, file.uri).buffered().use(Ncm::matches))
                 file.copy(ncm = true)
             else file
         } catch (error: CancellationException) {

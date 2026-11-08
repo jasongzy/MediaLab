@@ -771,6 +771,9 @@ internal class PhotoRegression(
                 check(model.state.value.photo === photo && model.state.value.audio === editedAudio)
                 check(work.listFiles()!!.toSet() == before)
             }
+            instrumentation.runOnMainSync { model.open(Uri.fromFile(File(app.filesDir, "missing.jpg")), null) }
+            idle(model)
+            check(model.state.value.notice?.message == R.string.source_open_failed && model.state.value.photo === photo)
             instrumentation.runOnMainSync { model.open(Uri.fromFile(audio), null) }
             withTimeout(30_000) { model.state.first { it.confirmation == Confirmation.AUDIO } }
             instrumentation.runOnMainSync { model.cancel() }

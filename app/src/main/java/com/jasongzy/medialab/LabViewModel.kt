@@ -297,23 +297,28 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
                 null -> R.string.loading_media
             }
         ) {
-            if (
-                type == null &&
-                    uri.scheme != "http" &&
-                    (MediaFiles.name(context, uri).endsWith(".ncm", true) ||
-                        context.contentResolver.openInputStream(uri)?.use { Ncm.matches(it) } ==
-                            true)
-            ) {
+            val name = MediaFiles.sourceName(context, uri)
+            val checkNcm = type == null && uri.scheme != "http"
+            fun openNcm() {
                 NcmBatch.addFiles(context, listOf(uri), sharedNcm = true)
                 showBatch(true)
+            }
+            if (checkNcm && name.endsWith(".ncm", true)) {
+                openNcm()
                 return@work
             }
-            val (file, name) = MediaFiles.import(context, uri, workspace.work)
+            val file = MediaFiles.import(context, uri, workspace.work, name) { input ->
+                if (checkNcm && Ncm.matches(input)) {
+                    openNcm()
+                    return@work
+                }
+            }
             acceptFile(file, name, uri, type)
         }
 
     fun openRaw(uri: Uri) = work(R.string.loading_raw) {
-        val (source, name) = MediaFiles.import(context, uri, workspace.work)
+        val name = MediaFiles.sourceName(context, uri)
+        val source = MediaFiles.import(context, uri, workspace.work, name)
         try {
             if (!canReplace(ImportType.IMAGE)) return@work
             history?.reserve(Runtime.getRuntime().maxMemory() / 3, keep = null)
@@ -322,7 +327,7 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
             try {
                 preview = Photos.preview(checkNotNull(frame.pixels))
                 acceptPhoto(frame, preview, name, uri,
-                    context.contentResolver.getType(uri) ?: "application/octet-stream", source.length())
+                    MediaFiles.readSource { context.contentResolver.getType(uri) } ?: "application/octet-stream", source.length())
             } finally {
                 if (frame !== state.value.photo.frame) {
                     preview?.recycle()
@@ -1291,7 +1296,7 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
 
     fun cover(uri: Uri, ready: (Picture) -> Unit) =
         work(R.string.loading_photo) {
-            val (file, _) = MediaFiles.import(context, uri, workspace.work)
+            val file = MediaFiles.import(context, uri, workspace.work)
             try {
                 val info = Photos.info(file)
                 val bitmap = Photos.decode(file, info)

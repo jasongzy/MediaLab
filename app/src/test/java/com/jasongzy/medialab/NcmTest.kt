@@ -15,15 +15,16 @@ class NcmTest {
     fun identifiesNcmByContentAndRejectsUnrelatedOrShortFiles() {
         val source = fixture()
         assertTrue(Ncm.matches(source))
-        val misleading = folder.newFile("photo.ncm")
         for (bytes in
             listOf(
                 byteArrayOf(),
                 "CTENFDA".toByteArray(),
                 byteArrayOf(-1, -40, -1, -32, 0, 16, 74, 70),
             )) {
-            misleading.writeBytes(bytes)
-            assertFalse(Ncm.matches(misleading))
+            bytes.inputStream().buffered().use {
+                assertFalse(Ncm.matches(it))
+                assertArrayEquals(bytes, it.readBytes())
+            }
         }
     }
 

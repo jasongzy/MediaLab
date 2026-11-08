@@ -1,6 +1,7 @@
 package com.jasongzy.medialab
 
 import android.annotation.SuppressLint
+import java.io.BufferedInputStream
 import java.io.DataInputStream
 import java.io.File
 import java.io.FilterInputStream
@@ -13,14 +14,20 @@ internal data class NcmResult(val extension: String, val metadata: String?, val 
 
 // NCM container algorithm: taurusxin/ncmdump and Pacoshao/DeNcm (MIT).
 internal object Ncm {
+    private const val MAGIC = "CTENFDAM"
     private val coreKey = "687a4852416d736f356b496e62617857".hex()
     private val metaKey = "2331346c6a6b5f215c5d2630553c2728".hex()
 
     fun outputName(sourceName: String, extension: String): String = "$sourceName.$extension"
 
-    fun matches(file: File): Boolean = file.inputStream().use(::matches)
+    fun matches(file: File): Boolean = file.inputStream().buffered().use(::matches)
 
-    fun matches(input: InputStream): Boolean = "CTENFDAM".all { input.read() == it.code }
+    fun matches(input: BufferedInputStream): Boolean {
+        input.mark(MAGIC.length)
+        val matches = MAGIC.all { input.read() == it.code }
+        input.reset()
+        return matches
+    }
 
     fun decode(
         source: File,
@@ -46,8 +53,8 @@ internal object Ncm {
                     }
                     return ByteArray(size).also { input.readFully(it) }
                 }
-                val magic = ByteArray(8).also { input.readFully(it) }
-                require(magic.contentEquals("CTENFDAM".toByteArray())) { "Invalid NCM header" }
+                val magic = ByteArray(MAGIC.length).also { input.readFully(it) }
+                require(magic.contentEquals(MAGIC.toByteArray())) { "Invalid NCM header" }
                 input.readUnsignedShort()
                 val encryptedKey =
                     block(16 * 1024 * 1024).map { (it.toInt() xor 0x64).toByte() }.toByteArray()
