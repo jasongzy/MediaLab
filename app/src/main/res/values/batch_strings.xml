@@ -30,6 +30,7 @@
     <string name="batch_provider_unavailable_named">%1$s, the app providing these files, is unavailable. Open it, then return to Media Lab and try again</string>
     <string name="batch_checking">Checking unlocked originals…</string>
     <string name="batch_matched">Matching output verified</string>
+    <string name="batch_previous_output_matched">Previous output verified. Still pending in the current folder</string>
     <string name="batch_unmatched">A matching output could not be verified</string>
     <string name="batch_deleting">Deleting originals…</string>
     <string name="batch_deleted">Original deleted</string>

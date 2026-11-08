@@ -107,9 +107,9 @@ class NcmService : Service() {
                                     .setContentText(
                                         getString(
                                             R.string.batch_summary,
-                                            state.items.count { it.status == BatchStatus.SUCCESS },
-                                            state.items.count { it.status == BatchStatus.SKIPPED },
-                                            state.items.count { it.status.failed },
+                                            state.results.getOrDefault(BatchStatus.SUCCESS, 0),
+                                            state.results.getOrDefault(BatchStatus.SKIPPED, 0),
+                                            state.failureCount,
                                         )
                                     )
                                     .setContentIntent(openIntent())

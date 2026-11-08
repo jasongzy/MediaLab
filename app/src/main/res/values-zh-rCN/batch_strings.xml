@@ -29,6 +29,7 @@
     <string name="batch_provider_unavailable_named">暂时无法连接提供这些文件的应用「%1$s」。请先打开该应用，再返回 Media Lab 重试</string>
     <string name="batch_checking">正在核对已解锁的原文件…</string>
     <string name="batch_matched">已核对匹配的输出文件</string>
+    <string name="batch_previous_output_matched">已核对先前的输出文件，当前输出目录待处理</string>
     <string name="batch_unmatched">未能核对到匹配的输出文件</string>
     <string name="batch_deleting">正在删除原文件…</string>
     <string name="batch_deleted">原文件已删除</string>

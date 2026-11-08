@@ -93,11 +93,13 @@ internal data class BatchState(
     val stage: Int = R.string.unlock,
     val current: String = "",
     val progress: Float? = null,
-    val completed: Int = 0,
+    val results: Map<BatchStatus, Int> = emptyMap(),
     val total: Int = 0,
     val error: String? = null,
     val candidates: List<CleanupCandidate>? = null,
 ) {
+    val completed get() = results.values.sum()
+    val failureCount get() = results.entries.sumOf { if (it.key.failed) it.value else 0 }
     val pending
         get() = items.filter {
             it.selected &&
@@ -176,7 +178,7 @@ internal object NcmBatch {
             it.copy(
                 items = it.items.filter { item -> !item.selected },
                 candidates = null,
-                completed = 0,
+                results = emptyMap(),
                 total = 0,
             )
         }
@@ -319,7 +321,7 @@ internal object NcmBatch {
                             detail = app.getString(R.string.batch_ordinary_skipped),
                         )
                     }
-                    return@process
+                    return@process BatchStatus.SKIPPED
                 }
                 val pending = item.pendingDeletion
                 val savedOutput = if (pending != null && pending.complete(app, snapshot.options.deleteOriginal)) pending.output else {
@@ -359,6 +361,7 @@ internal object NcmBatch {
                 update(item.file.key) {
                     it.copy(status = BatchStatus.SUCCESS, sourceDeleted = snapshot.options.deleteOriginal, pendingDeletion = null)
                 }
+                BatchStatus.SUCCESS
             }
         }
     }
@@ -370,7 +373,7 @@ internal object NcmBatch {
         launch(context, R.string.batch_checking, sharedInputs(items)) { app ->
             val output = BatchFiles(app, snapshot.outputTree)
             val candidates = mutableListOf<CleanupCandidate>()
-            val failures = process(app, items, BatchStatus.CLEANUP_FAILED) { item, directory ->
+            process(app, items, BatchStatus.CLEANUP_FAILED) { item, directory ->
                 val (decoded, sourceDigest) =
                     prepare(app, item.file, directory, restoreMetadata = false)
                 val candidate = output.matchUnlocked(item, decoded, sourceDigest)
@@ -384,22 +387,24 @@ internal object NcmBatch {
                             detail = app.getString(R.string.batch_unmatched),
                         )
                     }
+                    BatchStatus.SKIPPED
                 } else {
                     candidates += candidate
                     val savedTree = if (candidate.output.uri == item.output?.uri) item.outputTree else snapshot.outputTree
+                    val inDestination = savedTree == snapshot.outputTree && candidate.output.directory == item.file.directory
                     update(item.file.key) {
                         it.copy(
-                            status = if (savedTree == snapshot.outputTree && candidate.output.directory == item.file.directory)
-                                BatchStatus.SUCCESS else item.status,
+                            status = if (inDestination) BatchStatus.SUCCESS else BatchStatus.PENDING,
                             output = candidate.output,
                             outputTree = savedTree,
                             pendingDeletion = null,
-                            detail = app.getString(R.string.batch_matched),
+                            detail = app.getString(if (inDestination) R.string.batch_matched else R.string.batch_previous_output_matched),
                         )
                     }
+                    BatchStatus.SUCCESS
                 }
             }
-            if (candidates.isNotEmpty() || failures == 0)
+            if (candidates.isNotEmpty() || state.value.failureCount == 0)
                 mutable.update { it.copy(candidates = candidates) }
         }
     }
@@ -424,6 +429,7 @@ internal object NcmBatch {
                         detail = app.getString(R.string.batch_deleted),
                     )
                 }
+                BatchStatus.SUCCESS
             }
         }
     }
@@ -497,22 +503,23 @@ internal object NcmBatch {
         context: Context,
         items: List<BatchItem>,
         failureStatus: BatchStatus,
-        run: suspend (BatchItem, File) -> Unit,
-    ): Int {
+        run: suspend (BatchItem, File) -> BatchStatus,
+    ) {
         val directory = File(context.cacheDir, "ncm")
         check(directory.mkdirs() || directory.isDirectory)
-        mutable.update { it.copy(total = items.size, completed = 0) }
-        var failures = 0
+        mutable.update { it.copy(total = items.size) }
         for (item in items) {
             currentCoroutineContext().ensureActive()
             mutable.update { it.copy(current = item.file.path, progress = 0f) }
             update(item.file.key) { it.copy(status = BatchStatus.RUNNING, detail = null) }
+            var outcome: BatchStatus? = null
             try {
-                run(item, directory)
+                outcome = run(item, directory)
             } catch (cancelled: CancellationException) {
                 update(item.file.key) { it.copy(status = item.status, detail = item.detail) }
                 throw cancelled
             } catch (_: ExistingOutput) {
+                outcome = BatchStatus.SKIPPED
                 update(item.file.key) {
                     it.copy(
                         status = BatchStatus.SKIPPED,
@@ -520,7 +527,7 @@ internal object NcmBatch {
                     )
                 }
             } catch (error: Exception) {
-                failures++
+                outcome = failureStatus
                 val cause = (error as? BatchOutputException)?.cause ?: error
                 update(item.file.key) {
                     it.copy(
@@ -537,11 +544,15 @@ internal object NcmBatch {
                 }
                 if (cause is BatchProviderUnavailable) throw cause
             } finally {
+                outcome?.let { status ->
+                    mutable.update { state ->
+                        val count = state.results.getOrDefault(status, 0) + 1
+                        state.copy(results = state.results + (status to count), progress = null)
+                    }
+                }
                 directory.listFiles()?.forEach { it.delete() }
             }
-            mutable.update { it.copy(completed = it.completed + 1, progress = null) }
         }
-        return failures
     }
 
     private fun update(key: String, transform: (BatchItem) -> BatchItem) {
@@ -570,7 +581,7 @@ internal object NcmBatch {
                 cancelling = false,
                 stage = stage,
                 current = "",
-                completed = 0,
+                results = emptyMap(),
                 total = 0,
                 progress = null,
                 error = null,
