@@ -269,15 +269,13 @@ internal object AudioFiles {
             result.metadata?.let {
                 val json = JSONObject(it)
                 for ((field, key) in listOf("musicName" to "TITLE", "album" to "ALBUM")) {
-                    json
-                        .optString(field)
-                        .takeIf { text -> text.isNotBlank() }
-                        ?.let { text -> tags[key] = listOf(text) }
+                    val text = json.opt(field) as? String
+                    if (!text.isNullOrBlank()) tags[key] = listOf(text)
                 }
                 json.optJSONArray("artist")?.let { array ->
                     val artists =
                         (0 until array.length()).mapNotNull { i ->
-                            array.optJSONArray(i)?.optString(0)?.takeIf { it.isNotBlank() }
+                            (array.optJSONArray(i)?.opt(0) as? String)?.takeIf { it.isNotBlank() }
                         }
                     if (artists.isNotEmpty()) tags["ARTIST"] = artists
                 }
