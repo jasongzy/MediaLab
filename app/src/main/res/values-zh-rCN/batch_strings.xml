@@ -32,6 +32,8 @@
     <string name="batch_previous_output_matched">已核对先前的输出文件，当前输出目录待处理</string>
     <string name="batch_unmatched">未能核对到匹配的输出文件</string>
     <string name="batch_deleting">正在删除原文件…</string>
+    <string name="batch_saved_read_only">已保存，原文件为只读</string>
+    <string name="batch_read_only_hint">只读来源的原文件会保留</string>
     <string name="batch_deleted">原文件已删除</string>
     <string name="batch_busy">请等待当前批处理操作结束</string>
     <string name="batch_permission_error">文件访问被拒绝，请重新选择文件或文件夹</string>
@@ -65,7 +67,7 @@
     <string name="batch_delete_original">保存后删除原文件</string>
     <string name="batch_confirm">开始处理？</string>
     <string name="batch_overwrite_confirm">输出文件夹中的同名文件将被替换。</string>
-    <string name="batch_delete_confirm">每个输出文件保存并通过校验后，将永久删除对应的源文件。</string>
+    <string name="batch_delete_confirm">每个输出文件通过校验后，将永久删除允许写入的对应原文件。</string>
     <string name="batch_cleanup_empty">未找到与所选原文件匹配的解锁音频。</string>
     <string name="batch_delete_title">永久删除原文件？</string>
     <string name="batch_delete_permanently">永久删除</string>

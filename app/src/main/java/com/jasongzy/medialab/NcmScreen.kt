@@ -97,7 +97,7 @@ internal fun NcmScreen(model: LabViewModel, state: BatchState) {
             NcmBatch.output(it.first())
         }
     val start: (Boolean) -> Unit = { retry ->
-        if (state.options.deleteOriginal || state.options.conflict == ConflictPolicy.OVERWRITE)
+        if (state.pending(retry).any(state::deletesOriginal) || state.options.conflict == ConflictPolicy.OVERWRITE)
             confirm = retry
         else notifyThen(if (retry) NotificationAction.RETRY else NotificationAction.CONVERT)
     }
@@ -348,7 +348,7 @@ internal fun NcmScreen(model: LabViewModel, state: BatchState) {
                         style = MaterialTheme.typography.bodySmall,
                     )
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    val pending = state.pending
+                    val pending = state.pending()
                     if (state.items.any { it.status == BatchStatus.UNLOCK_FAILED })
                         OutlinedButton(
                             { start(true) },
@@ -366,7 +366,7 @@ internal fun NcmScreen(model: LabViewModel, state: BatchState) {
                     }
                 }
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    if (state.items.any { it.selected && it.file.ncm && !it.sourceDeleted })
+                    if (state.cleanupItems.isNotEmpty())
                         TextButton({ notifyThen(NotificationAction.CLEANUP) }) {
                             Text(stringResource(R.string.batch_cleanup))
                         }
@@ -454,9 +454,13 @@ internal fun NcmScreen(model: LabViewModel, state: BatchState) {
                 ) {
                     NcmBatch.configure(state.options.copy(conflict = ConflictPolicy.entries[it]))
                 }
-                CheckOption(R.string.batch_delete_original, state.options.deleteOriginal) {
+                val canDelete = state.items.isEmpty() || state.items.any { it.file.allowsDeletion && !it.sourceDeleted }
+                CheckOption(R.string.batch_delete_original, canDelete && state.options.deleteOriginal, enabled = canDelete) {
                     NcmBatch.configure(state.options.copy(deleteOriginal = it))
                 }
+                if (state.items.any { !it.file.allowsDeletion })
+                    Text(stringResource(R.string.batch_read_only_hint), style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     confirm?.let { retry ->
@@ -467,7 +471,7 @@ internal fun NcmScreen(model: LabViewModel, state: BatchState) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (state.options.conflict == ConflictPolicy.OVERWRITE)
                         Text(stringResource(R.string.batch_overwrite_confirm))
-                    if (state.options.deleteOriginal)
+                    if (state.pending(retry).any(state::deletesOriginal))
                         Text(stringResource(R.string.batch_delete_confirm))
                 }
             },

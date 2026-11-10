@@ -1,6 +1,7 @@
 package com.jasongzy.medialab
 
 import android.content.ClipData
+import android.content.ContentResolver
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -100,12 +101,15 @@ internal data class BatchState(
 ) {
     val completed get() = results.values.sum()
     val failureCount get() = results.entries.sumOf { if (it.key.failed) it.value else 0 }
-    val pending
-        get() = items.filter {
-            it.selected &&
-                !it.sourceDeleted &&
-                (it.status == BatchStatus.PENDING || it.status.failed)
-        }
+    fun pending(failuresOnly: Boolean = false) = items.filter {
+        it.selected && !it.sourceDeleted &&
+            (if (failuresOnly) it.status == BatchStatus.UNLOCK_FAILED else it.status == BatchStatus.PENDING || it.status.failed)
+    }
+
+    val cleanupItems get() = items.filter { it.selected && it.file.ncm && it.file.allowsDeletion && !it.sourceDeleted }
+
+    fun deletesOriginal(item: BatchItem) =
+        options.deleteOriginal && item.file.allowsDeletion && (item.file.ncm || options.copyAudio)
 
     val protectedFiles
         get() = items.mapNotNull { item ->
@@ -202,10 +206,10 @@ internal object NcmBatch {
     fun retainsInput(file: File) = state.value.items.any { !it.sourceDeleted && it.sharedInput == file }
 
     @Synchronized
-    fun addShared(uri: Uri, name: String, input: File) {
+    fun addShared(context: Context, uri: Uri, name: String, input: File) {
         if (state.value.busy) throw UnsupportedMediaException(R.string.batch_busy)
         if (!BatchFiles.validName(name)) throw UnsupportedMediaException(R.string.batch_invalid_name)
-        val file = BatchFile(uri, name, size = input.length(), ncm = true)
+        val file = BatchFile(uri, name, size = input.length(), ncm = true, allowsDeletion = context.hasWriteGrant(uri))
         val previous = state.value.items.firstOrNull { it.file.key == file.key }?.sharedInput
         append(listOf(file), sharedInput = input)
         previous?.delete()
@@ -221,7 +225,7 @@ internal object NcmBatch {
                 for (uri in uris.distinct()) {
                     currentCoroutineContext().ensureActive()
                     val file = readInput(app, known, issues) { BatchFiles.info(app, uri) } ?: continue
-                    if (BatchFiles.supports(file)) files += file else unsupported++
+                    if (BatchFiles.supports(file)) files += file.copy(allowsDeletion = app.hasWriteGrant(uri)) else unsupported++
                 }
             } finally {
                 append(files)
@@ -234,6 +238,7 @@ internal object NcmBatch {
     fun addFolder(context: Context, tree: Uri) =
         launch(context, R.string.batch_scanning) { app ->
             mutable.update { it.copy(inputTree = tree) }
+            val writable = app.hasWriteGrant(tree)
             val recursive = state.value.options.recursive
             val output = state.value.outputTree?.let { BatchFiles.key(BatchFiles.document(it)) }
             val root = BatchFiles.document(tree)
@@ -256,7 +261,7 @@ internal object NcmBatch {
                         )
                     else if (!isDirectory) {
                         val input = readInput(app, known, issues) { file } ?: continue
-                        if (BatchFiles.supports(input)) files += input.copy(directory = path)
+                        if (BatchFiles.supports(input)) files += input.copy(directory = path, allowsDeletion = writable)
                     }
                 }
                 append(files, fromFolder = true)
@@ -315,12 +320,10 @@ internal object NcmBatch {
 
     fun convert(context: Context, failuresOnly: Boolean = false) {
         val snapshot = state.value
-        val items =
-            if (failuresOnly)
-                snapshot.pending.filter { it.status == BatchStatus.UNLOCK_FAILED }
-            else snapshot.pending
+        val items = snapshot.pending(failuresOnly)
         if (items.isEmpty()) return
-        launch(context, R.string.unlocking, sharedInputs(items)) { app ->
+        val needsWriteGrant = items.any { it.sharedInput != null && snapshot.deletesOriginal(it) }
+        launch(context, R.string.unlocking, sharedInputs(items), write = needsWriteGrant) { app ->
             val output = BatchFiles(app, snapshot.outputTree)
             val protectedFiles = snapshot.protectedFiles.toMutableList()
             process(app, items, BatchStatus.UNLOCK_FAILED) { item, directory ->
@@ -333,8 +336,9 @@ internal object NcmBatch {
                     }
                     return@process BatchStatus.SKIPPED
                 }
+                val delete = snapshot.deletesOriginal(item)
                 val pending = item.pendingDeletion
-                val savedOutput = if (pending != null && pending.complete(app, snapshot.options.deleteOriginal)) pending.output else {
+                val savedOutput = if (pending != null && pending.complete(app, delete)) pending.output else {
                     if (pending != null) update(item.file.key) { it.copy(pendingDeletion = null) }
                     val existing = if (snapshot.options.conflict == ConflictPolicy.SKIP)
                         output.namesIn(item.file.directory) else emptySequence()
@@ -359,17 +363,18 @@ internal object NcmBatch {
                     val verified = CleanupCandidate(item.file, saved, sourceDigest, outputDigest)
                     update(item.file.key) {
                         it.copy(output = saved, outputTree = snapshot.outputTree,
-                            pendingDeletion = verified.takeIf { snapshot.options.deleteOriginal })
+                            pendingDeletion = verified.takeIf { delete })
                     }
-                    if (snapshot.options.deleteOriginal) verified.deleteSource(app)
+                    if (delete) verified.deleteSource(app)
                     saved
                 }
-                if (snapshot.options.deleteOriginal) {
+                if (delete) {
                     protectedFiles.remove(item.file)
                     protectedFiles += savedOutput
                 }
                 update(item.file.key) {
-                    it.copy(status = BatchStatus.SUCCESS, sourceDeleted = snapshot.options.deleteOriginal, pendingDeletion = null)
+                    it.copy(status = BatchStatus.SUCCESS, sourceDeleted = delete, pendingDeletion = null,
+                        detail = if (snapshot.options.deleteOriginal && !delete) app.getString(R.string.batch_saved_read_only) else null)
                 }
                 BatchStatus.SUCCESS
             }
@@ -378,7 +383,7 @@ internal object NcmBatch {
 
     fun inspectCleanup(context: Context) {
         val snapshot = state.value
-        val items = snapshot.items.filter { it.selected && it.file.ncm && !it.sourceDeleted }
+        val items = snapshot.cleanupItems
         if (items.isEmpty()) return
         launch(context, R.string.batch_checking, sharedInputs(items)) { app ->
             val output = BatchFiles(app, snapshot.outputTree)
@@ -427,7 +432,7 @@ internal object NcmBatch {
         }
         val byKey = candidates.associateBy { it.source.key }
         val items = state.value.items.filter { it.file.key in byKey }
-        launch(context, R.string.batch_deleting, sharedInputs(items)) { app ->
+        launch(context, R.string.batch_deleting, sharedInputs(items), write = true) { app ->
             process(app, items, BatchStatus.CLEANUP_FAILED) { item, _ ->
                 val candidate = byKey.getValue(item.file.key)
                 candidate.deleteSource(app)
@@ -575,11 +580,18 @@ internal object NcmBatch {
         item.file.uri.takeIf { item.sharedInput != null && it.scheme == "content" }
     }
 
+    private fun Context.hasWriteGrant(uri: Uri) =
+        uri.scheme == ContentResolver.SCHEME_CONTENT && hasGrant(uri, Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+
+    private fun Context.hasGrant(uri: Uri, mode: Int) =
+        checkUriPermission(uri, Process.myPid(), Process.myUid(), mode) == PackageManager.PERMISSION_GRANTED
+
     @Synchronized
     private fun launch(
         context: Context,
         stage: Int,
         grants: List<Uri> = emptyList(),
+        write: Boolean = false,
         action: suspend (Context) -> Unit,
     ) {
         if (state.value.busy) {
@@ -601,17 +613,15 @@ internal object NcmBatch {
             )
         }
         try {
-            val uris = grants.distinct().filter {
-                context.checkUriPermission(it, Process.myPid(), Process.myUid(), Intent.FLAG_GRANT_READ_URI_PERMISSION) ==
-                    PackageManager.PERMISSION_GRANTED
-            }
+            val mode = Intent.FLAG_GRANT_READ_URI_PERMISSION or (if (write) Intent.FLAG_GRANT_WRITE_URI_PERMISSION else 0)
+            val uris = grants.distinct().filter { context.hasGrant(it, mode) }
             val intent = Intent(context, NcmService::class.java)
             if (uris.isNotEmpty()) {
                 intent.clipData =
                     ClipData.newRawUri("", uris.first()).apply {
                         uris.drop(1).forEach { addItem(ClipData.Item(it)) }
                     }
-                intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                intent.addFlags(mode)
             }
             context.startForegroundService(intent)
         } catch (error: Exception) {

@@ -33,6 +33,8 @@
     <string name="batch_previous_output_matched">Previous output verified. Still pending in the current folder</string>
     <string name="batch_unmatched">A matching output could not be verified</string>
     <string name="batch_deleting">Deleting originals…</string>
+    <string name="batch_saved_read_only">Saved · Read-only original kept</string>
+    <string name="batch_read_only_hint">Read-only originals are kept</string>
     <string name="batch_deleted">Original deleted</string>
     <string name="batch_busy">Wait for the current batch operation to finish</string>
     <string name="batch_permission_error">File access was denied. Select the file or folder again</string>
@@ -66,7 +68,7 @@
     <string name="batch_delete_original">Delete originals after saving</string>
     <string name="batch_confirm">Start processing?</string>
     <string name="batch_overwrite_confirm">Existing output files with the same name will be replaced.</string>
-    <string name="batch_delete_confirm">After each output is saved and verified, its source file will be permanently deleted.</string>
+    <string name="batch_delete_confirm">After each output is verified, originals with write access will be permanently deleted.</string>
     <string name="batch_cleanup_empty">No unlocked audio matched the selected originals.</string>
     <string name="batch_delete_title">Permanently delete originals?</string>
     <string name="batch_delete_permanently">Delete permanently</string>

@@ -362,7 +362,7 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
             if ((requested == null || requested == ImportType.AUDIO) && Ncm.matches(file)) {
                 if (requested == ImportType.AUDIO) throw UnsupportedMediaException(R.string.select_audio_only)
                 currentCoroutineContext().ensureActive()
-                NcmBatch.addShared(checkNotNull(uri), name, file)
+                NcmBatch.addShared(context, checkNotNull(uri), name, file)
                 showBatch(true)
                 return
             }

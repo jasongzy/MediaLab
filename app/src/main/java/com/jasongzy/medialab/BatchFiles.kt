@@ -30,6 +30,7 @@ internal data class BatchFile(
     val directory: String = "",
     val size: Long = -1,
     val ncm: Boolean = name.endsWith(".ncm", true),
+    val allowsDeletion: Boolean = true,
 ) {
 
     val path
