@@ -1,7 +1,6 @@
 package com.jasongzy.medialab
 
 import android.annotation.SuppressLint
-import java.io.BufferedInputStream
 import java.io.DataInputStream
 import java.io.File
 import java.io.FilterInputStream
@@ -22,12 +21,7 @@ internal object Ncm {
 
     fun matches(file: File): Boolean = file.inputStream().buffered().use(::matches)
 
-    fun matches(input: BufferedInputStream): Boolean {
-        input.mark(MAGIC.length)
-        val matches = MAGIC.all { input.read() == it.code }
-        input.reset()
-        return matches
-    }
+    fun matches(input: InputStream): Boolean = MAGIC.all { input.read() == it.code }
 
     fun decode(
         source: InputStream,

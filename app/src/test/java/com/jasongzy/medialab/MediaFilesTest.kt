@@ -108,7 +108,8 @@ class MediaFilesTest {
         val saved = file(folder.root, "Pictures/saved.png")
         val abandoned = WorkspaceCache(cache) { emptySet() }.use { file(it.work, "unfinished.part") }
         var firstFiles = emptySet<File>()
-        WorkspaceCache(cache) { firstFiles }.use { first ->
+        var queuedInput: File? = null
+        WorkspaceCache(cache, { it == queuedInput }) { firstFiles }.use { first ->
             val history = listOf(file(first.work, "original.jpg"), file(first.work, "edited.png"))
             val info = PhotoInfo(1, 1, 1, 1, 1, "image/png", 5, PhotoColor(), null, emptyList())
             val frames = history.map { PhotoFrame(it, info) }
@@ -179,18 +180,21 @@ class MediaFilesTest {
                 assertEquals(activePreview, video.previews[current]?.file)
                 first.clearStale()
                 assertTrue(secondFiles.all { it.isFile })
+                queuedInput = importing
             }
             first.clearStale()
-            assertFalse(secondWork.exists())
+            assertEquals(listOf(queuedInput), secondWork.listFiles()!!.toList())
             video.editor.showPreview = false
             firstFiles = state.workingFiles
             assertTrue(exportPreview in video.files)
+            queuedInput = null
             first.clearAll()
+            assertFalse(secondWork.exists())
             assertFalse(exportPreview.exists())
             assertFalse(secondExports.exists())
             assertTrue(state.workingFiles.all { it.isFile })
         }
-        MediaFiles.clearCache(File(folder.root, "missing"), emptySet())
+        MediaFiles.clearCache(File(folder.root, "missing"))
         assertTrue(saved.exists())
     }
 

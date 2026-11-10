@@ -673,7 +673,7 @@ internal class PhotoRegression(
     suspend fun imports() {
         val store = ViewModelStore()
         lateinit var model: LabViewModel
-        val image = File(app.cacheDir, "input.png")
+        val image = File(app.cacheDir, "input.ncm")
         val bitmap = fixture()
         try {
             image.outputStream().use { check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)) }
@@ -784,7 +784,7 @@ internal class PhotoRegression(
             answer(model, Confirmation.AUDIO, true)
             check(!model.state.value.audioDirty && model.state.value.audio != null)
             check(!editedAudio.file.exists() && model.state.value.photo === photo)
-            instrumentation.runOnMainSync { model.open(Uri.fromFile(image), null) }
+            instrumentation.runOnMainSync { model.receive(Uri.fromFile(image)) }
             answer(model, Confirmation.IMAGE, true)
             check(model.state.value.photo.history.size == 1)
             check(photo.history.flatMap { it.files }.none { it.exists() })

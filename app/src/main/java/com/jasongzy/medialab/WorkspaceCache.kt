@@ -8,6 +8,7 @@ import kotlinx.coroutines.sync.withLock
 
 internal class WorkspaceCache(
     cacheDir: File,
+    private val keepShared: (File) -> Boolean = { false },
     private val workingFiles: () -> Set<File>,
 ) : AutoCloseable {
     private val cache = cacheDir.absoluteFile.normalize()
@@ -20,16 +21,17 @@ internal class WorkspaceCache(
     }
 
     suspend fun clearStale() =
-        MediaFiles.clearCache(work.parentFile!!, emptySet(), ::isActiveDirectory)
+        MediaFiles.clearCache(work.parentFile!!, keepShared, ::isActiveDirectory)
 
     suspend fun clearAll() {
         for (workspace in active.filter { it.cache == cache }) {
             workspace.access.withLock {
-                MediaFiles.clearCache(workspace.work, workspace.workingFiles())
-                MediaFiles.clearCache(workspace.exports, emptySet())
+                val retained = workspace.workingFiles()
+                MediaFiles.clearCache(workspace.work, { it in retained || keepShared(it) })
+                MediaFiles.clearCache(workspace.exports)
             }
         }
-        MediaFiles.clearCache(cache, emptySet(), ::isActiveDirectory)
+        MediaFiles.clearCache(cache, keepShared, ::isActiveDirectory)
     }
 
     override fun close() {

@@ -3,17 +3,21 @@ package com.jasongzy.medialab
 import android.content.ContentResolver
 import android.content.ContentValues
 import android.content.Context
+import android.content.res.AssetFileDescriptor
 import android.content.ClipData
 import android.content.Intent
 import androidx.core.content.FileProvider
 import android.media.MediaScannerConnection
 import android.net.Uri
 import android.os.Environment
+import android.os.ParcelFileDescriptor
+import android.system.ErrnoException
+import android.system.Os
+import android.system.OsConstants
 import android.provider.MediaStore
 import android.provider.OpenableColumns
 import android.util.Log
 import android.webkit.MimeTypeMap
-import java.io.BufferedInputStream
 import java.io.EOFException
 import java.io.File
 import java.io.FileNotFoundException
@@ -76,12 +80,11 @@ internal object MediaFiles {
 
     suspend fun clearCache(
         directory: File,
-        retained: Set<File>,
+        keepFile: (File) -> Boolean = { false },
         keepDirectory: (File) -> Boolean = { false },
     ): Unit = cacheCleanup.withLock {
         val root = directory.toPath().toAbsolutePath().normalize()
         if (!Files.isDirectory(root, LinkOption.NOFOLLOW_LINKS)) return@withLock
-        val keep = retained.map { it.toPath().toAbsolutePath().normalize() }.toSet()
         val coroutine = currentCoroutineContext()
         Files.walkFileTree(root, object : SimpleFileVisitor<Path>() {
             override fun preVisitDirectory(path: Path, attrs: BasicFileAttributes): FileVisitResult {
@@ -92,7 +95,7 @@ internal object MediaFiles {
 
             override fun visitFile(path: Path, attrs: BasicFileAttributes): FileVisitResult {
                 coroutine.ensureActive()
-                if (path !in keep) Files.deleteIfExists(path)
+                if (!keepFile(path.toFile())) Files.deleteIfExists(path)
                 return FileVisitResult.CONTINUE
             }
 
@@ -118,7 +121,7 @@ internal object MediaFiles {
         try {
             read()
         } catch (error: Exception) {
-            if (error !is FileNotFoundException && error !is SecurityException) throw error
+            if (error !is FileNotFoundException && error !is SecurityException && error !is IllegalArgumentException) throw error
             throw UnsupportedMediaException(R.string.source_open_failed).apply { initCause(error) }
         }
 
@@ -165,27 +168,42 @@ internal object MediaFiles {
         return done
     }
 
-    suspend inline fun import(
+    fun openLocalFile(uri: Uri): ParcelFileDescriptor {
+        val path = uri.path?.takeIf { it.startsWith('/') } ?: throw FileNotFoundException()
+        try {
+            // Open without blocking on FIFOs, then inspect the descriptor we will actually read.
+            val fd = Os.open(path, OsConstants.O_RDONLY or OsConstants.O_NONBLOCK or OsConstants.O_CLOEXEC, 0)
+            try {
+                if (!OsConstants.S_ISREG(Os.fstat(fd).st_mode)) throw FileNotFoundException(path)
+                return ParcelFileDescriptor.dup(fd)
+            } finally {
+                Os.close(fd)
+            }
+        } catch (error: ErrnoException) {
+            throw FileNotFoundException(path).apply { initCause(error) }
+        }
+    }
+
+    suspend fun import(
         context: Context, uri: Uri, directory: File, name: String = sourceName(context, uri),
-        inspectContent: (BufferedInputStream) -> Unit = {},
     ): File {
         val file = temporary(directory, name.substringAfterLast('.', "bin").lowercase().take(10))
         try {
             if (uri.scheme == "http") file.outputStream().use { copyLocalStream(uri.toString(), it) }
             else {
                 val resolver = context.contentResolver
-                val asset = if (uri.scheme == ContentResolver.SCHEME_CONTENT)
-                    readSource { resolver.openAssetFileDescriptor(uri, "r") }
-                        ?: throw UnsupportedMediaException(R.string.source_open_failed)
-                else null
+                val asset = readSource {
+                    when (uri.scheme) {
+                        ContentResolver.SCHEME_FILE -> AssetFileDescriptor(openLocalFile(uri), 0, AssetFileDescriptor.UNKNOWN_LENGTH)
+                        ContentResolver.SCHEME_CONTENT -> resolver.openAssetFileDescriptor(uri, "r") ?: throw FileNotFoundException()
+                        else -> null
+                    }
+                }
                 asset.use {
                     val expected = asset?.length ?: -1
                     val source = readSource { asset?.createInputStream() ?: resolver.openInputStream(uri) }
                         ?: throw UnsupportedMediaException(R.string.source_open_failed)
-                    source.buffered().use { input ->
-                        inspectContent(input)
-                        file.outputStream().use { copy(input, it, expected) }
-                    }
+                    source.use { input -> file.outputStream().use { copy(input, it, expected) } }
                 }
             }
             if (file.length() == 0L) throw UnsupportedMediaException(R.string.empty_media_file)

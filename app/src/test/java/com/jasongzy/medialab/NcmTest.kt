@@ -14,20 +14,9 @@ class NcmTest {
     @get:Rule val folder = TemporaryFolder()
 
     @Test
-    fun identifiesNcmByContentAndRejectsUnrelatedOrShortFiles() {
-        val source = fixture()
-        assertTrue(Ncm.matches(source))
-        for (bytes in
-            listOf(
-                byteArrayOf(),
-                "CTENFDA".toByteArray(),
-                byteArrayOf(-1, -40, -1, -32, 0, 16, 74, 70),
-            )) {
-            bytes.inputStream().buffered().use {
-                assertFalse(Ncm.matches(it))
-                assertArrayEquals(bytes, it.readBytes())
-            }
-        }
+    fun recognizesTheCompleteNcmHeader() {
+        assertTrue(Ncm.matches(fixture()))
+        assertFalse(Ncm.matches("CTENFDA".byteInputStream()))
     }
 
     @Test

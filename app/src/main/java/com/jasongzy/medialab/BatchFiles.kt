@@ -5,6 +5,7 @@ import android.content.ContentValues
 import android.content.Context
 import android.database.Cursor
 import android.net.Uri
+import android.os.ParcelFileDescriptor
 import android.provider.DocumentsContract
 import android.provider.DocumentsContract.Document
 import android.provider.MediaStore
@@ -373,7 +374,8 @@ internal class BatchFiles(private val context: Context, val tree: Uri?) {
                     return false
                 // Shared volumes can resolve case variants to the same file.
             }
-            fun stat(uri: Uri) = context.contentResolver.openFileDescriptor(uri, "r")?.use {
+            fun stat(uri: Uri) = (if (uri.scheme == ContentResolver.SCHEME_FILE) MediaFiles.openLocalFile(uri)
+                else context.contentResolver.openFileDescriptor(uri, "r"))?.use {
                 Os.fstat(it.fileDescriptor).takeIf { stat -> OsConstants.S_ISREG(stat.st_mode) }
             }
             val a = stat(first) ?: return null
@@ -491,8 +493,9 @@ internal class BatchFiles(private val context: Context, val tree: Uri?) {
 
         fun openInput(context: Context, uri: Uri): InputStream =
             try {
-                context.contentResolver.openInputStream(uri)
-                    ?: throw BatchProviderUnavailable(uri.authority)
+                if (uri.scheme == ContentResolver.SCHEME_FILE)
+                    ParcelFileDescriptor.AutoCloseInputStream(MediaFiles.openLocalFile(uri))
+                else context.contentResolver.openInputStream(uri) ?: throw BatchProviderUnavailable(uri.authority)
             } catch (error: FileNotFoundException) {
                 requireProvider(context, uri)
                 throw error
@@ -518,6 +521,7 @@ internal class BatchFiles(private val context: Context, val tree: Uri?) {
         }
 
         fun delete(context: Context, uri: Uri) {
+            if (uri.scheme != ContentResolver.SCHEME_CONTENT) throw UnsupportedMediaException(R.string.batch_permission_error)
             val resolver = context.contentResolver
             val deleted = if (DocumentsContract.isDocumentUri(context, uri)) DocumentsContract.deleteDocument(resolver, uri)
                 else resolver.delete(uri, null, null) == 1

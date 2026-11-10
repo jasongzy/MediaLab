@@ -51,7 +51,7 @@ internal object ModelStorageRegression {
                     .associateWith { digest(it) }
                 if (choice == BackgroundModel.RMBG20) check(compiled.isNotEmpty())
                 val disposable = File(cache, "temporary").apply { writeText("temporary") }
-                MediaFiles.clearCache(cache, emptySet())
+                MediaFiles.clearCache(cache)
                 check(!disposable.exists() && Os.stat(model.path).st_ino == inode)
                 val warmStart = SystemClock.elapsedRealtime()
                 val warm = engine.infer(choice, input) {}

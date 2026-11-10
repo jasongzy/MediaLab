@@ -47,7 +47,7 @@ internal data class BatchOptions(
 
 internal data class BatchItem(
     val file: BatchFile,
-    val shared: Boolean = false,
+    val sharedInput: File? = null,
     val selected: Boolean = true,
     val status: BatchStatus = BatchStatus.PENDING,
     val output: BatchFile? = null,
@@ -199,8 +199,20 @@ internal object NcmBatch {
         mutable.update { it.copy(candidates = null) }
     }
 
-    fun addFiles(context: Context, uris: List<Uri>, sharedNcm: Boolean = false) =
-        launch(context, R.string.batch_reading, if (sharedNcm) uris else emptyList()) { app ->
+    fun retainsInput(file: File) = state.value.items.any { !it.sourceDeleted && it.sharedInput == file }
+
+    @Synchronized
+    fun addShared(uri: Uri, name: String, input: File) {
+        if (state.value.busy) throw UnsupportedMediaException(R.string.batch_busy)
+        if (!BatchFiles.validName(name)) throw UnsupportedMediaException(R.string.batch_invalid_name)
+        val file = BatchFile(uri, name, size = input.length(), ncm = true)
+        val previous = state.value.items.firstOrNull { it.file.key == file.key }?.sharedInput
+        append(listOf(file), sharedInput = input)
+        previous?.delete()
+    }
+
+    fun addFiles(context: Context, uris: List<Uri>) =
+        launch(context, R.string.batch_reading) { app ->
             var unsupported = 0
             val files = mutableListOf<BatchFile>()
             val issues = linkedSetOf<String>()
@@ -208,14 +220,11 @@ internal object NcmBatch {
             try {
                 for (uri in uris.distinct()) {
                     currentCoroutineContext().ensureActive()
-                    val file = readInput(app, known, issues) {
-                        val info = BatchFiles.info(app, uri)
-                        if (sharedNcm) info.copy(ncm = true) else info
-                    } ?: continue
+                    val file = readInput(app, known, issues) { BatchFiles.info(app, uri) } ?: continue
                     if (BatchFiles.supports(file)) files += file else unsupported++
                 }
             } finally {
-                append(files, shared = sharedNcm)
+                append(files)
             }
             if (unsupported > 0)
                 issues += app.resources.getQuantityString(R.plurals.batch_unsupported, unsupported, unsupported)
@@ -277,21 +286,21 @@ internal object NcmBatch {
             null
         }
 
-    private fun append(files: List<BatchFile>, shared: Boolean = false, fromFolder: Boolean = false) {
+    private fun append(files: List<BatchFile>, sharedInput: File? = null, fromFolder: Boolean = false) {
         if (files.isEmpty()) return
         mutable.update { state ->
             val items = state.items.associateByTo(linkedMapOf()) { it.file.key }
             for (file in files) {
                 val old = items[file.key]
                 items[file.key] = when {
-                    old == null || old.sourceDeleted -> BatchItem(file, shared = shared)
+                    old == null || old.sourceDeleted -> BatchItem(file, sharedInput = sharedInput)
                     else -> {
                         val input = if (fromFolder) file else file.copy(directory = old.file.directory)
-                        val changed = input.directory != old.file.directory || input.ncm != old.file.ncm ||
+                        val changed = sharedInput != null || input.directory != old.file.directory || input.ncm != old.file.ncm ||
                             input.name != old.file.name || (input.size >= 0 && old.file.size >= 0 && input.size != old.file.size)
                         old.copy(
                             file = input,
-                            shared = shared,
+                            sharedInput = sharedInput,
                             status = if (changed) BatchStatus.PENDING else old.status,
                             detail = if (changed) null else old.detail,
                             pendingDeletion = if (changed) null else old.pendingDeletion?.copy(source = input),
@@ -299,7 +308,8 @@ internal object NcmBatch {
                     }
                 }
             }
-            state.copy(items = items.values.toList())
+            if (sharedInput == null) state.copy(items = items.values.toList())
+            else state.copy(items = items.values.toList(), results = emptyMap(), total = 0, candidates = null, error = null)
         }
     }
 
@@ -332,7 +342,7 @@ internal object NcmBatch {
                         if (existing.any { it.equals(name, ignoreCase = true) }) throw ExistingOutput()
                     }
                     if (!item.file.ncm) skipExisting(item.file.name)
-                    val (decoded, sourceDigest) = prepare(app, item.file, directory) { extension ->
+                    val (decoded, sourceDigest) = prepare(app, item.file, directory, item.sharedInput) { extension ->
                         skipExisting(Ncm.outputName(item.file.name, extension))
                     }
                     val name = if (item.file.ncm) Ncm.outputName(item.file.name, decoded.extension) else item.file.name
@@ -438,60 +448,60 @@ internal object NcmBatch {
         context: Context,
         source: BatchFile,
         directory: File,
+        sharedInput: File? = null,
         restoreMetadata: Boolean = true,
         onFormat: (String) -> Unit = {},
     ): Pair<File, String> {
         val hash = MessageDigest.getInstance("SHA-256")
+        val stream = sharedInput?.inputStream() ?: BatchFiles.openInput(context, source.uri)
         val output =
-            BatchFiles.openInput(context, source.uri).use { stream ->
-                DigestInputStream(stream, hash).use { input ->
-                    if (source.ncm)
-                        try {
-                            AudioFiles.unlock(
-                                input,
-                                directory,
-                                source.size,
-                                restoreMetadata,
-                                onFormat,
-                            ) { progress ->
-                                mutable.update {
-                                    it.copy(
-                                        progress =
-                                            progress?.let { value -> value.coerceIn(0f, 1f) * 0.6f }
-                                    )
-                                }
+            DigestInputStream(stream, hash).use { input ->
+                if (source.ncm)
+                    try {
+                        AudioFiles.unlock(
+                            input,
+                            directory,
+                            source.size,
+                            restoreMetadata,
+                            onFormat,
+                        ) { progress ->
+                            mutable.update {
+                                it.copy(
+                                    progress =
+                                        progress?.let { value -> value.coerceIn(0f, 1f) * 0.6f }
+                                )
                             }
-                        } catch (error: Exception) {
-                            if (
-                                error is IllegalArgumentException ||
-                                    error is java.io.EOFException ||
-                                    error is java.security.GeneralSecurityException ||
-                                    error is org.json.JSONException
-                            )
-                                throw UnsupportedMediaException(R.string.batch_invalid_ncm)
-                            throw error
                         }
-                    else
-                        File(directory, "copy.${source.name.substringAfterLast('.').lowercase()}")
-                            .also { file ->
-                                val copied = file.outputStream().use { output ->
-                                    MediaFiles.copy(input, output) { done ->
-                                        if (source.size > 0)
-                                            mutable.update {
-                                                it.copy(
-                                                    progress =
-                                                        (done.toFloat() / source.size).coerceIn(
-                                                            0f,
-                                                            1f,
-                                                        ) * 0.6f
-                                                )
-                                            }
-                                    }
+                    } catch (error: Exception) {
+                        if (
+                            error is IllegalArgumentException ||
+                                error is java.io.EOFException ||
+                                error is java.security.GeneralSecurityException ||
+                                error is org.json.JSONException
+                        )
+                            throw UnsupportedMediaException(R.string.batch_invalid_ncm)
+                        throw error
+                    }
+                else
+                    File(directory, "copy.${source.name.substringAfterLast('.').lowercase()}")
+                        .also { file ->
+                            val copied = file.outputStream().use { output ->
+                                MediaFiles.copy(input, output) { done ->
+                                    if (source.size > 0)
+                                        mutable.update {
+                                            it.copy(
+                                                progress =
+                                                    (done.toFloat() / source.size).coerceIn(
+                                                        0f,
+                                                        1f,
+                                                    ) * 0.6f
+                                            )
+                                        }
                                 }
-                                if (source.size >= 0 && copied != source.size)
-                                    throw UnsupportedMediaException(R.string.batch_source_changed)
                             }
-                }
+                            if (source.size >= 0 && copied != source.size)
+                                throw UnsupportedMediaException(R.string.batch_source_changed)
+                        }
             }
         check(output.length() > 0) { context.getString(R.string.empty_media_file) }
         if (!source.ncm) AudioFiles.validate(output)
@@ -561,7 +571,9 @@ internal object NcmBatch {
         }
     }
 
-    private fun sharedInputs(items: List<BatchItem>) = items.filter { it.shared }.map { it.file.uri }
+    private fun sharedInputs(items: List<BatchItem>) = items.mapNotNull { item ->
+        item.file.uri.takeIf { item.sharedInput != null && it.scheme == "content" }
+    }
 
     @Synchronized
     private fun launch(

@@ -104,7 +104,7 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
     private val context = application
     private val mutable = MutableStateFlow(LabState())
     val state = mutable.asStateFlow()
-    private val workspace = WorkspaceCache(application.cacheDir) { state.value.workingFiles }
+    private val workspace = WorkspaceCache(application.cacheDir, NcmBatch::retainsInput) { state.value.workingFiles }
     private var job: Job? = null
     private var pickJob: Job? = null
     private var pendingPick: Pair<Int, Int>? = null
@@ -298,21 +298,7 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
             }
         ) {
             val name = MediaFiles.sourceName(context, uri)
-            val checkNcm = type == null && uri.scheme != "http"
-            fun openNcm() {
-                NcmBatch.addFiles(context, listOf(uri), sharedNcm = true)
-                showBatch(true)
-            }
-            if (checkNcm && name.endsWith(".ncm", true)) {
-                openNcm()
-                return@work
-            }
-            val file = MediaFiles.import(context, uri, workspace.work, name) { input ->
-                if (checkNcm && Ncm.matches(input)) {
-                    openNcm()
-                    return@work
-                }
-            }
+            val file = MediaFiles.import(context, uri, workspace.work, name)
             acceptFile(file, name, uri, type)
         }
 
@@ -373,6 +359,13 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
         var preview: Bitmap? = null
         var audio: AudioDocument? = null
         try {
+            if ((requested == null || requested == ImportType.AUDIO) && Ncm.matches(file)) {
+                if (requested == ImportType.AUDIO) throw UnsupportedMediaException(R.string.select_audio_only)
+                currentCoroutineContext().ensureActive()
+                NcmBatch.addShared(checkNotNull(uri), name, file)
+                showBatch(true)
+                return
+            }
             val bounds =
                 android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
             android.graphics.BitmapFactory.decodeFile(file.path, bounds)
@@ -394,7 +387,7 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
                     if (bounds.outWidth <= 0)
                         throw UnsupportedMediaException(R.string.select_image_only)
                 ImportType.AUDIO -> {
-                    if (bounds.outWidth > 0 || Ncm.matches(file))
+                    if (bounds.outWidth > 0)
                         throw UnsupportedMediaException(R.string.select_audio_only)
                 }
                 ImportType.VIDEO ->
@@ -446,7 +439,7 @@ internal class LabViewModel(application: Application) : AndroidViewModel(applica
         } catch (_: android.graphics.ImageDecoder.DecodeException) {
             throw UnsupportedMediaException(if (requested == null) R.string.select_media_only else R.string.select_image_only)
         } finally {
-            if (file !in state.value.workingFiles) {
+            if (file !in state.value.workingFiles && !NcmBatch.retainsInput(file)) {
                 preview?.recycle()
                 (audio?.files ?: setOf(file)).forEach { it.delete() }
             }
