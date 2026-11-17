@@ -159,6 +159,14 @@ internal class PhotoEditorState(info: PhotoInfo, hasAlpha: Boolean, previous: Ph
         return PhotoDraft(applied, cutout?.mask?.takeIf { applied == PhotoTool.BACKGROUND }, restore)
     }
 
+    fun hasHistory(tool: PhotoTool): Boolean = when (tool) {
+        PhotoTool.CROP -> cropHistory.hasHistory
+        PhotoTool.EXPAND -> canvasHistory.hasHistory
+        PhotoTool.ROTATE -> rotationHistory.hasHistory
+        PhotoTool.COVER -> coverHistory.hasHistory
+        else -> false
+    }
+
     fun cropBounds(info: PhotoInfo): Rect {
         val bounds = cropHistory.value.bounds
         val jpeg = if (lossless) info.losslessCropLayout else null

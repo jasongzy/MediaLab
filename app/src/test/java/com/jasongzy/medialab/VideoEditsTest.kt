@@ -2,10 +2,32 @@ package com.jasongzy.medialab
 
 import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.IntSize
+import java.io.File
 import org.junit.Assert.*
 import org.junit.Test
 
 class VideoEditsTest {
+    @Test
+    fun malformedSourceMetadataCanBeCorrectedOrDeleted() {
+        val tag = VideoTag(0, "language")
+        val info = VideoInfo(32, 32, 1000, 30.0, 1000, "h264", emptyList(), "mkv", false, "", 0,
+            listOf(VideoMetadata(0, listOf(tag.key to "en-US"))))
+        val original = info.edits()
+        val corrected = info.editMetadata(original, tag, "FRE-CA")
+        assertEquals(listOf(tag.key to "fre-ca"), info.metadata(corrected).single().entries)
+        val deleted = info.editMetadata(original, tag, null)
+        assertTrue(info.metadata(deleted).isEmpty())
+        assertEquals(deleted, info.editMetadata(original, tag, "und"))
+        assertEquals("Canadian French", Videos.normalizeMetadata(VideoTag(null, "language"), "Canadian French"))
+        assertEquals(original, info.editMetadata(corrected, tag, "en-US"))
+        assertThrows(UnsupportedMediaException::class.java) { info.editMetadata(original, tag, "bad-language") }
+        val file = File("input.mkv")
+        val video = VideoDocument(file, file.name, null, info, file)
+        video.editor.commit(corrected)
+        video.editor.history.undo()
+        assertTrue(video.needsReplacementConfirmation)
+    }
+
     @Test
     fun coverAndCleanupKeepDraftsHistoryAndTimeRangesConsistent() {
         val full = IntRect(0, 0, 96, 64)
@@ -13,6 +35,7 @@ class VideoEditsTest {
         val editor = VideoEditor(initial)
         editor.draft.change(initial.copy(startMs = 100))
         editor.commit(editor.applyTool(VideoTool.TIME), editor.capture())
+        editor.commit(editor.history.value.copy(metadataEdits = mapOf(VideoTag(null, "title") to "Edited")))
         editor.resetDrafts()
         editor.tool = VideoTool.COVER
         val stroke = Stroke(listOf(0f to 0f, 96f to 64f), -1, 10f, CoverShape.RECTANGLE)
@@ -31,10 +54,15 @@ class VideoEditsTest {
         editor.resetDrafts()
         assertTrue(editor.draft.value.cover!!.strokes.isEmpty())
         assertTrue(editor.pending.isEmpty())
-        val saved = checkNotNull(editor.navigationDraft(-1))
+        val saved = checkNotNull(editor.navigationDraft(-1, preserveDrafts = false))
         editor.history.undo()
         editor.history.undo()
-        assertSame(saved, editor.navigationDraft(1))
+        editor.resetDrafts()
+        assertSame(saved, editor.navigationDraft(1, preserveDrafts = true))
+        editor.draft.change(editor.draft.value.copy(cover = cover))
+        editor.draft.undo()
+        assertTrue(editor.pending.isEmpty() && editor.draft.canRedo)
+        assertNull(editor.navigationDraft(1, preserveDrafts = true))
         editor.history.redo()
         editor.resetDrafts()
         editor.restore(saved)
@@ -63,9 +91,9 @@ class VideoEditsTest {
         editor.history.redo()
         assertTrue(editor.output.clearMetadata)
         editor.commit(initial)
-        assertNull(editor.navigationDraft(-1))
+        assertNull(editor.navigationDraft(-1, preserveDrafts = false))
         editor.history.undo()
-        assertNull(editor.navigationDraft(-1))
+        assertNull(editor.navigationDraft(-1, preserveDrafts = true))
         for (position in listOf(199L, 200L, 599L, 600L)) {
             val active = mutableSetOf<Int>()
             videoFrameSource(listOf(applied.copy(previous = emptyList())), position, 10, active)

@@ -302,11 +302,13 @@ internal class VideoEditor(initial: VideoEdits) {
         appliedDrafts.keys.removeAll { key -> retained.none { it === key } }
     }
 
-    fun navigationDraft(direction: Int): VideoDraft? {
+    fun navigationDraft(direction: Int, preserveDrafts: Boolean): VideoDraft? {
         val snapshot = history.snapshot()
         // After redo, the following operation is still unapplied.
         val index = snapshot.position + if (direction < 0) 0 else 2
-        return snapshot.steps.getOrNull(index)?.let(appliedDrafts::get)
+        val draft = snapshot.steps.getOrNull(index)?.let(appliedDrafts::get) ?: return null
+        if (preserveDrafts && (!inputValid || pending.isNotEmpty() || drafts[draft.tool]?.hasHistory == true)) return null
+        return draft
     }
 
     fun restore(draft: VideoDraft) {

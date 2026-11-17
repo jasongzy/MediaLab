@@ -52,9 +52,6 @@ internal class AudioEditorState(val original: AudioFrame, val exportDefaults: Au
     var preview by mutableStateOf<AudioExportPreview?>(null)
     var showPreview by mutableStateOf(false)
 
-    val hasDraft: Boolean
-        get() = tag != null || picture != null || pending.isNotEmpty()
-
     val pendingTime get() = time.value != MediaTimeEdit(history.value.media.durationMs) ||
         (tool == AudioTool.TIME && !inputValid)
     val pending get() = AudioTool.entries.filter { tool ->

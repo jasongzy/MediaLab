@@ -92,8 +92,6 @@ internal data class LabState(
     val exportPreview: Bitmap? = null,
     val mode: ColorMode = ColorMode.SYSTEM,
 ) {
-    val audioDirty: Boolean
-        get() = audio?.dirty == true
     val workingFiles: Set<File>
         get() =
             (photo.history.flatMap { it.files } + video?.workingFiles.orEmpty() + audio?.workingFiles.orEmpty() +
@@ -261,8 +259,8 @@ internal class LabViewModel(application: Application, savedState: SavedStateHand
         val current = state.value
         val edited = when (type) {
             ImportType.IMAGE -> current.photo.history.size > 1 || current.photo.pending.isNotEmpty()
-            ImportType.VIDEO -> current.video?.let { it.dirty || !it.editor.inputValid } == true
-            ImportType.AUDIO -> current.audioDirty || current.audio?.editor?.hasDraft == true
+            ImportType.VIDEO -> current.video?.needsReplacementConfirmation == true
+            ImportType.AUDIO -> current.audio?.needsReplacementConfirmation == true
         }
         return !edited || confirm(when (type) {
             ImportType.IMAGE -> Confirmation.IMAGE
@@ -472,7 +470,7 @@ internal class LabViewModel(application: Application, savedState: SavedStateHand
         val metadataOnly = next.previewKey() == editor.history.value.previewKey()
         if (!metadataOnly && (editor.pending.isNotEmpty() || !editor.inputValid) &&
             !confirm(if (direction < 0) Confirmation.UNDO else Confirmation.REDO)) return@work
-        val draft = editor.navigationDraft(direction)
+        val draft = editor.navigationDraft(direction, preserveDrafts = metadataOnly)
         val action = if (direction < 0) editor.history.undoAction else editor.history.redoAction
         updateVideoPreview(video, next, draft, preserveDrafts = metadataOnly) {
             if (direction < 0) editor.history.undo() else editor.history.redo()
@@ -522,10 +520,8 @@ internal class LabViewModel(application: Application, savedState: SavedStateHand
             val oldExport = video.previewFile
             Snapshot.withMutableSnapshot {
                 commit()
-                if (!preserveDrafts) {
-                    editor.resetDrafts()
-                    restoredDraft?.let(editor::restore)
-                }
+                if (!preserveDrafts) editor.resetDrafts()
+                restoredDraft?.let(editor::restore)
                 editor.positionMs = position
                 video.appliedPreview = preview?.file
                 video.appliedInfo = preview?.info
@@ -543,18 +539,13 @@ internal class LabViewModel(application: Application, savedState: SavedStateHand
     fun editVideoMetadata(tag: VideoTag, value: String?, done: () -> Unit) = work(R.string.apply, showProgress = false) {
         val video = checkNotNull(state.value.video)
         val previous = video.editor.history.value
-        val current = requireNotNull(video.info.metadata(previous)
-            .firstOrNull { it.streamIndex == tag.streamIndex }?.entries?.firstOrNull { it.first == tag.key }).second
-        val normalized = Videos.normalizeMetadata(tag.key, value)
-        val next = previous.copy(metadataEdits = previous.metadataEdits + (tag to normalized))
-        if (Videos.normalizeMetadata(tag.key, current) == normalized) {
-            withContext(Dispatchers.Main) { done() }
-            return@work
+        val next = video.info.editMetadata(previous, tag, value)
+        if (next != previous) {
+            updateVideoPreview(video, next, preserveDrafts = true) {
+                video.editor.commit(next, action = R.string.media_metadata)
+            }
+            mutable.update { it.copy(notice = Notice(R.string.changes_applied)) }
         }
-        updateVideoPreview(video, next, preserveDrafts = true) {
-            video.editor.commit(next, action = R.string.media_metadata)
-        }
-        mutable.update { it.copy(notice = Notice(R.string.changes_applied)) }
         withContext(Dispatchers.Main) { done() }
     }
 
@@ -686,19 +677,18 @@ internal class LabViewModel(application: Application, savedState: SavedStateHand
         val history = checkNotNull(history)
         val old = state.value.photo
         val oldExport = state.value.exportFile
-        val photo =
-            PhotoState(
-                old.name,
-                history.frames,
-                history.position,
-                preview,
-                old.original,
-                history.current.info,
-                editor = restoredEditor ?: PhotoEditorState(history.current.info, preview.hasAlpha(), old.editor),
-                sourceUri = old.sourceUri,
-                sourceMime = old.sourceMime,
-                sourceBytes = old.sourceBytes,
-            )
+        val editor = restoredEditor ?: PhotoEditorState(history.current.info, preview.hasAlpha(), old.editor)
+        val sameEditor = editor === old.editor
+        val photo = old.copy(
+            history = history.frames,
+            position = history.position,
+            preview = preview,
+            info = history.current.info,
+            editor = editor,
+            colors = if (sameEditor) old.colors else emptyList(),
+            picked = old.picked.takeIf { sameEditor },
+            backgroundElapsedMs = old.backgroundElapsedMs.takeIf { sameEditor },
+        )
         mutable.update {
             it.copy(
                 photo = photo,
@@ -735,32 +725,30 @@ internal class LabViewModel(application: Application, savedState: SavedStateHand
             val history = checkNotNull(history)
             val position = (history.position + direction).coerceIn(history.frames.indices)
             if (position == history.position) return@work
-            val metadataOnly = history.frames[position].image === history.current.image
-            if (!metadataOnly && state.value.photo.pending.isNotEmpty() && !confirm(
+            val photo = state.value.photo
+            val frame = history.frames[position]
+            val metadataOnly = frame.image === history.current.image
+            if (!metadataOnly && photo.pending.isNotEmpty() && !confirm(
                     if (direction < 0) Confirmation.UNDO else Confirmation.REDO
                 )) return@work
-            val frame = history.frames[position]
             val action = history.actions[if (direction < 0) history.position else position]
-            if (metadataOnly) {
-                history.move(position)
-                publish(checkNotNull(state.value.photo.preview), notice = null, restoredEditor = state.value.photo.editor)
-                historyNotice(direction, action ?: R.string.media_metadata)
-                return@work
-            }
             // Redo also restores the next operation's unapplied draft.
             val draft = history.drafts.getOrNull(if (direction < 0) history.position else position + 1)
-            val preview =
-                if (frame.source != null) Photos.preview(frame.source)
-                else Photos.preview(history.bitmap(frame))
-            val editor = PhotoEditorState(frame.info, preview.hasAlpha(), state.value.photo.editor)
-            if (draft != null) {
+            val preview = when {
+                metadataOnly -> checkNotNull(photo.preview)
+                frame.source != null -> Photos.preview(frame.source)
+                else -> Photos.preview(history.bitmap(frame))
+            }
+            val editor = if (metadataOnly) checkNotNull(photo.editor)
+                else PhotoEditorState(frame.info, preview.hasAlpha(), photo.editor)
+            currentCoroutineContext().ensureActive()
+            if (draft != null && (!metadataOnly || (photo.pending.isEmpty() && !editor.hasHistory(draft.tool)))) {
                 val sourcePreview = if (draft.mask != null && frame.info.color.losses().isNotEmpty())
                     Photos.preview(history.bitmap(frame), keepHdr = false) else preview
                 draft.restore(editor, sourcePreview)
                 editor.tool = draft.tool
             }
-            currentCoroutineContext().ensureActive()
-            discardResize()
+            if (!metadataOnly) discardResize()
             history.move(position)
             publish(preview, notice = null, restoredEditor = editor)
             historyNotice(direction, action ?: R.string.image_tab)

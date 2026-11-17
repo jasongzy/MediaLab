@@ -43,8 +43,9 @@ internal data class AudioDocument(
     val playbackFile get() = if (current.file == file) playable else current.file
     val files get() = editor.files + playable + editor.preview?.files.orEmpty()
     val workingFiles get() = editor.files + playable + editor.preview?.takeIf { editor.showPreview }?.files.orEmpty()
-    val dirty: Boolean
-        get() = editor.history.value != saved || editor.pending.isNotEmpty()
+    val needsReplacementConfirmation: Boolean
+        get() = editor.history.value != saved || editor.history.canRedo ||
+            editor.tag != null || editor.picture != null || editor.pending.isNotEmpty()
 }
 
 internal object AudioFiles {

@@ -10,7 +10,6 @@ import android.net.Uri
 import androidx.compose.runtime.*
 import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.IntSize
-import com.arthenica.ffmpegkit.FFmpegKit
 import java.io.File
 import java.util.Locale
 import kotlin.math.abs
@@ -75,6 +74,14 @@ internal data class VideoInfo(
             }).takeIf { it.entries.isNotEmpty() }
         }
 
+    fun editMetadata(edits: VideoEdits, tag: VideoTag, value: String?): VideoEdits {
+        val original = requireNotNull(descriptiveMetadata(edits.clearMetadata)
+            .firstOrNull { it.streamIndex == tag.streamIndex }?.entries?.firstOrNull { it.first == tag.key }).second
+        val next = if (value == original) original else Videos.normalizeMetadata(tag, value)
+        val changes = if (next == original) edits.metadataEdits - tag else edits.metadataEdits + (tag to next)
+        return edits.copy(metadataEdits = changes)
+    }
+
     fun edits() =
         VideoEdits(
             durationMs,
@@ -114,24 +121,25 @@ internal class VideoDocument(
     val files
         get() = workingFiles + previews.files + listOfNotNull(previewFile)
 
-    val dirty
-        get() = editor.output != editor.original || editor.pending.isNotEmpty()
+    val needsReplacementConfirmation
+        get() = editor.history.hasHistory || editor.output != editor.original ||
+            !editor.inputValid || editor.pending.isNotEmpty()
 }
 
 internal object Videos {
-    fun normalizeMetadata(key: String, value: String?): String? {
+    fun normalizeMetadata(tag: VideoTag, value: String?, error: Int = R.string.invalid_metadata): String? {
         if (value == null) return null
         if (value.length > 32768 || '\u0000' in value)
-            throw UnsupportedMediaException(R.string.invalid_metadata)
-        return when (key.lowercase(Locale.ROOT)) {
+            throw UnsupportedMediaException(error)
+        return when (tag.key.lowercase(Locale.ROOT)) {
             "creation_time" -> try {
                 java.time.OffsetDateTime.parse(value).toInstant().toString()
             } catch (_: java.time.DateTimeException) {
-                throw UnsupportedMediaException(R.string.invalid_metadata)
+                throw UnsupportedMediaException(error)
             }
-            "language" -> value.lowercase(Locale.ROOT).also {
-                if (!it.matches(Regex("[a-z]{3}"))) throw UnsupportedMediaException(R.string.invalid_metadata)
-            }
+            "language" -> if (tag.streamIndex == null) value else value.lowercase(Locale.ROOT).also {
+                if (!it.matches(Regex("[a-z]{3}(-[a-z]{2})?"))) throw UnsupportedMediaException(error)
+            }.takeUnless { it == "und" }
             else -> value
         }
     }
@@ -149,7 +157,7 @@ internal object Videos {
             }
             val actual = result.metadata.firstOrNull { it.streamIndex == stream }?.entries
                 ?.firstOrNull { it.first.equals(tag.key, ignoreCase = true) }?.second
-            val normalized = actual?.let { normalizeMetadata(tag.key, it) }
+            val normalized = normalizeMetadata(tag, actual, R.string.metadata_not_saved)
             if (normalized != expected) throw UnsupportedMediaException(R.string.metadata_not_saved)
         }
     }

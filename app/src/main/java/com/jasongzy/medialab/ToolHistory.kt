@@ -23,6 +23,7 @@ internal class ToolHistory<T>(initial: T) {
         get() = value != steps[position] || position > 0
     val canRedo: Boolean
         get() = value == steps[position] && position < steps.lastIndex
+    val hasHistory: Boolean get() = canUndo || canRedo
 
     val undoValue: T?
         get() = if (value != steps[position]) steps[position] else steps.getOrNull(position - 1)

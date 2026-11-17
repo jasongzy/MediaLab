@@ -739,7 +739,7 @@ internal class PhotoRegression(
                 model.open(Uri.fromFile(audio), ImportType.AUDIO)
             }
             answer(model, Confirmation.AUDIO, false)
-            check(model.state.value.audio!!.editor.tag === tag && !model.state.value.audioDirty)
+            check(model.state.value.audio!!.editor.tag === tag)
             instrumentation.runOnMainSync {
                 checkNotNull(model.state.value.audio).editor.tags.change(mapOf("TITLE" to listOf("Unsaved")))
                 model.applyAudioMetadata(AudioTool.TAGS)
@@ -750,22 +750,22 @@ internal class PhotoRegression(
             val editedAudio = checkNotNull(model.state.value.audio)
             check(editedAudio.sourceUri == Uri.fromFile(audio))
             check(editedAudio.sourceBytes == audio.length())
-            check(model.state.value.audioDirty)
+            check(editedAudio.tags["TITLE"] == listOf("Unsaved"))
             instrumentation.runOnMainSync { model.restoreAudio() }
             idle(model)
-            check(!model.state.value.audioDirty && model.state.value.notice?.message == R.string.original_audio_restored)
+            check(editedAudio.tags == editedAudio.metadata.tags && model.state.value.notice?.message == R.string.original_audio_restored)
             instrumentation.runOnMainSync { model.clearNotice(); model.restoreAudio() }
             idle(model)
             check(model.state.value.notice == null)
             instrumentation.runOnMainSync { model.undoAudio(-1) }
             idle(model)
-            check(model.state.value.audioDirty)
+            check(editedAudio.tags["TITLE"] == listOf("Unsaved"))
             check(model.state.value.notice == Notice(R.string.undone, argumentRes = R.string.restore_original_audio))
             val before = work.listFiles()!!.toSet()
             for (type in listOf(ImportType.AUDIO, null)) {
                 instrumentation.runOnMainSync { model.open(Uri.fromFile(audio), type) }
                 answer(model, Confirmation.AUDIO, false)
-                check(model.state.value.audio === editedAudio && model.state.value.audioDirty)
+                check(model.state.value.audio === editedAudio)
                 check(work.listFiles()!!.toSet() == before)
             }
             instrumentation.runOnMainSync {
@@ -806,7 +806,7 @@ internal class PhotoRegression(
             instrumentation.runOnMainSync { model.open(Uri.fromFile(audio), null) }
             answer(model, Confirmation.AUDIO, true)
             check(model.workspaceOverlay.value == null)
-            check(!model.state.value.audioDirty && model.state.value.audio != null)
+            check(model.state.value.audio != null && model.state.value.audio !== editedAudio)
             check(!editedAudio.file.exists() && model.state.value.photo === photo)
             instrumentation.runOnMainSync { model.receive(Uri.fromFile(image)) }
             answer(model, Confirmation.IMAGE, true)
@@ -925,6 +925,10 @@ internal class PhotoRegression(
             check(model.state.value.photo.frame === imported.frame && model.state.value.photo.history.size == 1 &&
                 model.state.value.photo.pending.isEmpty())
             val draft = checkNotNull(model.state.value.photo.editor)
+            instrumentation.runOnMainSync { model.palette() }
+            idle(model)
+            val palette = model.state.value.photo.colors
+            check(palette.isNotEmpty())
             instrumentation.runOnMainSync {
                 draft.cropHistory.change(FrameSelection(Rect(1, 2, info.width, info.height)))
                 draft.lossless = true
@@ -942,6 +946,7 @@ internal class PhotoRegression(
                 idle(model)
                 check(model.state.value.photo.editor === draft && draft.cropHistory.canUndo)
                 check(model.state.value.photo.pending == listOf(PhotoTool.CROP))
+                check(model.state.value.photo.colors == palette)
             }
             val metadataFrame = checkNotNull(model.state.value.photo.frame)
             for (format in listOf(ImageFormat.ORIGINAL, ImageFormat.PNG, ImageFormat.WEBP_LOSSLESS)) {
@@ -1289,6 +1294,9 @@ internal class PhotoRegression(
             idle(model)
             check(model.state.value.photo.frame === original)
             check(model.state.value.notice == Notice(R.string.redone, argumentRes = R.string.restore_original))
+            instrumentation.runOnMainSync { model.editPhotoMetadata(mapOf(ExifInterface.TAG_GPS_LATITUDE_REF to "S")) {} }
+            idle(model)
+            val tagged = checkNotNull(model.state.value.photo.frame)
             val editor = checkNotNull(model.state.value.photo.editor)
             instrumentation.runOnMainSync {
                 editor.cutout = cutout
@@ -1296,12 +1304,12 @@ internal class PhotoRegression(
             }
             idle(model)
             val cut = checkNotNull(model.state.value.photo.frame)
-            check(model.state.value.photo.history.size == restoredSize + 1)
+            check(model.state.value.photo.history.size == restoredSize + 2)
             check(model.state.value.photo.pending.isEmpty())
             check(cut.info.metadata.containsAll(capture))
             instrumentation.runOnMainSync { model.undo(-1) }
             idle(model)
-            check(model.state.value.photo.frame === original)
+            check(model.state.value.photo.frame === tagged)
             val restoredCutout = checkNotNull(model.state.value.photo.editor?.cutout)
             check(restoredCutout !== cutout && restoredCutout.mask === mask)
             check(restoredCutout.maskPreview.sameAs(cutout.maskPreview))
@@ -1311,7 +1319,13 @@ internal class PhotoRegression(
             )
             check(model.state.value.photo.pending == listOf(PhotoTool.BACKGROUND))
             instrumentation.runOnMainSync { model.undo(-1) }
+            idle(model)
+            check(model.state.value.photo.frame === original && model.state.value.photo.editor?.cutout === restoredCutout)
+            instrumentation.runOnMainSync { model.undo(-1) }
             answer(model, Confirmation.UNDO, true)
+            instrumentation.runOnMainSync { model.undo(1) }
+            idle(model)
+            check(model.state.value.photo.frame === original && model.state.value.photo.pending.isEmpty())
             instrumentation.runOnMainSync { model.undo(1) }
             idle(model)
             val redoneDraft = checkNotNull(model.state.value.photo.editor?.cutout)

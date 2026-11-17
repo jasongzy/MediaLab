@@ -54,7 +54,7 @@ class EditorInteractionTest {
         editor.pictures.change(listOf(picture))
         assertEquals(listOf(AudioTool.TAGS, AudioTool.ARTWORK), editor.pending)
         assertEquals(metadata.tags, audio.tags)
-        assertTrue(audio.dirty)
+        assertTrue(audio.needsReplacementConfirmation)
         editor.tags.undo()
         assertEquals(listOf(AudioTool.ARTWORK), editor.pending)
         editor.tags.redo()
@@ -70,11 +70,14 @@ class EditorInteractionTest {
         editor.commit(editor.history.value.copy(metadata = AudioMetadata(tags, listOf(picture))), R.string.artwork)
         assertFalse(editor.pictures.canUndo)
         assertSame(picture.data, audio.pictures.single().data)
-        assertFalse(audio.copy(saved = editor.history.value).dirty)
+        assertFalse(audio.copy(saved = editor.history.value).needsReplacementConfirmation)
         editor.history.undo()
         editor.resetMetadata()
         assertTrue(audio.pictures.isEmpty())
         assertTrue(editor.pending.isEmpty())
+        editor.history.undo()
+        editor.resetMetadata()
+        assertTrue(audio.needsReplacementConfirmation)
     }
 
     @Test
