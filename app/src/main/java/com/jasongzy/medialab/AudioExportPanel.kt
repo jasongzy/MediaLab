@@ -26,11 +26,7 @@ internal fun AudioExportPanel(audio: AudioDocument, model: LabViewModel) {
         Modifier.fillMaxWidth().padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        if (editor.pending.isNotEmpty()) Text(
-            stringResource(R.string.unapplied_export,
-                editor.pending.map { stringResource(it.label) }.joinToString("\n") { "• $it" }),
-            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error,
-        )
+        UnappliedExportHint(editor.pending.map { stringResource(it.label) })
         ChoiceChips(
             AudioFormat.entries.map {
                 it.ordinal to if (it == AudioFormat.ORIGINAL) stringResource(R.string.original_format) else it.label

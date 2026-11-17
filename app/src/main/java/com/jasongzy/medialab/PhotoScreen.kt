@@ -460,14 +460,7 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
                         }
                         PhotoTool.INFO -> PhotoInformation(info, model)
                         PhotoTool.EXPORT -> {
-                            if (pending.isNotEmpty()) Text(
-                                stringResource(
-                                    R.string.unapplied_export,
-                                    pending.map { stringResource(it.label) }.joinToString("\n") { "• $it" },
-                                ),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.error,
-                            )
+                            UnappliedExportHint(pending.map { stringResource(it.label) })
                             ExportPanel(model, state)
                         }
                     }

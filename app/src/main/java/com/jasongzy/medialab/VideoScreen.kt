@@ -333,17 +333,7 @@ internal fun VideoScreen(model: LabViewModel, state: LabState, active: Boolean) 
                                 }
                                 VideoTool.INFO -> VideoInformation(video, model)
                                 VideoTool.EXPORT -> {
-                                    if (pending.isNotEmpty())
-                                        Text(
-                                            stringResource(
-                                                R.string.unapplied_export,
-                                                pending
-                                                    .map { stringResource(it.label) }
-                                                    .joinToString("\n") { "• $it" },
-                                            ),
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.error,
-                                        )
+                                    UnappliedExportHint(pending.map { stringResource(it.label) })
                                     ChoiceChips(
                                         listOf(-1 to stringResource(R.string.original_format)) +
                                             VideoFormat.entries.map { it.ordinal to it.name },

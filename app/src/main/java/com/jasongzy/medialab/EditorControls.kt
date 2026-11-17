@@ -190,6 +190,15 @@ internal fun MediaDetail(label: String, value: String) {
 }
 
 @Composable
+internal fun UnappliedExportHint(tools: List<String>) {
+    if (tools.isNotEmpty()) Text(
+        stringResource(R.string.unapplied_export, tools.joinToString("\n") { "• $it" }),
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.error,
+    )
+}
+
+@Composable
 internal fun ExportActions(
     preview: () -> Unit,
     share: () -> Unit,
