@@ -65,7 +65,9 @@ internal class PhotoEditorState(info: PhotoInfo, hasAlpha: Boolean, previous: Ph
     var cleanup by mutableStateOf(ExportOptions(metadata = true, static = true, flatten = true))
     var fill: Boolean by mutableStateOf(previous?.fill ?: true)
     var fillShape: CoverShape by mutableStateOf(previous?.fillShape ?: CoverShape.RECTANGLE)
-    var brushWidth: Float by mutableFloatStateOf(previous?.brushWidth ?: 40f)
+    var brushWidth: Float by mutableFloatStateOf(
+        (previous?.brushWidth ?: 40f).coerceAtMost(maxBrushWidth(info.width, info.height))
+    )
     var color: Int by mutableIntStateOf(previous?.color ?: Color.WHITE)
     var lossless: Boolean by mutableStateOf(previous?.lossless ?: false)
     var dropper by mutableStateOf(false)

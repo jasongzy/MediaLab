@@ -31,12 +31,14 @@ internal data class ImageViewport(val scale: Float = 1f, val offset: Offset = Of
                 Offset(image.width, image.height) * (fit / 2)
         val point = (position - origin) / fit
         val tolerance = edgeSnap / fit
-        fun snap(value: Float, limit: Float): Float =
-            when (value) {
-                in 0f..tolerance -> 0f
-                in (limit - tolerance)..limit -> limit
+        fun snap(value: Float, limit: Float): Float {
+            val inset = minOf(tolerance, limit / 2)
+            return when (value) {
+                in 0f..inset -> 0f
+                in (limit - inset)..limit -> limit
                 else -> value
             }
+        }
         return Offset(snap(point.x, image.width), snap(point.y, image.height))
     }
 

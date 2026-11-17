@@ -39,13 +39,15 @@ internal fun CoverTools(
         }
 }
 
+internal fun maxBrushWidth(width: Int, height: Int) = maxOf(100f, minOf(width, height) / 3f)
+
 @Composable
 internal fun BrushSize(width: Float, image: IntSize, change: (Float) -> Unit) {
     Text(
         "${stringResource(R.string.brush_size)} · ${width.roundToInt()} px",
         style = MaterialTheme.typography.labelMedium,
     )
-    ValueSlider(width, 1f..maxOf(100f, minOf(image.width, image.height) / 3f), change)
+    ValueSlider(width, 1f..maxBrushWidth(image.width, image.height), change)
 }
 
 internal class StrokeDrag(

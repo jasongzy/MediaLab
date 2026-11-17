@@ -871,26 +871,21 @@ private fun VideoFramePanel(video: VideoDocument, expand: Boolean, apply: () -> 
             )
     }
     val image = video.editor.current.size
+    val selection = FrameSelection(Rect(bounds.left, bounds.top, bounds.right, bounds.bottom), ratio)
+    fun selectFrame(next: FrameSelection) {
+        history.change(edit(next))
+        video.editor.inputRevision++
+    }
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
         Box(Modifier.weight(1f)) {
-            FrameRatioChips(ratio) { nextRatio ->
-                val rect = ratioBounds(bounds, nextRatio, expand)
-                history.change(
-                    edit(
-                        FrameSelection(
-                            Rect(rect.left, rect.top, rect.right, rect.bottom),
-                            nextRatio,
-                        )
-                    )
-                )
-            }
+            FrameRatioChips(selection, expand, ::selectFrame)
         }
         HistoryButtons(history, if (expand) R.string.expand_canvas else R.string.crop) {
             video.editor.inputRevision++
         }
     }
     FrameFields(
-        FrameSelection(Rect(bounds.left, bounds.top, bounds.right, bounds.bottom), ratio),
+        selection,
         image,
         expand,
         { video.editor.inputValid = it },
@@ -901,22 +896,11 @@ private fun VideoFramePanel(video: VideoDocument, expand: Boolean, apply: () -> 
     if (expand)
         VideoColorField(video.editor, video.editor.background) { video.editor.background = it }
     VideoEditActions(video.editor, apply) {
-        TextButton({
-            val left = (image.width - bounds.width) / 2
-            val top = (image.height - bounds.height) / 2
-            history.change(
-                edit(
-                    FrameSelection(Rect(left, top, left + bounds.width, top + bounds.height), ratio)
-                )
-            )
-        }) {
+        TextButton({ selectFrame(selection.centered(image)) }) {
             Text(stringResource(R.string.center_image))
         }
         TextButton(
-            {
-                history.change(edit(FrameSelection(Rect(0, 0, image.width, image.height))))
-                video.editor.inputRevision++
-            },
+            { selectFrame(FrameSelection(Rect(0, 0, image.width, image.height))) },
             enabled =
                 !video.editor.inputValid ||
                     bounds != IntRect(0, 0, image.width, image.height) ||
@@ -1000,7 +984,7 @@ private fun VideoResizePanel(video: VideoDocument, apply: () -> Unit) {
         editor.resize,
         editor.current.size,
         editor.lockRatio,
-        1..8192,
+        8192,
         onValidityChanged = { editor.inputValid = it },
         onDraftChanged = { hasDraft = it },
     ) {

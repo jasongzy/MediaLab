@@ -91,13 +91,24 @@ internal data class Stroke(
         get() =
             when (shape) {
                 CoverShape.BRUSH -> points.isNotEmpty()
-                CoverShape.LASSO -> points.size >= 3
+                CoverShape.LASSO -> hasLassoTurn()
                 CoverShape.RECTANGLE,
                 CoverShape.ELLIPSE ->
                     points.size >= 2 &&
                         points.first().first != points.last().first &&
                         points.first().second != points.last().second
             }
+
+    private fun hasLassoTurn(): Boolean {
+        if (points.size < 3) return false
+        val (x, y) = points.first()
+        val dx = points[1].first.toDouble() - x
+        val dy = points[1].second.toDouble() - y
+        return (2 until points.size).any { i ->
+            val (px, py) = points[i]
+            dx * (py.toDouble() - y) != dy * (px.toDouble() - x)
+        }
+    }
 
     val clearsPixels: Boolean
         get() = color ushr 24 == 0

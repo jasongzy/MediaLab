@@ -14,7 +14,7 @@ import org.junit.Test
 class EditorInteractionTest {
     @Test
     fun resolutionPresetsFitTheFrameAndKeepTheOrientation() {
-        assertEquals(IntSize(854, 480), resizePresetSize(IntSize(1920, 1080), 480))
+        assertEquals(IntSize(721, 480), resizePresetSize(IntSize(721, 480), 480))
         assertEquals(IntSize(720, 1280), resizePresetSize(IntSize(1080, 1920), 720))
         assertEquals(IntSize(1440, 1080), resizePresetSize(IntSize(4000, 3000), 1080))
         assertEquals(IntSize(2560, 1440), resizePresetSize(IntSize(1920, 1080), 1440))
@@ -112,17 +112,24 @@ class EditorInteractionTest {
     }
 
     @Test
+    fun narrowFillsSnapToTheNearestEdgeAndAllowDrawingOutside() {
+        val canvas = Size(100f, 100f)
+        val image = Size(2f, 100f)
+        fun imageX(x: Float) = ImageViewport().imagePoint(Offset(x, 50f), canvas, image, edgeSnap = 3f).x
+        assertEquals(2f, imageX(50.75f), 0f)
+        assertEquals(-0.5f, imageX(48.5f), 0f)
+    }
+
+    @Test
     fun lassoRequiresBoundaryButBrushSupportsSinglePixel() {
         val dot = Stroke(listOf(10f to 10f), -1, 40f, CoverShape.BRUSH)
         assertTrue(dot.isDrawable)
         assertFalse(dot.copy(shape = CoverShape.LASSO).isDrawable)
-        assertFalse(
-            dot.copy(points = listOf(0f to 0f, 20f to 30f), shape = CoverShape.LASSO).isDrawable
-        )
-        assertTrue(
-            dot.copy(points = listOf(0f to 0f, 20f to 30f, 40f to 0f), shape = CoverShape.LASSO)
-                .isDrawable
-        )
+        fun lasso(vararg points: Pair<Float, Float>) =
+            dot.copy(points = points.toList(), shape = CoverShape.LASSO).isDrawable
+
+        assertFalse(lasso(0f to 0f, 20f to 30f, 40f to 60f))
+        assertTrue(lasso(0f to 0f, 20f to 20f, 0f to 20f, 20f to 0f))
     }
 
     @Test

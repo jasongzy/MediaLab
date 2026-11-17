@@ -12,23 +12,28 @@ import kotlin.math.roundToInt
 
 internal val frameGuideFractions = listOf(0.5f, 1f / 3, 2f / 3)
 
-internal fun expandedSize(width: Int, height: Int, ratio: Float): IntSize =
-    if (ratio > 0) IntSize(
-        maxOf(width, ceil(height * ratio).toInt()),
-        maxOf(height, ceil(width / ratio).toInt()),
-    ) else IntSize(width, height)
+internal fun fitFrameEdge(current: Int, target: Float, expand: Boolean): Int {
+    val pixels = target.roundToInt().coerceAtLeast(1)
+    return if (expand) maxOf(current, pixels) else minOf(current, pixels)
+}
 
-internal fun croppedSize(width: Int, height: Int, ratio: Float): IntSize =
-    if (ratio > 0) IntSize(
-        minOf(width, (height * ratio).roundToInt().coerceAtLeast(1)),
-        minOf(height, (width / ratio).roundToInt().coerceAtLeast(1)),
-    ) else IntSize(width, height)
+internal fun fittedFrameSize(width: Int, height: Int, ratio: Float, expand: Boolean): IntSize {
+    if (ratio <= 0) return IntSize(width, height)
+    // Resolve the short edge first so rounding the long edge cannot change it on the next fit.
+    return if (ratio >= 1) {
+        val h = fitFrameEdge(height, width / ratio, expand)
+        IntSize(fitFrameEdge(width, h * ratio, expand), h)
+    } else {
+        val w = fitFrameEdge(width, height * ratio, expand)
+        IntSize(w, fitFrameEdge(height, w / ratio, expand))
+    }
+}
 
 internal fun ratioBounds(bounds: IntRect, ratio: Float, expand: Boolean): IntRect {
     if (ratio <= 0) return bounds
     val width = bounds.width
     val height = bounds.height
-    val size = if (expand) expandedSize(width, height, ratio) else croppedSize(width, height, ratio)
+    val size = fittedFrameSize(width, height, ratio, expand)
     val left = bounds.left + (width - size.width) / 2
     val top = bounds.top + (height - size.height) / 2
     return IntRect(left, top, left + size.width, top + size.height)
@@ -55,7 +60,7 @@ internal fun positionedBounds(
     val width = if (expand) maxOf(bounds.width, image.width - left) else minOf(bounds.width, image.width - left)
     val height = if (expand) maxOf(bounds.height, image.height - top) else minOf(bounds.height, image.height - top)
     val size = if (width == bounds.width && height == bounds.height) IntSize(width, height)
-        else if (expand) expandedSize(width, height, ratio) else croppedSize(width, height, ratio)
+        else fittedFrameSize(width, height, ratio, expand)
     return IntRect(left, top, left + size.width, top + size.height)
 }
 
@@ -68,7 +73,9 @@ internal class CropDrag(
     private val visible: Rect = Rect(Offset.Zero, image),
     private val expand: Boolean = false,
     private val snapTolerance: Float = 0f,
+    private val touchSlop: Float = 0f,
 ) {
+    private var dragging = touchSlop == 0f
     var snapped: Set<Int> = aligned(original)
         private set
 
@@ -171,15 +178,23 @@ internal class CropDrag(
                 original.right > visible.right &&
                 original.bottom > visible.bottom))
 
-    fun pixelBounds(position: Offset): IntRect {
+    fun pixelBounds(position: Offset): IntRect? {
+        if (!dragging && (position - start).getDistance() <= touchSlop) return null
+        dragging = true
+        val previous = snapped
         val rect = update(position)
-        return if (expand && (resizing || !moving)) IntRect(
+        val bounds = if (expand && (resizing || !moving)) IntRect(
             floor(rect.left).toInt(), floor(rect.top).toInt(),
             ceil(rect.right).toInt(), ceil(rect.bottom).toInt(),
         ) else IntRect(
             rect.left.roundToInt(), rect.top.roundToInt(),
             rect.right.roundToInt(), rect.bottom.roundToInt(),
         )
+        if (bounds.isEmpty) {
+            snapped = previous
+            return null
+        }
+        return bounds
     }
 
     fun update(position: Offset): Rect {
@@ -252,13 +267,18 @@ internal class CropDrag(
             when {
                 x == 0 -> width = height * ratio
                 y == 0 -> height = width / ratio
+                resizing -> {
+                    // The closest point on the aspect-ratio diagonal follows either drag axis.
+                    height = (ratio * width + height) / (ratio * ratio + 1f)
+                    width = height * ratio
+                }
                 else -> {
                     width = minOf(width, height * ratio)
                     height = width / ratio
                 }
             }
         }
-        if (width <= 0 || height <= 0) return original
+        if (width <= 0 || height <= 0) return Rect(anchor, anchor)
         fun span(at: Float, extent: Float, direction: Int): Float =
             when (direction) {
                 -1 -> at

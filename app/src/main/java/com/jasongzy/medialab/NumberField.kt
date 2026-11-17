@@ -82,10 +82,12 @@ internal fun NumberField(
     val hint = stringResource(R.string.drag_to_adjust)
     val description = stringResource(R.string.adjust_value, stringResource(label))
     val adjustable = range.first < range.last
-    val valid = parse(text) in range
+    val number = parse(text)
+    val valid = number == value && value in range
     SideEffect { onValidityChanged(valid) }
-    LaunchedEffect(value) {
-        if (previousValue != value && parse(text) != value) text = format(value)
+    LaunchedEffect(value, range) {
+        // A linked field can make previously rejected text legal without applying it.
+        if (number != value && (previousValue != value || number in range)) text = format(value)
         previousValue = value
         onDraftChanged(text != format(value))
     }

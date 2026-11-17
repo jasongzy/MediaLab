@@ -55,7 +55,6 @@ import androidx.compose.ui.semantics.setProgress
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
-import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import kotlin.math.roundToInt
@@ -119,10 +118,6 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
     val frameHistory = if (expanding) canvasHistory else cropHistory
     val bounds = frameHistory.value.bounds
     val ratio = frameHistory.value.ratio
-    fun setBounds(value: Rect) {
-        editor.dropper = false
-        frameHistory.change(frameHistory.value.copy(bounds = value))
-    }
     var background by editor::background
     var rotationBackground by editor::rotationBackground
     var cutoutBackground by editor::cutoutBackground
@@ -288,19 +283,15 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
                             var lossless by editor::lossless
                             var inputRevision by rememberSaveable(frameHistory) { mutableIntStateOf(0) }
                             var inputValid by remember(frameHistory, inputRevision) { mutableStateOf(true) }
+                            val image = IntSize(info.width, info.height)
+                            fun selectFrame(selection: FrameSelection) {
+                                dropper = false
+                                frameHistory.change(selection)
+                                inputRevision++
+                            }
                             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
                                 Box(Modifier.weight(1f)) {
-                                    FrameRatioChips(ratio) { nextRatio ->
-                                        dropper = false
-                                        val next = ratioBounds(
-                                            IntRect(bounds.left, bounds.top, bounds.right, bounds.bottom),
-                                            nextRatio,
-                                            expanding,
-                                        )
-                                        frameHistory.change(FrameSelection(
-                                            Rect(next.left, next.top, next.right, next.bottom), nextRatio,
-                                        ))
-                                    }
+                                    FrameRatioChips(frameHistory.value, expanding, ::selectFrame)
                                 }
                                 HistoryButtons(frameHistory, if (expanding) R.string.expand_canvas else R.string.crop) {
                                     dropper = false
@@ -309,7 +300,7 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
                             }
                             key(frameHistory, inputRevision) {
                                 FrameFields(
-                                    frameHistory.value, IntSize(info.width, info.height), expanding,
+                                    frameHistory.value, image, expanding,
                                     { inputValid = it },
                                     { dropper = false; frameHistory.preview(it) },
                                     { dropper = false; frameHistory.change(it) },
@@ -345,20 +336,12 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
                                 horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
                                 verticalArrangement = Arrangement.spacedBy(4.dp),
                             ) {
-                                TextButton({
-                                    setBounds(Rect(bounds).apply {
-                                        offsetTo((info.width - width()) / 2, (info.height - height()) / 2)
-                                    })
-                                }) {
+                                TextButton({ selectFrame(frameHistory.value.centered(image)) }) {
                                     Text(stringResource(R.string.center_image))
                                 }
                                 val initialFrame = FrameSelection(Rect(0, 0, info.width, info.height))
                                 TextButton(
-                                    {
-                                        dropper = false
-                                        inputRevision++
-                                        frameHistory.change(initialFrame)
-                                    },
+                                    { selectFrame(initialFrame) },
                                     enabled = frameHistory.value != initialFrame || !inputValid,
                                 ) {
                                     Text(stringResource(if (expanding) R.string.reset_canvas else R.string.reset_crop))
@@ -823,7 +806,7 @@ private fun PhotoCanvas(
                                 canvas.width / imageSize.width,
                                 canvas.height / imageSize.height,
                             ) * viewport.scale
-                        val cropDrag =
+                        val cropDrag = if (framing && !picking)
                             CropDrag(
                                 FloatRect(
                                     originalBounds.left.toFloat(),
@@ -846,9 +829,9 @@ private fun PhotoCanvas(
                                     .let { if (expanding) it else it.intersect(FloatRect(Offset.Zero, imageSize)) },
                                 expand = expanding,
                                 snapTolerance = 6.dp.toPx() / fit,
-                            )
-                        var cropDragging = false
-                        val strokeDrag = StrokeDrag(start, color, width, shape, softEdges)
+                                touchSlop = viewConfiguration.touchSlop / fit,
+                            ) else null
+                        val strokeDrag = if (painting && !picking) StrokeDrag(start, color, width, shape, softEdges) else null
                         val before = currentStrokes
                         val beforeMask = cutout?.history?.value.orEmpty()
                         fun brush(stroke: Stroke? = null) {
@@ -903,7 +886,7 @@ private fun PhotoCanvas(
                                                 }
                                             }
                                         }
-                                        painting -> {
+                                        strokeDrag != null -> {
                                             if (shape == CoverShape.BRUSH) brushPoint = at
                                             val stroke = strokeDrag.update(at)
                                             if (stroke.fill) {
@@ -912,34 +895,12 @@ private fun PhotoCanvas(
                                                     brush(stroke)
                                             } else brush(stroke)
                                         }
-                                        framing -> {
-                                            if (
-                                                (position - down.position).getDistance() >
-                                                    viewConfiguration.touchSlop
-                                            )
-                                                cropDragging = true
-                                            if (cropDragging) {
-                                                val previous = cropDrag.snapped
-                                                val rect =
-                                                    cropDrag.pixelBounds(
-                                                        viewport.imagePoint(
-                                                            position,
-                                                            canvas,
-                                                            imageSize,
-                                                        )
-                                                    )
-                                                val r =
-                                                    Rect(
-                                                        rect.left,
-                                                        rect.top,
-                                                        rect.right,
-                                                        rect.bottom,
-                                                    )
-                                                if (!r.isEmpty && r.width() > 0 && r.height() > 0) {
-                                                    setCrop(r)
-                                                    snapGuides = frameSnapFeedback(previous, cropDrag.snapped, snapGuides) {
-                                                        haptics.performHapticFeedback(HapticFeedbackType.SegmentFrequentTick)
-                                                    }
+                                        cropDrag != null -> {
+                                            val previous = cropDrag.snapped
+                                            cropDrag.pixelBounds(viewport.imagePoint(position, canvas, imageSize))?.let { rect ->
+                                                setCrop(Rect(rect.left, rect.top, rect.right, rect.bottom))
+                                                snapGuides = frameSnapFeedback(previous, cropDrag.snapped, snapGuides) {
+                                                    haptics.performHapticFeedback(HapticFeedbackType.SegmentFrequentTick)
                                                 }
                                             }
                                         }

@@ -11,7 +11,11 @@ import androidx.compose.ui.unit.dp
 import kotlin.math.ceil
 import kotlin.math.roundToInt
 
-internal data class FrameSelection(val bounds: Rect, val ratio: Float = 0f)
+internal data class FrameSelection(val bounds: Rect, val ratio: Float = 0f) {
+    fun centered(image: IntSize) = copy(bounds = Rect(bounds).apply {
+        offsetTo((image.width - width()) / 2, (image.height - height()) / 2)
+    })
+}
 
 @Composable
 internal fun ResizePresetChips(size: IntSize, original: IntSize, change: (IntSize) -> Unit) {
@@ -30,8 +34,8 @@ internal fun resizePresetSize(source: IntSize, shortEdge: Int): IntSize {
     val height = if (source.width >= source.height) shortEdge else longEdge
     val scale = minOf(width.toDouble() / source.width, height.toDouble() / source.height)
     return IntSize(
-        ((source.width * scale).roundToInt().coerceAtLeast(1) + 1) / 2 * 2,
-        ((source.height * scale).roundToInt().coerceAtLeast(1) + 1) / 2 * 2,
+        (source.width * scale).roundToInt().coerceAtLeast(1),
+        (source.height * scale).roundToInt().coerceAtLeast(1),
     )
 }
 
@@ -40,7 +44,7 @@ internal fun ResizeFields(
     size: IntSize,
     original: IntSize,
     lockRatio: Boolean,
-    range: IntRange = 1..100000,
+    maxEdge: Int = 100000,
     onValidityChanged: (Boolean) -> Unit,
     onDraftChanged: (Boolean) -> Unit,
     change: (IntSize) -> Unit,
@@ -55,20 +59,20 @@ internal fun ResizeFields(
         onValidityChanged(valid)
         onDraftChanged(hasDraft)
     }
+    fun scaled(edge: Int, from: Int, to: Int) =
+        (edge.toDouble() * to / from).roundToInt().coerceIn(1, maxEdge)
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         NumberField(
             R.string.width,
             size.width,
             Modifier.weight(1f),
-            range,
+            1..if (lockRatio) scaled(maxEdge, original.height, original.width) else maxEdge,
             onValidityChanged = { widthValid = it },
             onDraftChanged = { widthHasDraft = it },
         ) { width ->
             val height =
                 if (lockRatio && width != size.width)
-                    (width.toDouble() * original.height / original.width)
-                        .roundToInt()
-                        .coerceAtLeast(1)
+                    scaled(width, original.width, original.height)
                 else size.height
             change(IntSize(width, height))
         }
@@ -76,15 +80,13 @@ internal fun ResizeFields(
             R.string.height,
             size.height,
             Modifier.weight(1f),
-            range,
+            1..if (lockRatio) scaled(maxEdge, original.width, original.height) else maxEdge,
             onValidityChanged = { heightValid = it },
             onDraftChanged = { heightHasDraft = it },
         ) { height ->
             val width =
                 if (lockRatio && height != size.height)
-                    (height.toDouble() * original.width / original.height)
-                        .roundToInt()
-                        .coerceAtLeast(1)
+                    scaled(height, original.height, original.width)
                 else size.width
             change(IntSize(width, height))
         }
@@ -92,14 +94,19 @@ internal fun ResizeFields(
 }
 
 @Composable
-internal fun FrameRatioChips(ratio: Float, change: (Float) -> Unit) {
+internal fun FrameRatioChips(selection: FrameSelection, expand: Boolean, change: (FrameSelection) -> Unit) {
     val ratios = listOf(0f, 1f, 4f / 3, 3f / 2, 16f / 9, 9f / 16)
     ChoiceChips(
         listOf(stringResource(R.string.free_ratio), "1:1", "4:3", "3:2", "16:9", "9:16")
             .mapIndexed { index, label -> index to label },
-        ratios.indexOf(ratio),
+        ratios.indexOf(selection.ratio),
     ) { index ->
-        if (ratios[index] != ratio) change(ratios[index])
+        val ratio = ratios[index]
+        if (ratio == selection.ratio) change(selection) else {
+            val bounds = selection.bounds
+            val next = ratioBounds(IntRect(bounds.left, bounds.top, bounds.right, bounds.bottom), ratio, expand)
+            change(FrameSelection(Rect(next.left, next.top, next.right, next.bottom), ratio))
+        }
     }
 }
 
@@ -128,14 +135,18 @@ internal fun FrameFields(
         finish(commit)
     }
     val frame = IntRect(bounds.left, bounds.top, bounds.right, bounds.bottom)
-    val minimum = if (expand) expandedSize(image.width, image.height, ratio) else IntSize(1, 1)
+    val limit = if (ratio <= 0) image else IntSize(
+        fitFrameEdge(image.width, image.height * ratio, expand),
+        fitFrameEdge(image.height, image.width / ratio, expand),
+    )
+    val minimum = if (expand) limit else IntSize(1, 1)
     val maximum =
         if (expand)
             IntSize(
                 maxOf(100000, frame.width, minimum.width),
                 maxOf(100000, frame.height, minimum.height),
             )
-        else croppedSize(image.width, image.height, ratio)
+        else limit
     fun update(next: IntRect) {
         val value = selection.copy(bounds = Rect(next.left, next.top, next.right, next.bottom))
         if (dragging) preview(value) else change(value)

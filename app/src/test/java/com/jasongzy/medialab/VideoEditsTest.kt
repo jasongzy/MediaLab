@@ -251,8 +251,10 @@ class VideoEditsTest {
         assertEquals(listOf(VideoTool.TIME, VideoTool.CROP), editor.pending)
         assertEquals(initial, editor.output)
         editor.format = VideoFormat.WEBM
+        editor.brushWidth = 320f
         editor.history.change(editor.applyTool(editor.tool))
         editor.resetDrafts()
+        assertEquals(500f / 3, editor.brushWidth, 0f)
         assertTrue(editor.pending.isEmpty())
         assertEquals(0L, editor.output.startMs)
         assertEquals(IntSize(1000, 500), editor.output.size)

@@ -396,6 +396,7 @@ internal class VideoEditor(initial: VideoEdits) {
         timeColor = current.timeColor
         background = current.background
         resize = current.size
+        brushWidth = brushWidth.coerceAtMost(maxBrushWidth(current.size.width, current.size.height))
         rotation = VideoRotation()
         clearMetadata = false
         drafts = newDrafts()

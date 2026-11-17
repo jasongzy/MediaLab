@@ -280,6 +280,7 @@ internal fun VideoCanvas(
                                 ),
                                 expanding,
                                 6.dp.toPx() / scale,
+                                touchSlop = viewConfiguration.touchSlop / scale,
                             )
                         }
                         fun point(position: Offset) =
@@ -392,26 +393,19 @@ internal fun VideoCanvas(
                                         }
                                 } else if (!transform && drag != null) {
                                     val pointer = event.changes.firstOrNull { it.id == down.id }
-                                    if (
-                                        pointer != null &&
-                                            pointer.pressed &&
-                                            pointer.position != pointer.previousPosition
-                                    ) {
+                                    if (pointer != null && pointer.position != pointer.previousPosition) {
                                         val previous = drag.snapped
-                                        val rect =
-                                            drag.pixelBounds(
-                                                viewport.imagePoint(pointer.position, canvas, image)
+                                        drag.pixelBounds(viewport.imagePoint(pointer.position, canvas, image))?.let { rect ->
+                                            history?.preview(
+                                                if (expanding) checkNotNull(initial).copy(canvas = rect)
+                                                else checkNotNull(initial).withCrop(rect)
                                             )
-                                        history?.preview(
-                                            if (expanding) checkNotNull(initial).copy(canvas = rect)
-                                            else checkNotNull(initial).withCrop(rect)
-                                        )
-                                        snapped =
-                                            frameSnapFeedback(previous, drag.snapped, snapped) {
+                                            snapped = frameSnapFeedback(previous, drag.snapped, snapped) {
                                                 haptics.performHapticFeedback(
                                                     HapticFeedbackType.SegmentFrequentTick
                                                 )
                                             }
+                                        }
                                     }
                                 }
                                 event.changes.forEach { it.consume() }

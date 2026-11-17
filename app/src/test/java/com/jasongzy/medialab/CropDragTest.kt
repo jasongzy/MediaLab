@@ -49,6 +49,15 @@ class CropDragTest {
         }
         val padded = Rect(-200f, -100f, 1100f, 900f)
         val visible = Rect(-2000f, -2000f, 3000f, 3000f)
+        for (expand in listOf(false, true)) {
+            val frame = if (expand) Rect(-200f, -100f, 1600f, 800f) else original
+            val delta = if (expand) Offset(0f, 100f) else Offset(100f, 0f)
+            val drag = CropDrag(frame, frame.bottomRight, image, 20f, 2f, visible, expand)
+            val resized = drag.update(frame.bottomRight + delta)
+            assertEquals(frame.topLeft, resized.topLeft)
+            assertTrue(resized.width > frame.width)
+            assertEquals(2f, resized.width / resized.height, 0.001f)
+        }
         val expansion = CropDrag(padded, padded.topLeft, image, 20f, 0f, visible, true, 6f)
         assertEquals(Rect(-100f, -100f, 1100f, 900f), expansion.update(Offset(-104f, -100f)))
         val drawing = CropDrag(full, Offset(-200f, -100f), image, 20f, 0f, visible, true, 6f)
@@ -57,7 +66,7 @@ class CropDragTest {
             val initial = if (expand) padded else original
             val drag = CropDrag(initial, initial.bottomRight, image, 20f, ratio, visible, expand, 15f)
             for (point in listOf(Offset(-100f, -100f), Offset(797f, 598f), Offset(1600f, 1200f))) {
-                val result = drag.pixelBounds(point)
+                val result = checkNotNull(drag.pixelBounds(point))
                 assertTrue(result.width > 0 && result.height > 0)
                 if (expand) assertTrue(result.left <= 0 && result.top <= 0 && result.right >= 1000 && result.bottom >= 800)
                 else assertTrue(result.left >= 0 && result.top >= 0 && result.right <= 1000 && result.bottom <= 800)
@@ -169,6 +178,7 @@ class CropDragTest {
                 assertTrue(inner.left >= outer.left && inner.top >= outer.top)
                 assertTrue(inner.right <= outer.right && inner.bottom <= outer.bottom)
                 assertEquals(next, ratioBounds(next, 0f, expand))
+                assertEquals(next, ratioBounds(next, ratio, expand))
                 bounds = next
             }
         }
@@ -185,11 +195,10 @@ class CropDragTest {
 
     @Test
     fun expansionRoundsDimensionsOnceAndKeepsFractionalEdgesOutside() {
-        assertEquals(IntSize(178, 100), expandedSize(100, 100, 16f / 9))
-        assertEquals(IntSize(64, 114), expandedSize(64, 48, 9f / 16))
-        assertEquals(IntSize(64, 48), expandedSize(64, 48, 0f))
+        assertEquals(IntSize(178, 100), fittedFrameSize(100, 100, 16f / 9, expand = true))
+        assertEquals(IntSize(64, 114), fittedFrameSize(64, 48, 9f / 16, expand = true))
         val ratio = 4f / 3
-        val minimum = expandedSize(1000, 800, ratio)
+        val minimum = fittedFrameSize(1000, 800, ratio, expand = true)
         val rounded = Rect(-33f, 0f, 1034f, 800f)
         val start = Offset(rounded.left, rounded.center.y)
         val returning = CropDrag(rounded, start, image, 20f, ratio,
@@ -199,7 +208,7 @@ class CropDragTest {
         val drag = CropDrag(frame, Offset(-33.333332f, 400f), image, 20f, ratio,
             Rect(-2000f, -2000f, 3000f, 3000f), expand = true)
         for (end in listOf(Offset(-33.333332f, 400f), Offset(50f, 400f), Offset(-500f, 400f))) {
-            val result = drag.pixelBounds(end)
+            val result = checkNotNull(drag.pixelBounds(end))
             assertTrue(result.left <= 0 && result.top <= 0 && result.right >= 1000 && result.bottom >= 800)
             assertTrue(result.width >= minimum.width && result.height >= minimum.height)
         }
@@ -208,7 +217,7 @@ class CropDragTest {
         val padded = Rect(-20f, -10f, 1040f, 830f)
         val move = CropDrag(padded, padded.center, image, 20f, 0f, expand = true)
         for (delta in listOf(Offset(0.4f, 0.4f), Offset(-0.4f, -0.4f), Offset(500f, -500f))) {
-            val result = move.pixelBounds(padded.center + delta)
+            val result = checkNotNull(move.pixelBounds(padded.center + delta))
             assertEquals(1060, result.width)
             assertEquals(840, result.height)
         }
@@ -244,6 +253,12 @@ class CropDragTest {
     @Test
     fun fullImageAndFullyHiddenFrameCreateNewCropsWithAFixedAnchor() {
         val full = Rect(Offset.Zero, image)
+        val gesture = CropDrag(full, full.center, image, 20f, 0f, touchSlop = 8f)
+        assertNull(gesture.pixelBounds(full.center + Offset(1f, 1f)))
+        assertNull(gesture.pixelBounds(full.center + Offset(100f, 0.2f)))
+        assertEquals(IntRect(500, 400, 600, 420), gesture.pixelBounds(full.center + Offset(100f, 20f)))
+        assertNull(gesture.pixelBounds(full.center + Offset(100f, 0f)))
+        assertEquals(IntRect(500, 400, 501, 401), gesture.pixelBounds(full.center + Offset(1f, 1f)))
         val frame = Rect(200f, 150f, 800f, 650f)
         val hidden = Rect(210f, 160f, 790f, 640f)
         for ((crop, visible, start) in
