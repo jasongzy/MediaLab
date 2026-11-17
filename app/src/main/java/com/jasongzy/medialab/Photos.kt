@@ -262,9 +262,9 @@ internal object Photos {
         )
     }
 
-    private fun budget(width: Int, height: Int, copies: Int = 2) {
+    private fun budget(width: Int, height: Int, copies: Int = 2, scratchBytes: Long = 0) {
         require(width > 0 && height > 0)
-        if (width.toLong() * height * 4 * copies >= Runtime.getRuntime().maxMemory() * 0.6)
+        if (width.toLong() * height * 4 * copies + scratchBytes >= Runtime.getRuntime().maxMemory() * 0.6)
             throw OutOfMemoryError("Image operation exceeds the memory budget: $width × $height")
     }
 
@@ -744,7 +744,16 @@ internal object Photos {
 
     suspend fun resize(bitmap: Bitmap, width: Int, height: Int, method: Int): Bitmap {
         require(method in 0..2)
-        budget(width, height, if (bitmap.config == Bitmap.Config.RGBA_F16) 6 else 3)
+        val cacheLimit = Runtime.getRuntime().maxMemory() / 32
+        val rowBytes = width * 4L * Float.SIZE_BYTES
+        val radius = if (method == 2) 2 else 1
+        val sy = bitmap.height.toDouble() / height
+        val fy = max(1.0, sy)
+        val yRadius = radius * fy
+        val filterRows = minOf(bitmap.height.toLong(), ceil(2 * yRadius).toLong() + 1)
+        val scratchBytes = if (method == 0) 0L else
+            bitmap.width * 4L * Float.SIZE_BYTES + 3 * rowBytes + minOf(filterRows * rowBytes, cacheLimit + rowBytes)
+        budget(width, height, if (bitmap.config == Bitmap.Config.RGBA_F16) 2 else 1, scratchBytes)
         if (method == 0) {
             val scaled = Bitmap.createScaledBitmap(bitmap, width, height, false)
             if (scaled !== bitmap) resizeGainmap(bitmap, scaled, false)
@@ -754,11 +763,8 @@ internal object Photos {
         val output = Bitmap.createBitmap(width, height, bitmap.config!!, bitmap.hasAlpha(), space)
         try {
             output.density = bitmap.density
-            val radius = if (method == 2) 2 else 1
             val sx = bitmap.width.toDouble() / width
-            val sy = bitmap.height.toDouble() / height
             val fx = max(1.0, sx)
-            val fy = max(1.0, sy)
             val cache = linkedMapOf<Int, FloatArray>()
             val source = FloatArray(bitmap.width * 4)
             val row = FloatArray(width * 4)
@@ -767,8 +773,8 @@ internal object Photos {
                 currentCoroutineContext().ensureActive()
                 channels.fill(0.0)
                 val center = (y + 0.5) * sy - 0.5
-                val start = maxOf(0, ceil(center - radius * fy).toInt())
-                val end = minOf(bitmap.height - 1, floor(center + radius * fy).toInt())
+                val start = maxOf(0, ceil(center - yRadius).toInt())
+                val end = minOf(bitmap.height - 1, floor(center + yRadius).toInt())
                 cache.keys.filter { it < start }.forEach { cache.remove(it) }
                 var weight = 0.0
                 for (iy in start..end) {
@@ -789,7 +795,7 @@ internal object Photos {
                                 (horizontal[x * 4 + c] / sum).toFloat()
                         }
                         cache[iy] = horizontal
-                        while (cache.size.toLong() * width * 16 > Runtime.getRuntime().maxMemory() / 32) {
+                        while (cache.size * rowBytes > cacheLimit) {
                             cache.remove(cache.keys.first())
                         }
                     }

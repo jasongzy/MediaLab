@@ -58,12 +58,15 @@ internal class PhotoHistory(
 
     suspend fun reserve(bytes: Long, keep: PhotoFrame? = current) {
         require(bytes >= 0)
-        val retained = retainedBytes()
-        for (frame in frames.distinctBy { it.image }) {
-            if (residentBytes + retained + bytes <= memoryBudget) break
-            if (frame.image !== keep?.image) detach(frame)?.recycle()
+        var required = residentBytes + retainedBytes() + bytes
+        for (frame in frames) {
+            if (required <= memoryBudget) break
+            if (frame.image !== keep?.image) detach(frame)?.let {
+                required -= bitmapBytes(it)
+                it.recycle()
+            }
         }
-        if (residentBytes + retained + bytes >= Runtime.getRuntime().maxMemory() * 0.7)
+        if (required >= Runtime.getRuntime().maxMemory() * 0.7)
             throw OutOfMemoryError("Image operation exceeds the memory budget")
     }
 
