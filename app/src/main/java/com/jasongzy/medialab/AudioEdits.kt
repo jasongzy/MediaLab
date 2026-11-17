@@ -14,7 +14,7 @@ internal fun channelGroups(count: Int, selected: Set<Int>, merge: Boolean): List
     }
 }
 
-internal fun channelFilter(groups: List<List<Int>>): String {
+private fun channelFilter(groups: List<List<Int>>): String {
     require(groups.isNotEmpty() && groups.all { it.isNotEmpty() })
     return "pan=${groups.size}c|" + groups.mapIndexed { index, channels ->
         "c$index<" + channels.joinToString("+") { "c$it" }

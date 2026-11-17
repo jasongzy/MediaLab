@@ -39,10 +39,6 @@ internal object AudioRegression {
         val numberedMp3 = AudioFiles.read(numbered, numbered.name)
         check(numberedMp3.tags["DISCNUMBER"] == listOf("01"))
         check(numberedMp3.tags["TRACKNUMBER"] == listOf("003/012"))
-        val numberedM4a = exportAudio(app.cacheDir, numberedMp3, AudioExportOptions(AudioFormat.M4A))
-        val numberedResult = AudioFiles.read(numberedM4a, numberedM4a.name)
-        check(numberedResult.tags["DISCNUMBER"] == listOf("1"))
-        check(numberedResult.tags["TRACKNUMBER"] == listOf("3/12"))
         for ((format, mime) in listOf(Bitmap.CompressFormat.JPEG to "image/jpg",
             Bitmap.CompressFormat.WEBP_LOSSLESS to "image/webp")) {
             val bitmap = Bitmap.createBitmap(16, 8, Bitmap.Config.ARGB_8888).apply { eraseColor(0x804080c0.toInt()) }
@@ -63,6 +59,7 @@ internal object AudioRegression {
             val thumb = checkNotNull(AudioFiles.decodeArtwork(cover.data, 8))
             try { check(thumb.width == 4 && thumb.height == 8) } finally { thumb.recycle() }
             if (format == Bitmap.CompressFormat.JPEG) {
+                check(result.tags["DISCNUMBER"] == listOf("1") && result.tags["TRACKNUMBER"] == listOf("3/12"))
                 check(cover.data.contentEquals(bytes) && cover.mimeType == "image/jpeg")
             } else {
                 val expected = checkNotNull(AudioFiles.decodeArtwork(bytes))
@@ -186,12 +183,12 @@ internal object AudioRegression {
         val three = renderAudio(AudioFiles.read(multichannel, multichannel.name).current,
             File(app.filesDir, "three.flac"), channels = channelGroups(4, setOf(0, 2), true))
         check(pcm(three).take(3) == listOf<Short>(12288, -4096, -8192))
-        for ((channels, expected) in listOf(setOf(0) to 8192, setOf(1) to -4096, setOf(0, 1) to 2048)) {
-            val processor = channelAudition(2, channels)
-            processor.configure(AudioProcessor.AudioFormat(48000, 2, C.ENCODING_PCM_16BIT))
-            processor.flush()
-            processor.queueInput(ByteBuffer.allocateDirect(4).order(ByteOrder.nativeOrder())
-                .putShort(8192.toShort()).putShort((-4096).toShort()).apply { flip() })
+        for ((channels, expected) in listOf(setOf(1) to -4096, setOf(0, 2) to 6144)) {
+            val processor = channelAudition(3, channels)
+            processor.configure(AudioProcessor.AudioFormat(48000, 3, C.ENCODING_PCM_16BIT))
+            processor.flush(AudioProcessor.StreamMetadata.DEFAULT)
+            processor.queueInput(ByteBuffer.allocateDirect(6).order(ByteOrder.nativeOrder())
+                .putShort(8192.toShort()).putShort((-4096).toShort()).putShort(4096.toShort()).apply { flip() })
             check(processor.output.order(ByteOrder.nativeOrder()).short.toInt() == expected)
             processor.reset()
         }

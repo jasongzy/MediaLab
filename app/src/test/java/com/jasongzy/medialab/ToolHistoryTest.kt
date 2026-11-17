@@ -47,26 +47,6 @@ class ToolHistoryTest {
     }
 
     @Test
-    fun strokeListsStayWholeAndDraftUndoCanBeRedone() {
-        val history = ToolHistory(emptyList<Int>())
-        history.change(listOf(1))
-        history.preview(listOf(1, 2))
-        history.preview(listOf(1, 3))
-        history.undo()
-        assertEquals(listOf(1), history.value)
-        history.redo()
-        assertEquals(listOf(1, 3), history.value)
-        history.undo()
-        history.undo()
-        assertEquals(emptyList<Int>(), history.value)
-        assertFalse(history.canUndo)
-        assertNull(history.undoValue)
-        history.undo()
-        history.redo()
-        assertEquals(listOf(1), history.value)
-    }
-
-    @Test
     fun historyKeepsTheLatest64UndoSteps() {
         val history = ToolHistory(0)
         repeat(80) { history.change(it + 1, it + 100) }

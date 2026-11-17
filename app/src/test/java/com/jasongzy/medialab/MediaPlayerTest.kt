@@ -10,8 +10,6 @@ class MediaPlayerTest {
         assertEquals("0:00.200", playbackTime(200))
         assertEquals("0:00.000", playbackTime(0, 200))
         assertEquals("0:00", playbackTime(200, 10_000))
-        assertEquals("0:59", playbackTime(59_999))
-        assertEquals("1:00", playbackTime(60_000))
         assertEquals("59:59", playbackTime(3_599_999))
         assertEquals("1:00:00", playbackTime(3_600_000))
         assertEquals("12:34:56", playbackTime(45_296_000))

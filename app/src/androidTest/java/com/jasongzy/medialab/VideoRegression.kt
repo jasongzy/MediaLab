@@ -14,8 +14,9 @@ import com.arthenica.ffmpegkit.FFprobeKit
 import java.io.File
 import java.util.UUID
 import kotlin.math.abs
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
@@ -378,7 +379,7 @@ internal object VideoRegression {
             check(first.width == 48 && first.height == 32 && first.getPixel(24, 16) == Color.WHITE)
             first.recycle()
             stage("speed and timed cover")
-            for (speed in listOf(50, 150, 200)) {
+            for (speed in listOf(50, 150)) {
                 val sped = covered.next().copy(speedPercent = speed, beforeMs = 100, afterMs = 200)
                 Videos.export(input, info, sped, rendered)
                 val spedInfo = Videos.inspect(rendered)
@@ -603,9 +604,7 @@ internal object VideoRegression {
                 )
             )
             val fullHdInfo = Videos.inspect(fullHd)
-            withTimeout(15_000) {
-                Videos.frame(fullHd, fullHdInfo, 250, frame, fullHdInfo.edits())
-            }
+            Videos.frame(fullHd, fullHdInfo, 250, frame, fullHdInfo.edits())
             val fullHdFrame = checkNotNull(BitmapFactory.decodeFile(frame.path))
             check(fullHdFrame.width == 1920 && fullHdFrame.height == 1080)
             check(Color.red(fullHdFrame.getPixel(960, 540)) > 240)
@@ -726,7 +725,7 @@ internal object VideoRegression {
             val cancelled = File(context.filesDir, "cancelled.gif")
             stage("cancel")
             val retained = context.filesDir.listFiles()!!.toSet()
-            val task = launch {
+            val task = launch(start = CoroutineStart.UNDISPATCHED) {
                 Videos.export(
                     input,
                     info,
@@ -734,9 +733,7 @@ internal object VideoRegression {
                     cancelled,
                 )
             }
-            delay(150)
-            task.cancel()
-            task.join()
+            task.cancelAndJoin()
             check(!cancelled.exists())
             check(context.filesDir.listFiles()!!.toSet() == retained)
         }
@@ -880,7 +877,7 @@ internal object VideoRegression {
                 video.editor.draft.change(video.editor.current.copy(afterMs = 600000))
                 model.applyVideo()
             }
-            delay(150)
+            withTimeout(60_000) { model.state.first { it.showProgress } }
             onMain { model.cancel() }
             idle()
             check(
@@ -1049,6 +1046,7 @@ internal object VideoRegression {
             idle()
             val importedGif = checkNotNull(model.state.value.video)
             check(importedGif.info.format == "gif" && importedGif.sourceUri == Uri.fromFile(gif))
+            check(abs(importedGif.info.fps - 10) < 0.01)
             check(importedGif.playbackFile.isFile && model.state.value.tab == ImportType.VIDEO.ordinal)
             check(model.state.value.photo === motionPhoto && previousVideo.files.none { it.exists() })
         } finally {

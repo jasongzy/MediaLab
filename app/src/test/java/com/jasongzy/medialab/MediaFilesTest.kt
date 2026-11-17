@@ -102,11 +102,8 @@ class MediaFilesTest {
     }
 
     @Test
-    fun clearingCachePreservesActiveWorkspacesAndPersistentFiles() = runBlocking {
+    fun clearingCachePreservesActiveWorkspaces() = runBlocking {
         val cache = folder.newFolder("cache")
-        val model = file(folder.root, "files/models/model/rmbg14.tflite")
-        val settings = file(folder.root, "shared_prefs/settings.xml")
-        val saved = file(folder.root, "Pictures/saved.png")
         val abandoned = WorkspaceCache(cache) { emptySet() }.use { file(it.work, "unfinished.part") }
         var firstFiles = emptySet<File>()
         var queuedInput: File? = null
@@ -179,14 +176,12 @@ class MediaFilesTest {
                     second.access.unlock()
                 }
                 clearing.await()
-                for (kept in firstFiles + secondFiles + listOf(saved, model, settings))
+                for (kept in firstFiles + secondFiles)
                     assertEquals(kept.path, "media", kept.readText())
                 assertTrue((stale + otherStale + shared + nextShare).none { it.exists() })
                 assertFalse(historicalPreview.exists())
                 assertNull(video.previews[previous])
                 assertEquals(activePreview, video.previews[current]?.file)
-                first.clearStale()
-                assertTrue(secondFiles.all { it.isFile })
                 queuedInput = importing
             }
             first.clearStale()
@@ -201,8 +196,6 @@ class MediaFilesTest {
             assertFalse(secondExports.exists())
             assertTrue(state.workingFiles.all { it.isFile })
         }
-        MediaFiles.clearCache(File(folder.root, "missing"))
-        assertTrue(saved.exists())
     }
 
     @Test

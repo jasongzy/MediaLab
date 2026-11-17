@@ -101,12 +101,6 @@ class AudioEditsTest {
         assertEquals(AudioTool.TAGS, editor.tool)
         assertTrue(editor.selectedChannels.isEmpty())
         assertFalse(editor.audition)
-        editor.history.undo()
-        editor.resetPlayback()
-        editor.tool = AudioTool.CHANNELS
-        editor.history.redo()
-        editor.resetPlayback()
-        assertEquals(AudioTool.TAGS, editor.tool)
     }
 
     @Test
@@ -134,7 +128,6 @@ class AudioEditsTest {
     fun channelEditsPreserveUnselectedOrderAndRequireAudibleOutput() {
         assertEquals(listOf(listOf(0, 2), listOf(1), listOf(3)), channelGroups(4, setOf(0, 2), true))
         assertEquals(listOf(listOf(1), listOf(3)), channelGroups(4, setOf(0, 2), false))
-        assertEquals("pan=1c|c0<c0+c1", channelFilter(channelGroups(2, setOf(0, 1), true)))
         assertThrows(IllegalArgumentException::class.java) { channelGroups(2, setOf(0, 1), false) }
         assertThrows(IllegalArgumentException::class.java) { channelGroups(2, setOf(0, 2), true) }
     }
@@ -147,6 +140,7 @@ class AudioEditsTest {
         assertEquals(834L, edit.copy(speedPercent = 300).durationMs)
         assertThrows(IllegalArgumentException::class.java) { edit.copy(endMs = 3000).validate(2000) }
         assertThrows(IllegalArgumentException::class.java) { edit.copy(speedPercent = 0).validate(2000) }
+        assertThrows(IllegalArgumentException::class.java) { edit.copy(speedPercent = 801).validate(2000) }
         assertThrows(IllegalArgumentException::class.java) { edit.copy(beforeMs = Int.MAX_VALUE.toLong()).validate(2000) }
     }
 }

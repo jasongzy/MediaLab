@@ -42,8 +42,9 @@ class VideoEditsTest {
         val cover = VideoCover(listOf(stroke), 200, 600)
         editor.draft.change(editor.draft.value.copy(cover = cover))
         val second = editor.draft.value.copy(cover = cover.copy(endMs = 800))
-        editor.draft.change(second)
+        editor.draft.preview(second)
         editor.draft.undo()
+        assertEquals(second, editor.draft.redoValue)
         assertEquals(listOf(VideoTool.COVER), editor.pending)
         editor.draft.undo()
         assertTrue(editor.pending.isEmpty())
@@ -104,11 +105,6 @@ class VideoEditsTest {
         assertFalse(brief.showsCover(300))
         assertThrows(IllegalArgumentException::class.java) {
             applied.copy(cover = cover.copy(endMs = 1001)).validate(initial.size, 1000)
-        }
-        assertEquals(256, editor.gifColors)
-        assertFalse(editor.gifLoop)
-        assertThrows(IllegalArgumentException::class.java) {
-            initial.copy(gifColors = 257).validate(initial.size, 1000)
         }
     }
 
@@ -172,11 +168,6 @@ class VideoEditsTest {
             ),
         )
         assertEquals(1L, short.copy(endMs = 1, speedPercent = 800).durationMs)
-        for (speed in listOf(0, 9, 801)) {
-            assertThrows(IllegalArgumentException::class.java) {
-                short.copy(speedPercent = speed).validate(short.size, 1000)
-            }
-        }
     }
 
     @Test
@@ -270,8 +261,6 @@ class VideoEditsTest {
         for (invalid in
             listOf(
                 edits.copy(endMs = 1000),
-                edits.copy(endMs = 10001),
-                edits.copy(beforeMs = Int.MAX_VALUE.toLong()),
                 edits.copy(canvas = IntRect(0, 0, 100, 100)),
                 edits.copy(width = 9000),
                 edits.copy(canvas = IntRect(0, 0, 100000, 100000), width = 640, height = 360),

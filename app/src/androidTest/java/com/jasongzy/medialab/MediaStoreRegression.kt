@@ -284,7 +284,7 @@ internal class MediaStoreRegression(private val app: Context, private val fixtur
                         cover.pictureType == picture.pictureType &&
                         cover.mimeType == mime
                 )
-                verifyDescriptions(edited, tags, propertyName)
+                verifyDescriptions(read, tags, propertyName)
                 if (format == Bitmap.CompressFormat.PNG) {
                     val failure = runCatching {
                         AudioFiles.saveOriginal(
@@ -315,11 +315,10 @@ internal class MediaStoreRegression(private val app: Context, private val fixtur
     }
 
     private suspend fun verifyDescriptions(
-        existing: File,
+        imported: AudioDocument,
         tags: Map<String, List<String>>,
         propertyName: String,
     ) {
-        val imported = AudioFiles.read(existing, existing.name)
         for (description in listOf(imported.pictures.single().description, "", "新的中文说明 🎵 𠮷")) {
             val edited =
                 AudioFiles.saveOriginal(

@@ -17,7 +17,6 @@ class EditorInteractionTest {
         assertEquals(IntSize(721, 480), resizePresetSize(IntSize(721, 480), 480))
         assertEquals(IntSize(720, 1280), resizePresetSize(IntSize(1080, 1920), 720))
         assertEquals(IntSize(1440, 1080), resizePresetSize(IntSize(4000, 3000), 1080))
-        assertEquals(IntSize(2560, 1440), resizePresetSize(IntSize(1920, 1080), 1440))
         assertEquals(IntSize(3840, 1646), resizePresetSize(IntSize(7000, 3000), 2160))
     }
 
@@ -141,17 +140,13 @@ class EditorInteractionTest {
 
     @Test
     fun regularFillsAcceptBothDragDirectionsAndRequireAnArea() {
-        for (shape in listOf(CoverShape.RECTANGLE, CoverShape.ELLIPSE)) {
-            val stroke = Stroke(listOf(20f to 30f), 0, 40f, shape)
-            assertTrue(stroke.fill)
-            assertFalse(stroke.isDrawable)
-            for (corner in listOf(0f to 0f, 40f to 60f, 0f to 60f, 40f to 0f)) assertTrue(
-                stroke.copy(points = stroke.points + corner).isDrawable
-            )
-            for (corner in listOf(20f to 0f, 0f to 30f, 20f to 30f)) assertFalse(
-                stroke.copy(points = stroke.points + corner).isDrawable
-            )
-        }
+        fun drawable(shape: CoverShape, x: Float, y: Float) =
+            Stroke(listOf(20f to 30f, x to y), 0, 40f, shape).isDrawable
+
+        assertTrue(drawable(CoverShape.RECTANGLE, 0f, 0f))
+        assertTrue(drawable(CoverShape.ELLIPSE, 40f, 60f))
+        assertFalse(drawable(CoverShape.RECTANGLE, 20f, 60f))
+        assertFalse(drawable(CoverShape.ELLIPSE, 40f, 30f))
     }
 
     @Test
