@@ -17,7 +17,7 @@ val taglibArchive = configurations.create("taglibArchive") {
     isCanBeConsumed = false
 }
 val taglibApi = tasks.register<Sync>("taglibApi") {
-    from({ zipTree(taglibArchive.singleFile) })
+    from(zipTree(taglibArchive.elements.map { it.single().asFile }))
     include("classes.jar", "proguard.txt")
     into(layout.buildDirectory.dir("taglib-api"))
 }
