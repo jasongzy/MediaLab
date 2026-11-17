@@ -232,7 +232,7 @@ internal fun MediaPlayer(
         }
     }
 
-    val elapsed = playbackTime(dragging?.toLong() ?: position)
+    val elapsed = playbackTime(dragging?.toTimelineMs(duration) ?: position, duration)
     val total =
         if (duration > 0) playbackTime(duration) else stringResource(R.string.unknown_time)
     val seekLabel = stringResource(R.string.playback_position)
@@ -285,16 +285,17 @@ internal fun MediaPlayer(
                                 onInteraction()
                                 dragging = it
                                 slider.value = it
-                                savePosition(it.toLong().coerceIn(0, duration))
+                                val target = it.toTimelineMs(duration)
+                                savePosition(target)
                                 if (video)
                                     player?.let { current ->
                                         current.setScrubbingModeEnabled(true)
-                                        current.seekTo(it.toLong().coerceIn(0, duration))
+                                        current.seekTo(target)
                                     }
                             },
                             onValueChangeFinished = {
                                 dragging?.let {
-                                    position = it.toLong().coerceIn(0, duration)
+                                    position = it.toTimelineMs(duration)
                                     player?.seekTo(position)
                                     savePosition(position)
                                 }
@@ -378,8 +379,10 @@ internal class PlaybackAudioSink(sink: AudioSink) : ForwardingAudioSink(sink) {
     }
 }
 
-internal fun playbackTime(milliseconds: Long): String {
-    val seconds = milliseconds.coerceAtLeast(0) / 1000
+internal fun playbackTime(milliseconds: Long, durationMs: Long = milliseconds): String {
+    val time = milliseconds.coerceAtLeast(0)
+    val seconds = time / 1000
+    if (durationMs in 1..999) return String.format(Locale.ROOT, "0:%02d.%03d", seconds, time % 1000)
     return if (seconds >= 3600)
         String.format(Locale.ROOT, "%d:%02d:%02d", seconds / 3600, seconds / 60 % 60, seconds % 60)
     else String.format(Locale.ROOT, "%d:%02d", seconds / 60, seconds % 60)

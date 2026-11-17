@@ -109,6 +109,21 @@ class CropDragTest {
     }
 
     @Test
+    fun timeDragsPreserveMillisecondBoundaries() {
+        var time = 18_000_000
+        val drag = NumberDrag(time, 0..18_000_003, { time = it }, {})
+        repeat(4) { drag.move(0.25f) }
+        assertEquals(18_000_001, time)
+        drag.move(10f)
+        assertEquals(18_000_003, time)
+
+        assertEquals(1002L..8000L, draggedTimeRange(1002, 7000, 10_000, 1001.9999f..8000f))
+        assertEquals(18_000_001L..21_600_001L,
+            draggedTimeRange(18_000_001, 19_000_000, 21_600_001, 18_000_000f..21_600_000f))
+        assertEquals(4999L..5000L, draggedTimeRange(0, 5000, 10_000, 5000f..5000f))
+    }
+
+    @Test
     fun resizingPreservesRequestedDimensionsAndSnapsTheOrigin() {
         val image = IntSize(1000, 800)
         val crop = IntRect(600, 500, 1000, 800)

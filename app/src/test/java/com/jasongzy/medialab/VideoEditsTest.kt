@@ -366,10 +366,10 @@ class VideoEditsTest {
     }
 
     @Test
-    fun timeInputIsFiniteAndLocaleIndependent() {
-        assertEquals(1234L, mediaTime("1.234"))
+    fun timeInputKeepsMillisecondPrecisionWithinTheEditableRange() {
         assertEquals(1001L, mediaTime("1.001"))
-        assertEquals("1.234", mediaSeconds(1234))
-        for (text in listOf("", "NaN", "Infinity", "-1", "1.2.3")) assertNull(mediaTime(text))
+        assertEquals("1.001", mediaSeconds(1001))
+        assertEquals(Int.MAX_VALUE.toLong(), mediaTime("2147483.647"))
+        for (text in listOf("", "1.2.3", "-1", "2147483.648")) assertNull(mediaTime(text))
     }
 }

@@ -186,13 +186,13 @@ internal object AudioRegression {
             check(processor.output.order(ByteOrder.nativeOrder()).short.toInt() == expected)
             processor.reset()
         }
-        val edit = MediaTimeEdit(1000, startMs = 200, beforeMs = 200, afterMs = 300, speedPercent = 200)
+        val edit = MediaTimeEdit(220, startMs = 200, beforeMs = 200, afterMs = 300, speedPercent = 200)
         val timed = renderAudio(original.current, File(app.filesDir, "timed.flac"), edit)
-        check(abs(timed.durationMs - 900) <= 1 && timed.properties.sampleRate == 48000)
+        check(timed.durationMs == 510L && timed.properties.sampleRate == 48000)
         val samples = pcm(timed)
-        check(samples.take(2 * 9500).all { it == 0.toShort() })
-        check(samples.drop(2 * 40000).all { it == 0.toShort() })
-        check(samples.slice(2 * 15000 until 2 * 20000).any { it != 0.toShort() })
+        check(samples.take(2 * 9600).all { it == 0.toShort() })
+        check(samples.slice(2 * 9600 until 2 * 10080).any { it != 0.toShort() })
+        check(samples.drop(2 * 10080).all { it == 0.toShort() })
 
         val store = ViewModelStore()
         lateinit var model: LabViewModel

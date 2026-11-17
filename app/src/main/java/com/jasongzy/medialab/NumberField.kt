@@ -28,11 +28,11 @@ internal class NumberDrag(
     private val change: (Int) -> Unit,
     private val finished: (Boolean) -> Unit,
 ) {
-    private var position = initial.toFloat()
+    private var position = initial.toDouble()
     private var value = initial
 
     fun move(delta: Float) {
-        position = (position + delta).coerceIn(range.first.toFloat(), range.last.toFloat())
+        position = (position + delta).coerceIn(range.first.toDouble(), range.last.toDouble())
         val next = position.roundToInt()
         if (next != value) {
             value = next

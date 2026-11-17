@@ -13,6 +13,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 @Composable
@@ -63,6 +64,17 @@ internal fun MediaTimeline(
     }
 }
 
+internal fun draggedTimeRange(
+    start: Long, end: Long, duration: Long, next: ClosedFloatingPointRange<Float>,
+): LongRange {
+    // Material projects both handles through screen coordinates, including the stationary handle.
+    val startDelta = abs(next.start - start.toFloat())
+    val endDelta = abs(next.endInclusive - end.toFloat())
+    if (maxOf(startDelta, endDelta) <= 2 * Math.ulp(duration.toFloat())) return start..end
+    return if (startDelta > endDelta) next.start.toTimelineMs(duration).coerceAtMost(end - 1)..end
+    else start..next.endInclusive.toTimelineMs(duration).coerceAtLeast(start + 1)
+}
+
 @Composable
 internal fun MediaRangeSlider(
     durationMs: Long,
@@ -82,6 +94,8 @@ internal fun MediaRangeSlider(
                 trackRange = 0f..durationMs.toFloat(),
             )
         }
+    // Each setter clamps against the opposite handle, even when history replaces the whole range.
+    if (startMs.toFloat() > slider.endValue) slider.endValue = endMs.toFloat()
     slider.startValue = startMs.toFloat()
     slider.endValue = endMs.toFloat()
     val removedColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f)
@@ -90,14 +104,12 @@ internal fun MediaRangeSlider(
         state = slider,
         modifier = modifier.systemGestureExclusion(),
         onValueChange = { range ->
-            if (range.endInclusive - range.start >= 1) {
-                val start = range.start.toLong().coerceIn(0, durationMs - 1)
-                val end = range.endInclusive.toLong().coerceIn(start + 1, durationMs)
-                slider.startValue = start.toFloat()
-                slider.endValue = end.toFloat()
-                if (start != startMs) seek(start)
-                else if (end != endMs) seek(end - 1)
-                change(start, end)
+            val moved = draggedTimeRange(startMs, endMs, durationMs, range)
+            if (moved.first != startMs || moved.last != endMs) {
+                slider.startValue = moved.first.toFloat()
+                slider.endValue = moved.last.toFloat()
+                seek(if (moved.first != startMs) moved.first else moved.last - 1)
+                change(moved.first, moved.last)
             }
         },
         onValueChangeFinished = finish,
@@ -151,7 +163,7 @@ internal fun MediaTimeFields(
             Modifier.weight(1f),
             { valid[0] = it },
             interaction,
-            change = { value, preview -> change(value, preview) },
+            change = change,
             finish = finish,
         ) {
             seek(it)
@@ -164,7 +176,7 @@ internal fun MediaTimeFields(
             Modifier.weight(1f),
             { valid[1] = it },
             interaction,
-            change = { value, preview -> change(value, preview) },
+            change = change,
             finish = finish,
         ) {
             seek(it - 1)
@@ -201,7 +213,7 @@ internal fun MediaTimeFields(
             parse = { text ->
                 text
                     .toDoubleOrNull()
-                    ?.takeIf { it.isFinite() && it in 0.1..8.0 }
+                    ?.takeIf { it in 0.1..8.0 }
                     ?.let { (it * 100).roundToInt() }
             },
             format = { "%.2f".format(java.util.Locale.ROOT, it / 100.0) },
@@ -228,7 +240,7 @@ internal fun MediaTimeFields(
             Modifier.weight(1f),
             { valid[2] = it },
             interaction,
-            change = { value, preview -> change(value, preview) },
+            change = change,
             finish = finish,
         ) {
             edits.copy(beforeMs = it)
@@ -240,7 +252,7 @@ internal fun MediaTimeFields(
             Modifier.weight(1f),
             { valid[3] = it },
             interaction,
-            change = { value, preview -> change(value, preview) },
+            change = change,
             finish = finish,
         ) {
             edits.copy(afterMs = it)

@@ -258,12 +258,9 @@ internal object Videos {
         steps
             .mapIndexed { index, step ->
                 val start = if (index == 0) 0 else step.startMs
-                // Reclock padded silence before the next edit consumes it.
                 "atrim=start=${mediaSeconds(start)}:duration=${mediaSeconds(step.endMs - step.startMs)}," +
                     "asetpts=PTS-${mediaSeconds(start)}/TB,aresample=async=1:first_pts=0," +
-                    tempoFilter(step.speedPercent) +
-                    "adelay=${step.beforeMs}:all=1,apad=whole_dur=${mediaSeconds(step.durationMs)}," +
-                    "asetpts=N/SR/TB,atrim=duration=${mediaSeconds(step.durationMs)}"
+                    step.time.audioOutputFilter()
             }
             .joinToString(",")
 
