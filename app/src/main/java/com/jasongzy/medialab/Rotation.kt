@@ -63,10 +63,14 @@ internal data class RotationSelection(
 ) {
     init { require(angle in -180..180) }
 
-    val changed: Boolean
-        get() = angle != 0 || flipHorizontal || flipVertical
-    val keepsHdr: Boolean
-        get() = angle % 90 == 0 && (!lockCanvas || angle % 180 == 0)
+    val changesImage: Boolean
+        get() = when (angle) {
+            0 -> flipHorizontal || flipVertical
+            -180, 180 -> !flipHorizontal || !flipVertical
+            else -> true
+        }
+    fun keepsHdr(width: Int, height: Int) =
+        angle % 90 == 0 && (!lockCanvas || angle % 180 == 0 || width == height)
     private val cosine: Double
         get() = when (angle) {
             0 -> 1.0

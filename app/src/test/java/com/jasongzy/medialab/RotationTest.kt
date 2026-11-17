@@ -74,6 +74,10 @@ class RotationTest {
 
     @Test
     fun mirrorsFollowTheRotatedAxesAndLockedRightAnglesStayOnPixelBoundaries() {
+        for (angle in listOf(-180, 180)) {
+            assertFalse(RotationSelection(angle, flipHorizontal = true, flipVertical = true).changesImage)
+            assertTrue(RotationSelection(angle, flipHorizontal = true).changesImage)
+        }
         val rotated = RotationSelection(90)
         assertArrayEquals(floatArrayOf(0f, -1f, 3f, 1f, 0f, 0f, 0f, 0f, 1f), rotated.matrixValues(4, 3), 0f)
         assertArrayEquals(

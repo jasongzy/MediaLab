@@ -62,6 +62,8 @@ internal data class PhotoInfo(
     val gainmap: Boolean = false,
 ) {
     val canKeepHdr get() = Build.VERSION.SDK_INT >= 34 && gainmap && !color.convertsToSrgb
+    val losslessCropLayout get() = container?.jpeg?.takeIf { orientation == 1 && color.hdr != true }
+    fun hasSize(width: Int, height: Int) = this.width == width && this.height == height
 }
 
 internal enum class CoverShape(val label: Int) {
@@ -156,7 +158,7 @@ internal object JpegNative {
         System.loadLibrary("medialab")
     }
 
-    external fun crop(input: String, output: String, x: Int, y: Int, width: Int, height: Int)
+    external fun crop(input: String, output: String, jpegLength: Long, x: Int, y: Int, width: Int, height: Int)
 }
 
 internal object Photos {
@@ -168,7 +170,7 @@ internal object Photos {
     fun info(file: File, preview: Bitmap? = null, options: BitmapFactory.Options = bounds(file)): PhotoInfo {
         if (options.outWidth <= 0 || options.outHeight <= 0) throw UnsupportedMediaException(R.string.select_image_only)
         val exif = ExifInterface(file)
-        val orientation = exif.getAttributeInt(ExifInterface.TAG_ORIENTATION, 1).coerceIn(1, 8)
+        val orientation = exif.getAttributeInt(ExifInterface.TAG_ORIENTATION, 1).takeIf { it in 1..8 } ?: 1
         val swapped = orientation in 5..8
         val metadata = PhotoMetadata.read(exif)
         val container = Containers.inspect(file)
@@ -259,9 +261,25 @@ internal object Photos {
         if (Build.VERSION.SDK_INT >= 34) bitmap.gainmap = null
     }
 
+    private val PhotoInfo.decodeSpace: ColorSpace
+        get() = colorSpace?.takeUnless { color.convertsToSrgb } ?: ColorSpace.get(ColorSpace.Named.SRGB)
+
+    private fun PhotoInfo.regionOptions() = BitmapFactory.Options().apply {
+        inMutable = true
+        inPreferredConfig = config
+        inPreferredColorSpace = decodeSpace
+    }
+
+    private fun PhotoInfo.decodeBounds(raw: Rect): Rect {
+        if (mime != "image/jpeg" && mime != "image/webp") return raw
+        // Chroma interpolation needs neighboring samples; WebP also aligns the crop origin to even coordinates.
+        return Rect(
+            maxOf(0, raw.left - 2) and -2, maxOf(0, raw.top - 2) and -2,
+            minOf(rawWidth, raw.right + 2), minOf(rawHeight, raw.bottom + 2),
+        )
+    }
+
     fun decode(file: File, info: PhotoInfo, crop: Rect? = null, keepHdr: Boolean = false): Bitmap {
-        val space = if (info.color.convertsToSrgb) ColorSpace.get(ColorSpace.Named.SRGB)
-            else info.colorSpace ?: ColorSpace.get(ColorSpace.Named.SRGB)
         fun finish(bitmap: Bitmap): Bitmap {
             if (!keepHdr || !info.canKeepHdr) clearGainmap(bitmap)
             if (info.color.convertsToSrgb && bitmap.config != Bitmap.Config.ARGB_8888)
@@ -274,7 +292,7 @@ internal object Photos {
                 if (image.isAnimated) throw UnsupportedMediaException(R.string.select_image_only)
                 decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
                 decoder.isMutableRequired = true
-                decoder.setTargetColorSpace(space)
+                decoder.setTargetColorSpace(info.decodeSpace)
                 if (crop != null) decoder.crop = crop
             })
         if (crop != null) {
@@ -304,11 +322,7 @@ internal object Photos {
                     corners.maxOf { it.first },
                     corners.maxOf { it.second },
                 )
-            // JPEG chroma interpolation needs neighboring pixels at the crop boundary.
-            val region = if (info.mime == "image/jpeg") Rect(raw).apply {
-                inset(-1, -1)
-                intersect(0, 0, info.rawWidth, info.rawHeight)
-            } else raw
+            val region = info.decodeBounds(raw)
             budget(region.width(), region.height(), if (info.config == Bitmap.Config.RGBA_F16) 4 else 2)
             val decoder =
                 try {
@@ -318,16 +332,7 @@ internal object Photos {
                 }
             val bitmap =
                 try {
-                    checkNotNull(
-                        decoder.decodeRegion(
-                            region,
-                            BitmapFactory.Options().apply {
-                                inMutable = true
-                                inPreferredConfig = info.config
-                                inPreferredColorSpace = space
-                            },
-                        )
-                    )
+                    checkNotNull(decoder.decodeRegion(region, info.regionOptions()))
                 } finally {
                     decoder.recycle()
                 }
@@ -354,7 +359,7 @@ internal object Photos {
             Canvas(contents).apply {
                 scale(contents.width.toFloat() / crop.width() / sx, contents.height.toFloat() / crop.height() / sy)
                 translate(-crop.left * sx, -crop.top * sy)
-                drawBitmap(source, 0f, 0f, Paint(Paint.FILTER_BITMAP_FLAG))
+                drawBitmap(source, null, Rect(0, 0, source.width, source.height), Paint(Paint.FILTER_BITMAP_FLAG))
             }
             output.gainmap = GainmapParameters(gainmap).create(contents)
         }
@@ -398,9 +403,12 @@ internal object Photos {
         }
     }
 
-    fun pixel(file: File, info: PhotoInfo, x: Int, y: Int): Int {
+    fun pixel(frame: PhotoFrame, x: Int, y: Int): Int {
+        val info = frame.info
         val left = x.coerceIn(0, info.width - 1)
         val top = y.coerceIn(0, info.height - 1)
+        frame.pixels?.let { return it.getPixel(left, top) }
+        val file = frame.source ?: return checkNotNull(frame.image.snapshot).pixel(left, top)
         val bitmap = decode(file, info, Rect(left, top, left + 1, top + 1))
         return try {
             bitmap.getPixel(0, 0)
@@ -410,9 +418,9 @@ internal object Photos {
     }
 
     suspend fun palette(file: File, info: PhotoInfo): List<Int> {
-        val samples = ArrayList<Int>()
+        val bytesPerPixel = if (info.config == Bitmap.Config.RGBA_F16) 8 else 4
         val decoder =
-            if (info.width.toLong() * info.height * 4 < Runtime.getRuntime().maxMemory() / 5) null
+            if (info.width.toLong() * info.height * bytesPerPixel < Runtime.getRuntime().maxMemory() / 5) null
             else
                 try {
                     BitmapRegionDecoder.newInstance(file.path)
@@ -427,32 +435,26 @@ internal object Photos {
                 bitmap.recycle()
             }
         }
-        try {
+        return try {
+            val samples = ArrayList<Int>()
+            val options = info.regionOptions()
             val stepY = maxOf(1, info.rawHeight / 128)
             val stepX = maxOf(1, info.rawWidth / 128)
             for (y in stepY / 2 until info.rawHeight step stepY) {
                 currentCoroutineContext().ensureActive()
-                val row =
-                    checkNotNull(
-                        decoder.decodeRegion(
-                            Rect(0, y, info.rawWidth, y + 1),
-                            BitmapFactory.Options().apply {
-                                inPreferredConfig = Bitmap.Config.ARGB_8888
-                                inPreferredColorSpace = ColorSpace.get(ColorSpace.Named.SRGB)
-                            },
-                        )
-                    )
+                val region = info.decodeBounds(Rect(0, y, info.rawWidth, y + 1))
+                val row = checkNotNull(decoder.decodeRegion(region, options))
                 try {
                     for (x in stepX / 2 until info.rawWidth step stepX) samples +=
-                        row.getPixel(x, 0)
+                        row.getPixel(x, y - region.top)
                 } finally {
                     row.recycle()
                 }
             }
+            representativeColors(samples)
         } finally {
             decoder.recycle()
         }
-        return representativeColors(samples)
     }
 
     suspend fun palette(bitmap: Bitmap): List<Int> {
@@ -688,7 +690,8 @@ internal object Photos {
         )
         budget(bounds.width(), bounds.height(), if (bitmap.config == Bitmap.Config.RGBA_F16) 2 else 1)
         val output = Bitmap.createBitmap(
-            bounds.width(), bounds.height(), bitmap.config!!, true, bitmap.colorSpace!!,
+            bounds.width(), bounds.height(), bitmap.config!!,
+            bitmap.hasAlpha() || Color.alpha(color) < 255, bitmap.colorSpace!!,
         )
         try {
             output.density = bitmap.density
@@ -708,7 +711,7 @@ internal object Photos {
 
     fun rotate(bitmap: Bitmap, selection: RotationSelection, color: Int): Bitmap {
         val size = selection.size(bitmap.width, bitmap.height)
-        if (selection.keepsHdr) {
+        if (selection.keepsHdr(bitmap.width, bitmap.height)) {
             val matrix = Matrix().apply { setValues(selection.matrixValues(bitmap.width, bitmap.height)) }
             val output = Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, false)
             return if (output === bitmap) checkNotNull(bitmap.copy(bitmap.config!!, true)) else output

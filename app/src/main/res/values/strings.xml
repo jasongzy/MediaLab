@@ -79,7 +79,7 @@
     <string name="bilinear">Bilinear</string>
     <string name="bicubic">Bicubic</string>
     <string name="lossless_jpeg">JPEG lossless crop</string>
-    <string name="jpeg_crop_requirement">JPEG lossless crop requires an upright SDR JPEG. Use pixel cropping for this image.</string>
+    <string name="jpeg_crop_requirement">Lossless cropping requires an upright SDR JPEG. Use pixel cropping for this image</string>
     <string name="fill">Fill</string>
     <string name="brush">Brush</string>
     <string name="rectangle">Rectangle</string>

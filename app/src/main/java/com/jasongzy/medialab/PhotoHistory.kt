@@ -21,7 +21,6 @@ internal class PhotoFrame(val image: PhotoPixels, val info: PhotoInfo) {
 
     val source = image.source
     val pixels get() = image.pixels
-    val snapshot get() = image.snapshot?.file
     val files get() = image.files
 }
 

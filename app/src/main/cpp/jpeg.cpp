@@ -15,18 +15,17 @@ static std::string string(JNIEnv *env, jstring value) {
 
 extern "C" JNIEXPORT void JNICALL
 Java_com_jasongzy_medialab_JpegNative_crop(JNIEnv *env, jobject, jstring input,
-    jstring output, jint x, jint y, jint width, jint height) {
+    jstring output, jlong jpegLength, jint x, jint y, jint width, jint height) {
     tjhandle handle = tj3Init(TJINIT_TRANSFORM);
     unsigned char *result = nullptr;
     try {
         if (!handle) throw std::runtime_error("Cannot initialize JPEG transform");
-        std::ifstream file(string(env, input), std::ios::binary | std::ios::ate);
-        auto length = file.tellg();
-        if (!file || length <= 0 || length > 536870912)
+        if (jpegLength <= 0 || jpegLength > 512LL * 1024 * 1024)
             throw std::runtime_error("JPEG input exceeds the transform memory budget");
-        std::vector<unsigned char> bytes(static_cast<size_t>(length));
-        file.seekg(0);
-        if (!file.read(reinterpret_cast<char *>(bytes.data()), length))
+        std::ifstream file(string(env, input), std::ios::binary);
+        if (!file) throw std::runtime_error("Cannot open JPEG");
+        std::vector<unsigned char> bytes(static_cast<size_t>(jpegLength));
+        if (!file.read(reinterpret_cast<char *>(bytes.data()), jpegLength))
             throw std::runtime_error("Cannot read JPEG");
         // Keep ICC; edit history and embedded-image offsets belong to the source geometry.
         tj3Set(handle, TJPARAM_SAVEMARKERS, 4);

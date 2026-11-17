@@ -192,7 +192,7 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
                     DropdownMenu(menu, { menu = false }) {
                         DropdownMenuItem(
                             text = { Text(stringResource(R.string.restore_original)) },
-                            enabled = photo.frame !== photo.history.first(),
+                            enabled = photo.frame !== photo.history.first() || pending.isNotEmpty(),
                             onClick = {
                                 menu = false
                                 model.restoreOriginal()
@@ -326,12 +326,8 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
                                     style = MaterialTheme.typography.bodySmall,
                                 )
                             }
-                            val jpeg = info.container?.jpeg
-                            val canLossless =
-                                !expanding && jpeg != null &&
-                                    info.orientation == 1 &&
-                                    info.container.gainmap == null
-                            if (canLossless) {
+                            val jpeg = if (expanding) null else info.losslessCropLayout
+                            if (jpeg != null) {
                                 CheckOption(R.string.lossless_jpeg, lossless) { lossless = it }
                                 if (lossless)
                                     Text(
@@ -371,17 +367,9 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
                                     onClick = {
                                         dropper = false
                                         if (expanding) model.expand(Rect(bounds), background)
-                                        else if (lossless && canLossless) {
-                                            val aligned =
-                                                Rect(bounds).apply {
-                                                    left -= left % jpeg.blockX
-                                                    top -= top % jpeg.blockY
-                                                }
-                                            setBounds(aligned)
-                                            model.crop(aligned, true)
-                                        } else model.crop(bounds, false)
+                                        else model.crop(editor.cropBounds(info), lossless && jpeg != null)
                                     },
-                                    enabled = inputValid && (!expanding || bounds != Rect(0, 0, info.width, info.height)),
+                                    enabled = inputValid && tool in pending,
                                 ) {
                                     Text(stringResource(R.string.apply))
                                 }
@@ -1151,6 +1139,7 @@ private fun PhotoCanvas(
 private fun RotationPanel(editor: PhotoEditorState, apply: (RotationSelection) -> Unit) {
     val history = editor.rotationHistory
     val selection = history.value
+    val initial = RotationSelection(lockCanvas = selection.lockCanvas)
     val focus = LocalFocusManager.current
     var dragging by remember(history) { mutableStateOf(false) }
     var inputRevision by rememberSaveable(history) { mutableIntStateOf(0) }
@@ -1221,16 +1210,16 @@ private fun RotationPanel(editor: PhotoEditorState, apply: (RotationSelection) -
             {
                 finishInput()
                 inputRevision++
-                history.change(RotationSelection(lockCanvas = selection.lockCanvas))
+                history.change(initial)
             },
-            enabled = selection.changed || hasDraft,
+            enabled = selection != initial || hasDraft,
         ) { Text(stringResource(R.string.reset_rotation)) }
         Button(
             {
                 finishInput()
                 apply(selection)
             },
-            enabled = selection.changed && inputValid,
+            enabled = selection.changesImage && inputValid,
         ) { Text(stringResource(R.string.apply)) }
     }
 }
@@ -1245,6 +1234,7 @@ private fun ResizePanel(
     val width = selection.width
     val height = selection.height
     val method = selection.method
+    val changed = !info.hasSize(width, height)
     var preview by selection::preview
     var inputRevision by rememberSaveable(selection) { mutableIntStateOf(0) }
     var hasDraft by remember(selection, inputRevision) { mutableStateOf(false) }
@@ -1286,14 +1276,14 @@ private fun ResizePanel(
                 // Also reset incomplete text that has not changed the numeric values.
                 inputRevision++
             },
-            enabled = width != info.width || height != info.height || hasDraft,
+            enabled = changed || hasDraft,
         ) {
             Text(stringResource(R.string.reset_resize))
         }
         TextButton({ model.previewResize(width, height, method) { preview = it } }, enabled = inputValid) {
             Text(stringResource(R.string.preview))
         }
-        Button({ apply(width, height, method) }, enabled = inputValid) {
+        Button({ apply(width, height, method) }, enabled = changed && inputValid) {
             Text(stringResource(R.string.apply))
         }
     }
@@ -1315,7 +1305,7 @@ private fun ResizePanel(
                 TextButton({
                     preview = null
                     apply(width, height, method)
-                }) {
+                }, enabled = changed && inputValid) {
                     Text(stringResource(R.string.apply))
                 }
             },

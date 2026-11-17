@@ -79,7 +79,7 @@
     <string name="bilinear">双线性</string>
     <string name="bicubic">双三次</string>
     <string name="lossless_jpeg">JPEG 原格式无损裁剪</string>
-    <string name="jpeg_crop_requirement">JPEG 原格式无损裁剪适用于正向 SDR JPEG。此图片请使用像素裁剪。</string>
+    <string name="jpeg_crop_requirement">无损裁剪仅适用于正向 SDR JPEG，请对此图使用像素裁剪</string>
     <string name="fill">填充</string>
     <string name="brush">笔刷</string>
     <string name="rectangle">矩形</string>

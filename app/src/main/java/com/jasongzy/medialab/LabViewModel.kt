@@ -770,10 +770,11 @@ internal class LabViewModel(application: Application, savedState: SavedStateHand
         work(R.string.preparing_image) {
             val history = checkNotNull(history)
             val original = history.frames.first()
-            if (history.current === original) return@work
-            if (state.value.photo.pending.isNotEmpty() && !confirm(Confirmation.RESTORE)) return@work
+            val pending = state.value.photo.pending.isNotEmpty()
+            if (history.current === original && !pending) return@work
+            if (pending && !confirm(Confirmation.RESTORE)) return@work
             val preview = checkNotNull(state.value.photo.original)
-            history.append(original, action = R.string.restore_original)
+            if (history.current !== original) history.append(original, action = R.string.restore_original)
             discardResize()
             publish(preview, R.string.original_image_restored)
         }
@@ -797,23 +798,19 @@ internal class LabViewModel(application: Application, savedState: SavedStateHand
 
     fun crop(rect: Rect, lossless: Boolean) =
         work(R.string.preparing_image) {
+            val info = checkNotNull(state.value.photo.info)
+            if (rect == Rect(0, 0, info.width, info.height)) return@work
             if (!lossless && !confirmColor(keepHdr = true)) return@work
             if (!canApply(PhotoTool.CROP)) return@work
             if (lossless) {
                 val photo = state.value.photo
-                val info = checkNotNull(photo.info)
-                require(
-                    info.mime == "image/jpeg" &&
-                        info.orientation == 1 &&
-                        info.container?.gainmap == null
-                ) {
-                    context.getString(R.string.jpeg_crop_requirement)
-                }
+                val jpeg = info.losslessCropLayout ?: throw UnsupportedMediaException(R.string.jpeg_crop_requirement)
                 val target = MediaFiles.temporary(workspace.work, "jpg")
                 try {
                     JpegNative.crop(
                         checkNotNull(photo.frame?.source).path,
                         target.path,
+                        jpeg.end,
                         rect.left,
                         rect.top,
                         rect.width(),
@@ -822,7 +819,7 @@ internal class LabViewModel(application: Application, savedState: SavedStateHand
                     PhotoMetadata.write(target, info.metadata, rect.width(), rect.height(), info.metadataEdits)
                     currentCoroutineContext().ensureActive()
                     push(target, PhotoTool.CROP)
-                } catch (error: Exception) {
+                } catch (error: Throwable) {
                     target.delete()
                     throw error
                 }
@@ -853,8 +850,10 @@ internal class LabViewModel(application: Application, savedState: SavedStateHand
 
     fun rotate(selection: RotationSelection, color: Int) =
         work(R.string.preparing_image) {
-            if (!confirmColor(keepHdr = selection.keepsHdr)) return@work
-            if (!selection.changed || !canApply(PhotoTool.ROTATE)) return@work
+            if (!selection.changesImage) return@work
+            val info = checkNotNull(state.value.photo.info)
+            if (!confirmColor(keepHdr = selection.keepsHdr(info.width, info.height))) return@work
+            if (!canApply(PhotoTool.ROTATE)) return@work
             discardResize()
             val history = checkNotNull(history)
             val source = history.bitmap()
@@ -872,6 +871,7 @@ internal class LabViewModel(application: Application, savedState: SavedStateHand
 
     fun resize(width: Int, height: Int, method: Int) =
         work(R.string.preparing_image) {
+            if (checkNotNull(state.value.photo.info).hasSize(width, height)) return@work
             if (!confirmColor(keepHdr = true)) return@work
             if (!canApply(PhotoTool.RESIZE)) return@work
             val result = resized(width, height, method)
@@ -880,8 +880,10 @@ internal class LabViewModel(application: Application, savedState: SavedStateHand
 
     fun previewResize(width: Int, height: Int, method: Int, ready: (Bitmap) -> Unit) =
         work(R.string.preparing_image) {
-            val result = resized(width, height, method)
-            withContext(Dispatchers.Main) { ready(result.preview) }
+            val photo = state.value.photo
+            val preview = if (checkNotNull(photo.info).hasSize(width, height)) checkNotNull(photo.preview)
+                else resized(width, height, method).preview
+            withContext(Dispatchers.Main) { ready(preview) }
         }
 
     private suspend fun resized(width: Int, height: Int, method: Int): ResizePreview {
@@ -900,9 +902,7 @@ internal class LabViewModel(application: Application, savedState: SavedStateHand
         discardResize()
         val source = history.bitmap()
         history.reserve(bitmapBytes(source) * width * height / source.width / source.height)
-        val scaled = Photos.resize(source, width, height, method)
-        val bitmap =
-            if (scaled === source) checkNotNull(source.copy(source.config!!, true)) else scaled
+        val bitmap = Photos.resize(source, width, height, method)
         try {
             currentCoroutineContext().ensureActive()
             val result =
@@ -1037,14 +1037,7 @@ internal class LabViewModel(application: Application, savedState: SavedStateHand
                         withContext(Dispatchers.IO) {
                             workspace.access.withLock {
                                 if (state.value.photo.frame !== frame || state.value.busy) null
-                                else if (frame.pixels != null || frame.source == null)
-                                    checkNotNull(history)
-                                        .bitmap(frame)
-                                        .getPixel(
-                                            sampleX.coerceIn(0, frame.info.width - 1),
-                                            sampleY.coerceIn(0, frame.info.height - 1),
-                                        )
-                                else Photos.pixel(frame.source, frame.info, sampleX, sampleY)
+                                else Photos.pixel(frame, sampleX, sampleY)
                             }
                         }
                     if (color != null && state.value.photo.frame === frame && !state.value.busy)
@@ -1053,6 +1046,8 @@ internal class LabViewModel(application: Application, savedState: SavedStateHand
                 }
             } catch (_: CancellationException) {} catch (error: Exception) {
                 mutable.update { it.copy(error = error.stackTraceToString()) }
+            } catch (_: OutOfMemoryError) {
+                mutable.update { it.copy(error = context.getString(R.string.memory_error)) }
             } finally {
                 pendingPick = null
             }

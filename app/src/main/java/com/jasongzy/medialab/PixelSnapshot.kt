@@ -6,6 +6,8 @@ import android.graphics.Gainmap
 import android.os.Build
 import androidx.annotation.RequiresApi
 import java.io.File
+import java.io.RandomAccessFile
+import java.nio.ByteBuffer
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 
@@ -52,6 +54,20 @@ internal class PixelSnapshot private constructor(val file: File, bitmap: Bitmap)
     private var parameters: GainmapParameters? = null
 
     val files: List<File> get() = listOf(file) + gainmap?.files.orEmpty()
+
+    fun pixel(x: Int, y: Int): Int {
+        val pixel = Bitmap.createBitmap(1, 1, config, alpha, space)
+        return try {
+            pixel.setPremultiplied(premultiplied)
+            val bytes = ByteArray(pixel.byteCount)
+            RandomAccessFile(file, "r").use {
+                it.seek(y.toLong() * rowBytes + x.toLong() * bytes.size)
+                it.readFully(bytes)
+            }
+            pixel.copyPixelsFromBuffer(ByteBuffer.wrap(bytes))
+            pixel.getPixel(0, 0)
+        } finally { pixel.recycle() }
+    }
 
     fun read(): Bitmap {
         val bitmap = Bitmap.createBitmap(width, height, config, alpha, space)

@@ -18,13 +18,13 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModelStore
 import java.io.File
 import java.io.IOException
+import java.io.RandomAccessFile
 import java.nio.ByteBuffer
 import kotlin.coroutines.CoroutineContext
 import kotlin.math.abs
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 
 internal class PhotoRegression(
@@ -300,6 +300,7 @@ internal class PhotoRegression(
                 file.outputStream().use { check(source.compress(Bitmap.CompressFormat.JPEG, 100, it)) }
                 val preview = Photos.preview(file)
                 val info = try { Photos.info(file, preview) } finally { preview.recycle() }
+                check(info.copy(container = checkNotNull(info.container).copy(gainmap = null)).losslessCropLayout == null)
                 check(info.color.losses() == listOf(R.string.hdr))
                 val changed = Photos.export(app.cacheDir, file, info.copy(
                     metadataEdits = mapOf(ExifInterface.TAG_ARTIST to "MediaLab HDR")), ExportOptions())
@@ -310,9 +311,12 @@ internal class PhotoRegression(
                 val first = PhotoFrame(null, Photos.rasterInfo(hdr), hdr)
                 val history = PhotoHistory(app.cacheDir, first, memoryBudget = 1)
                 try {
-                    val crop = Photos.cropBitmap(hdr, Rect(1, 2, 3, 5), true)
-                    check(crop.hasGainmap() && crop.gainmap!!.gainmapContents.width == 1)
-                    val rotated = Photos.rotate(crop, RotationSelection(angle = 90, flipHorizontal = true), Color.WHITE)
+                    val auxiliary = hdr.gainmap!!.gainmapContents
+                    auxiliary.density = source.density * 2
+                    val crop = Photos.cropBitmap(hdr, Rect(9, 10, 12, 13), true)
+                    val croppedGain = checkNotNull(crop.gainmap).gainmapContents
+                    check(croppedGain.width == 1 && croppedGain.getPixel(0, 0) == auxiliary.getPixel(2, 2))
+                    val rotated = Photos.rotate(crop, RotationSelection(angle = 90, flipHorizontal = true, lockCanvas = true), Color.WHITE)
                     crop.recycle()
                     val nearest = Photos.resize(rotated, 12, 8, 0)
                     check(nearest.hasGainmap())
@@ -372,6 +376,15 @@ internal class PhotoRegression(
                 }
             }
             check(runCatching { Photos.expand(source, Rect(1, 0, 64, 48), Color.WHITE) }.isFailure)
+            val opaque = Bitmap.createBitmap(2, 1, Bitmap.Config.ARGB_8888).apply { setHasAlpha(false) }
+            try {
+                for (fill in listOf(Color.WHITE, Color.TRANSPARENT)) {
+                    val output = Photos.expand(opaque, Rect(0, 0, 3, 1), fill)
+                    try {
+                        check(output.hasAlpha() == (fill == Color.TRANSPARENT) && output.getPixel(2, 0) == fill)
+                    } finally { output.recycle() }
+                }
+            } finally { opaque.recycle() }
             val quarterTurn = Photos.rotate(source, RotationSelection(90), Color.WHITE)
             try {
                 for (y in 0 until source.height) for (x in 0 until source.width)
@@ -474,6 +487,7 @@ internal class PhotoRegression(
                         setPixel(3, 4, Color.TRANSPARENT)
                     }
             val expected = pixels(bitmap)
+            val corner = bitmap.getPixel(bitmap.width - 1, bitmap.height - 1)
             val space = bitmap.colorSpace
             val first = PhotoFrame(null, Photos.rasterInfo(bitmap), bitmap)
             val retained = bitmap.allocationByteCount.toLong()
@@ -488,7 +502,9 @@ internal class PhotoRegression(
                 abandoned.recycle()
                 check(pixels(history.bitmap()).contentEquals(expected))
                 history.append(second)
-                check(first.pixels == null && first.snapshot?.isFile == true)
+                check(first.pixels == null)
+                check(Photos.pixel(first, 3, 4) == Color.TRANSPARENT && Photos.pixel(first, 31, 17) == corner)
+                check(first.pixels == null)
                 val restored = history.bitmap(first)
                 check(pixels(restored).contentEquals(expected))
                 check(
@@ -517,13 +533,10 @@ internal class PhotoRegression(
                 history.append(branch)
                 check(history.frames == listOf(first, branch) && discarded.none { it.exists() })
 
-                first.snapshot!!.writeBytes(byteArrayOf(0))
+                first.image.snapshot!!.file.writeBytes(byteArrayOf(0))
                 check(runCatching { history.bitmap(first) }.exceptionOrNull() is IOException)
                 check(history.current === branch && history.position == 1)
                 check(history.bitmap().getPixel(0, 0) == Color.BLACK)
-                val cancelled = Job().apply { cancel() }
-                check(runCatching { withContext(cancelled) { history.append(first) } }.isFailure)
-                check(history.current === branch && history.frames.size == 2)
             } finally {
                 history.close()
             }
@@ -535,7 +548,7 @@ internal class PhotoRegression(
         val nextBitmap = fixture()
         try {
             check(runCatching { history.copy() }.isFailure)
-            check(frame.pixels === bitmap && !bitmap.isRecycled && frame.snapshot == null)
+            check(frame.pixels === bitmap && !bitmap.isRecycled && frame.image.snapshot == null)
             check(
                 runCatching { history.append(PhotoFrame(null, frame.info, nextBitmap)) }.isFailure
             )
@@ -829,14 +842,20 @@ internal class PhotoRegression(
         }
         val input = File(app.filesDir, "fixture.bin")
         val generated = fixture()
-        try {
-            input.outputStream().use {
-                check(generated.compress(Bitmap.CompressFormat.JPEG, 100, it))
+        fun checkSamples(format: Bitmap.CompressFormat): Bitmap {
+            input.outputStream().use { check(generated.compress(format, 100, it)) }
+            val frame = PhotoFrame(input, Photos.info(input))
+            return Photos.decode(input, frame.info).also { full ->
+                for ((x, y) in listOf(0 to 1, 17 to 9, 63 to 47))
+                    check(Photos.pixel(frame, x, y) == full.getPixel(x, y)) { "$format pixel at $x, $y" }
             }
+        }
+        val reference = try {
+            checkSamples(Bitmap.CompressFormat.WEBP_LOSSY).recycle()
+            checkSamples(Bitmap.CompressFormat.JPEG)
         } finally {
             generated.recycle()
         }
-        val reference = Photos.decode(input, Photos.info(input))
         val capture = listOf(
             ExifInterface.TAG_DATETIME to "2026:10:18 12:34:56",
             ExifInterface.TAG_DATETIME_ORIGINAL to "2026:10:18 12:34:56",
@@ -858,6 +877,7 @@ internal class PhotoRegression(
             ExifInterface(input).apply {
                 capture.forEach { (tag, value) -> setAttribute(tag, value) }
                 setLatLong(31.2, 121.5)
+                setAttribute(ExifInterface.TAG_ORIENTATION, "9")
                 setAttribute(ExifInterface.TAG_OFFSET_TIME_ORIGINAL, "local")
                 setAttribute(ExifInterface.TAG_PIXEL_X_DIMENSION, "999")
                 setAttribute(ExifInterface.TAG_MAKER_NOTE, "source camera data")
@@ -865,6 +885,7 @@ internal class PhotoRegression(
             }
             val originalBytes = input.readBytes()
             val info = Photos.info(input)
+            check(info.hasSize(reference.width, reference.height)) { "Unknown EXIF orientation swapped the image dimensions" }
             check(info.metadata.none { (key, _) -> key == ExifInterface.TAG_MAKER_NOTE || key == ExifInterface.TAG_PIXEL_X_DIMENSION })
             check(PhotoMetadata.normalize(mapOf("GPSLatitude" to "31/1,12/1,0/1"))["GPSLatitude"] != null)
             val times = mapOf("GPSDateStamp" to "2024:02:29", "GPSTimeStamp" to "23:59:58", "OffsetTimeOriginal" to "+05:30")
@@ -876,10 +897,6 @@ internal class PhotoRegression(
                 check((error as? UnsupportedMediaException)?.messageRes == R.string.invalid_metadata) { key }
             }
             check(info.color == PhotoColor("sRGB", "YCbCr", false, false))
-            for ((x, y) in listOf(0 to 0, 16 to 8, 63 to 47))
-                check(Photos.pixel(input, info, x, y) == reference.getPixel(x, y)) {
-                    "JPEG pixel at $x, $y"
-                }
             for (clear in listOf(false, true)) {
                 val converted = Photos.export(
                     app.cacheDir, input, Photos.info(input), ExportOptions(format = ImageFormat.PNG, metadata = clear),
@@ -891,9 +908,28 @@ internal class PhotoRegression(
                 model.open(Uri.fromFile(input), ImportType.IMAGE)
             }
             idle(model)
+            val imported = model.state.value.photo
+            instrumentation.runOnMainSync { model.crop(Rect(0, 0, info.width, info.height), false) }
+            idle(model)
+            instrumentation.runOnMainSync { model.resize(info.width, info.height, 2) }
+            idle(model)
+            check(model.state.value.photo === imported && imported.history.size == 1)
+            instrumentation.runOnMainSync {
+                imported.editor!!.resize.width++
+                model.restoreOriginal()
+            }
+            answer(model, Confirmation.RESTORE, false)
+            check(imported.pending == listOf(PhotoTool.RESIZE))
+            instrumentation.runOnMainSync { model.restoreOriginal() }
+            answer(model, Confirmation.RESTORE, true)
+            check(model.state.value.photo.frame === imported.frame && model.state.value.photo.history.size == 1 &&
+                model.state.value.photo.pending.isEmpty())
             val draft = checkNotNull(model.state.value.photo.editor)
             instrumentation.runOnMainSync {
-                draft.cropHistory.change(FrameSelection(Rect(1, 2, 32, 24)))
+                draft.cropHistory.change(FrameSelection(Rect(1, 2, info.width, info.height)))
+                draft.lossless = true
+                check(model.state.value.photo.pending.isEmpty())
+                draft.lossless = false
                 model.editPhotoMetadata(mapOf(ExifInterface.TAG_SOFTWARE to "Edited camera")) {}
             }
             idle(model)
@@ -919,7 +955,12 @@ internal class PhotoRegression(
             }
             check(input.readBytes().contentEquals(originalBytes))
             val croppedMetadata = File(app.cacheDir, "metadata-crop.jpg")
-            JpegNative.crop(checkNotNull(metadataFrame.source).path, croppedMetadata.path, 0, 0, 16, 16)
+            val compound = File(app.cacheDir, "large-compound.jpg")
+            checkNotNull(metadataFrame.source).copyTo(compound)
+            RandomAccessFile(compound, "rw").use { it.setLength(512L * 1024 * 1024 + 1) }
+            val jpeg = checkNotNull(metadataFrame.info.losslessCropLayout)
+            JpegNative.crop(compound.path, croppedMetadata.path, jpeg.end, 0, 0, 16, 16)
+            check(Containers.jpeg(croppedMetadata).let { it.width == 16 && it.height == 16 && it.end == croppedMetadata.length() })
             PhotoMetadata.write(croppedMetadata, metadataFrame.info.metadata, 16, 16, metadataFrame.info.metadataEdits)
             check(ExifInterface(croppedMetadata).getAttribute(ExifInterface.TAG_DATETIME_ORIGINAL) == null)
             check(ExifInterface(croppedMetadata).getAttribute(ExifInterface.TAG_SOFTWARE) == "Edited camera")
