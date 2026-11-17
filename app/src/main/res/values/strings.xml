@@ -241,6 +241,7 @@
     <string name="exit_message">Exiting will clear the current workspace. Unsaved changes will be lost.</string>
     <string name="exit">Exit</string>
     <string name="select_image_only">Choose a supported image file</string>
+    <string name="invalid_image_container">Cannot clean metadata because the image file is incomplete or damaged</string>
     <string name="media_stream_unavailable">Could not read the file. Extract or save it to your device, then open it again</string>
     <string name="select_audio_only">Choose a supported audio file</string>
     <string name="select_media_only">Choose a supported image, video or audio file</string>
@@ -249,8 +250,9 @@
     <string name="transparency_background">Transparency background</string>
     <string name="jpeg_background_hint">JPEG fills transparent areas with this color</string>
     <string name="export_size">Exported file size: %1$s</string>
-    <string name="cleanup_motion_edits">Converting to a still image keeps the current picture and removes the embedded video, edit history and recoverable original. Clearing metadata also removes them</string>
-    <string name="cleanup_attachments">Clearing metadata also deletes embedded video, edit history, and recoverable originals</string>
+    <string name="cleanup_motion_edits">Converting to a still image also removes the edit history and recoverable original. Clearing metadata or turning off “Preserve color and HDR” keeps only the current still image</string>
+    <string name="cleanup_motion">Clearing metadata or turning off “Preserve color and HDR” also removes the embedded video</string>
+    <string name="cleanup_edits">Clearing metadata or turning off “Preserve color and HDR” also removes the edit history and recoverable original</string>
     <string name="current_media_info">Current media information</string>
     <string name="current_media_info_hint">Updates as you edit. Tap the filename for original file details</string>
     <string name="dimensions">Dimensions</string>

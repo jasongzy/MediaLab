@@ -160,9 +160,12 @@ internal object JpegNative {
 }
 
 internal object Photos {
-    fun info(file: File, preview: Bitmap? = null): PhotoInfo {
-        val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        BitmapFactory.decodeFile(file.path, options)
+    fun bounds(file: File) = BitmapFactory.Options().apply {
+        inJustDecodeBounds = true
+        BitmapFactory.decodeFile(file.path, this)
+    }
+
+    fun info(file: File, preview: Bitmap? = null, options: BitmapFactory.Options = bounds(file)): PhotoInfo {
         if (options.outWidth <= 0 || options.outHeight <= 0) throw UnsupportedMediaException(R.string.select_image_only)
         val exif = ExifInterface(file)
         val orientation = exif.getAttributeInt(ExifInterface.TAG_ORIENTATION, 1).coerceIn(1, 8)
@@ -170,6 +173,8 @@ internal object Photos {
         val metadata = PhotoMetadata.read(exif)
         val container = Containers.inspect(file)
         val mime = options.outMimeType ?: "image/*"
+        val space = options.outColorSpace ?: preview?.colorSpace
+        val gainmap = container?.gainmap != null || (Build.VERSION.SDK_INT >= 34 && preview?.hasGainmap() == true)
         return PhotoInfo(
             if (swapped) options.outHeight else options.outWidth,
             if (swapped) options.outWidth else options.outHeight,
@@ -178,18 +183,14 @@ internal object Photos {
             orientation,
             mime,
             file.length(),
-            colorInfo(
-                options.outColorSpace ?: preview?.colorSpace,
-                container?.jpeg?.colorModel ?: RasterMetadata.colorModel(file, mime),
-                container?.gainmap != null || (Build.VERSION.SDK_INT >= 34 && preview?.hasGainmap() == true),
-            ),
+            colorInfo(space, container?.jpeg?.colorModel ?: RasterMetadata.colorModel(file, mime), gainmap),
             container,
             metadata,
-            options.outColorSpace ?: preview?.colorSpace,
+            space,
             if (options.outConfig == Bitmap.Config.RGBA_F16 || preview?.config == Bitmap.Config.RGBA_F16 ||
                 (Build.VERSION.SDK_INT >= 33 && options.outConfig == Bitmap.Config.RGBA_1010102))
                 Bitmap.Config.RGBA_F16 else Bitmap.Config.ARGB_8888,
-            gainmap = container?.gainmap != null || (Build.VERSION.SDK_INT >= 34 && preview?.hasGainmap() == true),
+            gainmap = gainmap,
         )
     }
 
@@ -216,21 +217,22 @@ internal object Photos {
             .also { if (!keepHdr) clearGainmap(it) }
     }
 
-    fun rasterInfo(bitmap: Bitmap, metadata: List<Pair<String, String>> = emptyList()) = PhotoInfo(
-        bitmap.width,
-        bitmap.height,
-        bitmap.width,
-        bitmap.height,
-        1,
-        if (Build.VERSION.SDK_INT >= 34 && bitmap.hasGainmap()) "image/jpeg" else "image/png",
-        null,
-        colorInfo(bitmap.colorSpace, bitmap.colorSpace?.model?.name, Build.VERSION.SDK_INT >= 34 && bitmap.hasGainmap()),
-        null,
-        PhotoMetadata.retained(metadata),
-        bitmap.colorSpace,
-        bitmap.config!!,
-        gainmap = Build.VERSION.SDK_INT >= 34 && bitmap.hasGainmap(),
-    )
+    fun rasterInfo(bitmap: Bitmap, metadata: List<Pair<String, String>> = emptyList()): PhotoInfo {
+        val space = bitmap.colorSpace
+        val gainmap = Build.VERSION.SDK_INT >= 34 && bitmap.hasGainmap()
+        return PhotoInfo(
+            bitmap.width, bitmap.height, bitmap.width, bitmap.height,
+            orientation = 1,
+            mime = if (gainmap) "image/jpeg" else "image/png",
+            bytes = null,
+            color = colorInfo(space, space?.model?.name, gainmap),
+            container = null,
+            metadata = metadata,
+            colorSpace = space,
+            config = bitmap.config!!,
+            gainmap = gainmap,
+        )
+    }
 
     private fun colorInfo(space: ColorSpace?, model: String?, gainmap: Boolean): PhotoColor {
         val hdrSpace = if (Build.VERSION.SDK_INT >= 34) when (space) {
@@ -848,9 +850,9 @@ internal object Photos {
                 throw UnsupportedMediaException(R.string.photo_metadata_format)
             val edited = MediaFiles.temporary(directory, extension)
             try {
-                PhotoMetadata.update(source, edited, info.metadataEdits)
+                val container = PhotoMetadata.update(source, edited, info.container, info.metadataEdits)
                 if (!options.static && !options.flatten) return edited
-                return export(directory, edited, info.copy(container = Containers.inspect(edited), metadataEdits = emptyMap()), options)
+                return export(directory, edited, info.copy(container = container, metadataEdits = emptyMap()), options)
                     .also { edited.delete() }
             } catch (error: Throwable) {
                 edited.delete()
@@ -871,8 +873,8 @@ internal object Photos {
                 Containers.clean(
                     source,
                     target,
+                    info.container,
                     options.static,
-                    options.flatten,
                     options.metadata,
                 ) {
                     coroutine.ensureActive()

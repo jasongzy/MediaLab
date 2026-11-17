@@ -482,14 +482,7 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
                         PhotoTool.CLEAN -> {
                             CleanupOptions(info, cleanup) { cleanup = it }
                             Button(
-                                {
-                                    model.clean(
-                                        cleanup.static,
-                                        cleanup.flatten,
-                                        cleanup.metadata,
-                                        cleanup.keepColor,
-                                    )
-                                },
+                                { model.clean(cleanup) },
                                 Modifier.align(Alignment.End),
                                 enabled = canClean(info, cleanup, photo.frame?.source != null),
                             ) {
@@ -1465,6 +1458,7 @@ private fun CleanupOptions(
                     static = it,
                     metadata = options.metadata && it,
                     flatten = options.flatten || it,
+                    keepColor = options.keepColor || !it,
                 )
             )
         }
@@ -1475,6 +1469,7 @@ private fun CleanupOptions(
                     flatten = it,
                     static = options.static && it,
                     metadata = options.metadata && it,
+                    keepColor = options.keepColor || !it,
                 )
             )
         }
@@ -1496,12 +1491,21 @@ private fun CleanupOptions(
     if (motion || editable)
         Text(
             stringResource(
-                if (motion && editable) R.string.cleanup_motion_edits
-                else R.string.cleanup_attachments
+                when {
+                    motion && editable -> R.string.cleanup_motion_edits
+                    motion -> R.string.cleanup_motion
+                    else -> R.string.cleanup_edits
+                }
             ),
             Modifier.padding(start = 36.dp),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-    CheckOption(R.string.keep_color, options.keepColor) { change(options.copy(keepColor = it)) }
+    CheckOption(R.string.keep_color, options.keepColor) { keep ->
+        change(options.copy(
+            keepColor = keep,
+            static = options.static || (!keep && motion),
+            flatten = options.flatten || (!keep && editable),
+        ))
+    }
 }

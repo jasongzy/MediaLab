@@ -377,9 +377,7 @@ internal class LabViewModel(application: Application, savedState: SavedStateHand
                 showBatch(true)
                 return
             }
-            val bounds =
-                android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            android.graphics.BitmapFactory.decodeFile(file.path, bounds)
+            val bounds = Photos.bounds(file)
             val gif = bounds.outMimeType == "image/gif"
             var videoInfo: VideoInfo? = null
             val type =
@@ -414,7 +412,7 @@ internal class LabViewModel(application: Application, savedState: SavedStateHand
             else null
             val image = if (type == ImportType.IMAGE) {
                 preview = Photos.preview(file)
-                PhotoFrame(file, Photos.info(file, preview))
+                PhotoFrame(file, Photos.info(file, preview, bounds))
             } else null
             if (!canReplace(type)) return
             when (type) {
@@ -563,8 +561,9 @@ internal class LabViewModel(application: Application, savedState: SavedStateHand
     fun editPhotoMetadata(changes: Map<String, String?>, done: () -> Unit) = work(R.string.apply, showProgress = false) {
         val photo = state.value.photo
         val frame = checkNotNull(photo.frame)
-        require(changes.keys.all { key -> PhotoMetadata.retained(frame.info.metadata).any { it.first == key } })
-        val normalized = PhotoMetadata.normalize(workspace.work, changes)
+        val editable = frame.info.metadata.toMap()
+        require(changes.keys.all(editable::containsKey))
+        val normalized = PhotoMetadata.normalize(changes.filter { (key, value) -> value != editable[key] })
         val metadata = frame.info.metadata.mapNotNull { (key, value) ->
             (if (key in normalized) normalized[key] else value)?.let { key to it }
         }
@@ -631,12 +630,14 @@ internal class LabViewModel(application: Application, savedState: SavedStateHand
 
     fun extractMotionVideo(save: Boolean) = work(R.string.preparing_video) {
         val photo = state.value.photo
-        val source = checkNotNull(photo.frame?.source)
-        val target = MediaFiles.temporary(workspace.work, "mp4")
-        val name = MediaFiles.outputName(photo.name, "mp4", "motion")
+        val frame = checkNotNull(photo.frame)
+        val source = checkNotNull(frame.source)
+        val video = checkNotNull(frame.info.container?.video)
+        val target = MediaFiles.temporary(workspace.work, video.extension)
+        val name = MediaFiles.outputName(photo.name, video.extension, "motion")
         try {
             val coroutine = currentCoroutineContext()
-            Containers.extractVideo(source, target) { coroutine.ensureActive() }
+            Containers.extractVideo(source, target, video.range) { coroutine.ensureActive() }
             if (save) {
                 Videos.inspect(target)
                 val path = MediaFiles.save(context, target, name, ImportType.VIDEO)
@@ -780,7 +781,6 @@ internal class LabViewModel(application: Application, savedState: SavedStateHand
     private suspend fun bitmapEdit(
         tool: PhotoTool,
         crop: Rect? = null,
-        clearMetadata: Boolean = false,
         transform: suspend (Bitmap) -> Unit = {},
     ) {
         discardResize()
@@ -788,7 +788,7 @@ internal class LabViewModel(application: Application, savedState: SavedStateHand
         try {
             transform(bitmap)
             currentCoroutineContext().ensureActive()
-            push(bitmap, tool, clearMetadata = clearMetadata)
+            push(bitmap, tool)
         } catch (error: Throwable) {
             bitmap.recycle()
             throw error
@@ -1059,12 +1059,12 @@ internal class LabViewModel(application: Application, savedState: SavedStateHand
         }
     }
 
-    fun clean(static: Boolean, flatten: Boolean, metadata: Boolean, keepColor: Boolean) =
+    fun clean(options: ExportOptions) =
         work(R.string.preparing_image) {
             val photo = state.value.photo
             val frame = checkNotNull(photo.frame)
-            val options = ExportOptions(metadata = metadata, static = static, flatten = flatten, keepColor = keepColor)
             if (!canClean(frame.info, options, frame.source != null)) return@work
+            val keepColor = options.keepColor
             if (!options.preservesSource(frame.info) && !confirmColor(forceSrgb = !keepColor, keepHdr = keepColor)) return@work
             val convert = !keepColor && (frame.info.colorSpace?.isSrgb == false || frame.info.gainmap)
             if (!canApply(PhotoTool.CLEAN)) return@work
@@ -1077,7 +1077,7 @@ internal class LabViewModel(application: Application, savedState: SavedStateHand
                     val bitmap = Photos.convert(source, ColorSpace.get(ColorSpace.Named.SRGB))
                     try {
                         currentCoroutineContext().ensureActive()
-                        push(bitmap, PhotoTool.CLEAN, clearMetadata = metadata)
+                        push(bitmap, PhotoTool.CLEAN, clearMetadata = options.metadata)
                     } catch (error: Throwable) {
                         bitmap.recycle()
                         throw error

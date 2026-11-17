@@ -239,6 +239,7 @@
     <string name="exit_message">退出后将清空当前工作区，未保存的修改将会丢失</string>
     <string name="exit">退出</string>
     <string name="select_image_only">请选择支持的图像文件</string>
+    <string name="invalid_image_container">图像文件不完整或已损坏，无法清理元数据</string>
     <string name="media_stream_unavailable">无法读取文件，请先解压或保存到设备后再打开</string>
     <string name="select_audio_only">请选择支持的音频文件</string>
     <string name="select_media_only">请选择支持的图像、视频或音频文件</string>
@@ -247,8 +248,9 @@
     <string name="transparency_background">透明区域背景色</string>
     <string name="jpeg_background_hint">JPEG 会用此颜色填充透明区域</string>
     <string name="export_size">导出文件大小：%1$s</string>
-    <string name="cleanup_motion_edits">转为静态图会保留当前画面，删除内嵌视频、编辑记录和可恢复的原图。清理元数据也会删除这些内容</string>
-    <string name="cleanup_attachments">清理元数据会同时删除图像中的动态视频，以及用于恢复编辑的记录和原图</string>
+    <string name="cleanup_motion_edits">转为静态图也会删除编辑记录和可恢复的原图。清理元数据或关闭「保留色彩与 HDR」只保留当前静态画面</string>
+    <string name="cleanup_motion">清理元数据或关闭「保留色彩与 HDR」也会删除内嵌视频</string>
+    <string name="cleanup_edits">清理元数据或关闭「保留色彩与 HDR」也会删除编辑记录和可恢复的原图</string>
     <string name="current_media_info">当前媒体信息</string>
     <string name="current_media_info_hint">随编辑而更新，点击文件名可查看原文件信息</string>
     <string name="dimensions">尺寸</string>

@@ -858,14 +858,23 @@ internal class PhotoRegression(
             ExifInterface(input).apply {
                 capture.forEach { (tag, value) -> setAttribute(tag, value) }
                 setLatLong(31.2, 121.5)
+                setAttribute(ExifInterface.TAG_OFFSET_TIME_ORIGINAL, "local")
                 setAttribute(ExifInterface.TAG_PIXEL_X_DIMENSION, "999")
                 setAttribute(ExifInterface.TAG_MAKER_NOTE, "source camera data")
                 saveAttributes()
             }
             val originalBytes = input.readBytes()
             val info = Photos.info(input)
-            check(PhotoMetadata.normalize(app.cacheDir, mapOf("GPSLatitude" to "31/1,12/1,0/1"))["GPSLatitude"] != null)
-            check(runCatching { PhotoMetadata.normalize(app.cacheDir, mapOf("GPSLatitude" to "91/1,0/1,0/1")) }.isFailure)
+            check(info.metadata.none { (key, _) -> key == ExifInterface.TAG_MAKER_NOTE || key == ExifInterface.TAG_PIXEL_X_DIMENSION })
+            check(PhotoMetadata.normalize(mapOf("GPSLatitude" to "31/1,12/1,0/1"))["GPSLatitude"] != null)
+            val times = mapOf("GPSDateStamp" to "2024:02:29", "GPSTimeStamp" to "23:59:58", "OffsetTimeOriginal" to "+05:30")
+            check(PhotoMetadata.normalize(times) == times)
+            val invalid = mapOf("GPSLatitude" to "91/1,0/1,0/1", "GPSDateStamp" to "2025:02:29",
+                "GPSTimeStamp" to "24:61:00", "OffsetTimeOriginal" to "Z")
+            invalid.forEach { (key, value) ->
+                val error = runCatching { PhotoMetadata.normalize(mapOf(key to value)) }.exceptionOrNull()
+                check((error as? UnsupportedMediaException)?.messageRes == R.string.invalid_metadata) { key }
+            }
             check(info.color == PhotoColor("sRGB", "YCbCr", false, false))
             for ((x, y) in listOf(0 to 0, 16 to 8, 63 to 47))
                 check(Photos.pixel(input, info, x, y) == reference.getPixel(x, y)) {
@@ -888,7 +897,9 @@ internal class PhotoRegression(
                 model.editPhotoMetadata(mapOf(ExifInterface.TAG_SOFTWARE to "Edited camera")) {}
             }
             idle(model)
-            instrumentation.runOnMainSync { model.editPhotoMetadata(mapOf(ExifInterface.TAG_DATETIME_ORIGINAL to null)) {} }
+            instrumentation.runOnMainSync {
+                model.editPhotoMetadata(mapOf(ExifInterface.TAG_DATETIME_ORIGINAL to null, ExifInterface.TAG_OFFSET_TIME_ORIGINAL to "local")) {}
+            }
             idle(model)
             for (direction in listOf(-1, 1)) {
                 instrumentation.runOnMainSync { model.undo(direction) }
@@ -903,6 +914,7 @@ internal class PhotoRegression(
                 val exif = ExifInterface(exported)
                 check(exif.getAttribute(ExifInterface.TAG_SOFTWARE) == "Edited camera")
                 check(exif.getAttribute(ExifInterface.TAG_DATETIME_ORIGINAL) == null)
+                check(exif.getAttribute(ExifInterface.TAG_OFFSET_TIME_ORIGINAL) == "local")
                 exported.delete()
             }
             check(input.readBytes().contentEquals(originalBytes))
@@ -1185,11 +1197,11 @@ internal class PhotoRegression(
             instrumentation.runOnMainSync {
                 val editor = checkNotNull(model.state.value.photo.editor)
                 editor.cleanup = editor.cleanup.copy(static = false, flatten = false)
-                model.clean(false, false, false, true)
+                model.clean(ExportOptions())
             }
             idle(model)
             check(model.state.value.photo.frame === beforeClean && model.state.value.photo.pending.isEmpty())
-            instrumentation.runOnMainSync { model.clean(false, false, true, true) }
+            instrumentation.runOnMainSync { model.clean(ExportOptions(metadata = true)) }
             idle(model)
             val cleaned = checkNotNull(model.state.value.photo.frame)
             check(cleaned.info.metadata.isEmpty() && cleaned.pixels!!.sameAs(reference))

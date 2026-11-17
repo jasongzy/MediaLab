@@ -1,9 +1,7 @@
 package com.jasongzy.medialab
 
-import java.io.BufferedInputStream
-import java.io.DataInputStream
+import java.io.EOFException
 import java.io.File
-import java.io.FileInputStream
 import java.io.OutputStream
 import java.io.RandomAccessFile
 import java.io.StringReader
@@ -15,8 +13,10 @@ import javax.xml.transform.OutputKeys
 import javax.xml.transform.TransformerFactory
 import javax.xml.transform.dom.DOMSource
 import javax.xml.transform.stream.StreamResult
+import org.w3c.dom.Document
 import org.w3c.dom.Element
 import org.xml.sax.InputSource
+import org.xml.sax.SAXException
 
 internal data class ByteRange(val start: Long, val length: Long) {
     val end
@@ -60,10 +60,12 @@ internal data class JpegLayout(
         }
 }
 
+internal data class MotionVideo(val range: ByteRange, val extension: String)
+
 internal data class PhotoContainer(
     val jpeg: JpegLayout,
     val gainmap: ByteRange? = null,
-    val video: ByteRange? = null,
+    val video: MotionVideo? = null,
     val edit: ByteRange? = null,
 )
 
@@ -72,32 +74,31 @@ internal object Containers {
     private const val CONTAINER = "http://ns.google.com/photos/1.0/container/"
     private const val ITEM = "http://ns.google.com/photos/1.0/container/item/"
     private const val EDIT = "http://ns.xiaomi.com/photos/1.0/camera/reedit"
+    private const val HDRGM = "http://ns.adobe.com/hdr-gain-map/1.0/"
     private val xmpPrefix = "http://ns.adobe.com/xap/1.0/\u0000".toByteArray()
+    private val isoGainmapPrefix = "urn:iso:std:iso:ts:21496:-1\u0000".toByteArray()
 
     fun jpeg(file: File, start: Long = 0): JpegLayout {
-        FileInputStream(file).use { source ->
-            source.channel.position(start)
-            val input = DataInputStream(BufferedInputStream(source, 256 * 1024))
+        RandomAccessFile(file, "r").use { input ->
+            input.seek(start)
             require(input.readUnsignedShort() == 0xffd8) { "Invalid JPEG header" }
-            var offset = start + 2
             val parts = mutableListOf<JpegPart>()
             var width = 0
             var height = 0
             var blockX = 8
             var blockY = 8
             var entropy = false
-            val fileLength = file.length()
-            while (offset < fileLength) {
-                var byte = input.readUnsignedByte()
-                offset++
-                if (entropy && byte != 255) continue
-                require(byte == 255) { "Invalid JPEG marker at ${offset - 1}" }
-                val markerStart = offset - 1
-                do {
-                    byte = input.readUnsignedByte()
-                    offset++
-                } while (byte == 255)
-                if (entropy && (byte == 0 || byte in 0xd0..0xd7)) continue
+            val fileLength = input.length()
+            val buffer = ByteArray(64 * 1024)
+            while (input.filePointer < fileLength) {
+                val byte = if (entropy) scanMarker(input, buffer) else {
+                    require(input.readUnsignedByte() == 255) { "Invalid JPEG marker at ${input.filePointer - 1}" }
+                    var marker: Int
+                    do { marker = input.readUnsignedByte() } while (marker == 255)
+                    marker
+                }
+                val offset = input.filePointer
+                val markerStart = offset - 2
                 entropy = false
                 if (byte == 0xd9) return JpegLayout(parts, offset, width, height, blockX, blockY)
                 require(byte != 0xd8 && byte != 0 && byte !in 0xd0..0xd7) {
@@ -105,15 +106,13 @@ internal object Containers {
                 }
                 if (byte == 1) continue
                 val length = input.readUnsignedShort()
-                offset += 2
-                require(length >= 2 && offset + length - 2 <= fileLength) {
+                require(length >= 2 && length <= fileLength - offset) {
                     "Truncated JPEG segment"
                 }
                 val payload = ByteArray(length - 2)
                 input.readFully(payload)
-                offset += payload.size
                 require(parts.size < 4096) { "Too many JPEG segments" }
-                parts += JpegPart(byte, ByteRange(markerStart, offset - markerStart), payload)
+                parts += JpegPart(byte, ByteRange(markerStart, length + 2L), payload)
                 if (byte in listOf(0xc0, 0xc1, 0xc2)) {
                     require(payload.size >= 6)
                     height = u16(payload, 1)
@@ -132,75 +131,91 @@ internal object Containers {
         }
     }
 
+    private fun scanMarker(input: RandomAccessFile, buffer: ByteArray): Int {
+        var prefix = false
+        while (true) {
+            val size = input.read(buffer)
+            if (size < 0) throw EOFException("Missing JPEG end marker")
+            for (i in 0 until size) {
+                val byte = buffer[i].toInt() and 255
+                // Stuffed bytes and restart markers are part of the compressed scan.
+                if (prefix && byte != 255 && byte != 0 && byte !in 0xd0..0xd7) {
+                    input.seek(input.filePointer - size + i + 1)
+                    return byte
+                }
+                prefix = byte == 255
+            }
+        }
+    }
+
     fun inspect(file: File): PhotoContainer? {
         file.inputStream().use { if (it.read() != 255 || it.read() != 216) return null }
         val layout = jpeg(file)
         var motion: Boolean? = null
+        var microVideo: Boolean? = null
         var videoLength: Long? = null
+        var videoMime: String? = null
         var microVideoLength: Long? = null
         var edit: ByteRange? = null
         var gainmap: ByteRange? = null
         for (part in layout.parts) {
-            if (part.marker == 0xe1 && part.payload.startsWith(xmpPrefix)) {
-                val doc = xml(part.payload.copyOfRange(xmpPrefix.size, part.payload.size))
+            part.xmp()?.let { doc ->
                 val nodes = doc.getElementsByTagName("*")
                 for (i in 0 until nodes.length) {
                     val element = nodes.item(i) as Element
-                    if (element.hasAttributeNS(EDIT, "offset")) {
-                        val offset = element.getAttributeNS(EDIT, "offset").toLong()
-                        val length = element.getAttributeNS(EDIT, "len").toLong()
-                        edit = checkedRange(file, file.length() - offset, length, layout.end)
-                        require(element.getAttributeNS(EDIT, "version") == "1") {
+                    element.property(EDIT, "offset")?.let { offset ->
+                        val length = requireNotNull(element.property(EDIT, "len")).toLong()
+                        edit = checkedRange(file, file.length() - offset.toLong(), length, layout.end)
+                        require(element.property(EDIT, "version") == "1") {
                             "Unsupported Xiaomi edit version"
                         }
                     }
-                    if (element.hasAttributeNS(CAMERA, "MotionPhoto"))
-                        motion = element.getAttributeNS(CAMERA, "MotionPhoto") == "1"
-                    if (element.getAttributeNS(ITEM, "Semantic") == "MotionPhoto")
-                        videoLength = element.getAttributeNS(ITEM, "Length").toLongOrNull()
-                    if (element.hasAttributeNS(CAMERA, "MicroVideoOffset"))
-                        microVideoLength = element.getAttributeNS(CAMERA, "MicroVideoOffset").toLongOrNull()
+                    element.property(CAMERA, "MotionPhoto")?.let { motion = it == "1" }
+                    element.property(CAMERA, "MicroVideo")?.let { microVideo = it == "1" }
+                    if (element.property(ITEM, "Semantic") == "MotionPhoto") {
+                        videoLength = element.property(ITEM, "Length")?.toLongOrNull()
+                        videoMime = element.property(ITEM, "Mime")
+                    }
+                    element.property(CAMERA, "MicroVideoOffset")?.let { microVideoLength = it.toLongOrNull() }
                 }
             }
             if (part.marker == 0xe2 && part.payload.startsWith("MPF\u0000".toByteArray())) {
                 val buffer = mpf(part.payload)
-                val table = mpEntries(buffer) ?: continue
-                val count = (buffer.capacity() - table) / 16
-                if (count >= 2) {
-                    val length = buffer.getInt(table + 20).toLong() and 0xffffffffL
-                    val offset = buffer.getInt(table + 24).toLong() and 0xffffffffL
-                    val range =
-                        checkedRange(file, part.range.start + 8 + offset, length, layout.end)
+                val entries = mpEntries(buffer) ?: continue
+                val pictures = entries.drop(1).map { at ->
+                    val length = buffer.getInt(at + 4).toLong() and 0xffffffffL
+                    val offset = buffer.getInt(at + 8).toLong() and 0xffffffffL
+                    checkedRange(file, part.range.start + 8 + offset, length, layout.end)
+                }.sortedBy { it.start }
+                require(pictures.zipWithNext().all { (a, b) -> a.end <= b.start }) { "Overlapping MP images" }
+                for (range in pictures) {
                     val auxiliary = jpeg(file, range.start)
-                    if (
-                        auxiliary.end == range.end &&
-                            auxiliary.parts.any {
-                                it.payload.toString(Charsets.ISO_8859_1).contains("hdr-gain-map") ||
-                                    it.payload
-                                        .toString(Charsets.ISO_8859_1)
-                                        .contains("urn:iso:std:iso:ts:21496")
-                            }
-                    )
+                    if (auxiliary.end == range.end && auxiliary.parts.any { it.hasGainmapMetadata() }) {
                         gainmap = range
+                        break
+                    }
                 }
             }
         }
-        var video: ByteRange? = null
+        var video: MotionVideo? = null
         val length = videoLength ?: microVideoLength
+        val enabled = motion ?: (videoLength != null || microVideo != false)
         // Editors may retain Motion Photo XMP after stripping the appended video.
-        if (motion != false && length != null && length in 8..(file.length() - (gainmap?.end ?: layout.end))) {
+        if (enabled && length != null && length in 16..(file.length() - (gainmap?.end ?: layout.end))) {
             val start = file.length() - length
             RandomAccessFile(file, "r").use { input ->
                 input.seek(start)
                 val size = input.readInt().toLong() and 0xffffffffL
-                if (size in 8..length && input.readInt() == 0x66747970)
-                    video = ByteRange(start, length)
+                if (size in 16..length && input.readInt() == 0x66747970) { // ftyp
+                    val quicktime = input.readInt() == 0x71742020 || videoMime == "video/quicktime" // qt brand
+                    video = MotionVideo(ByteRange(start, length), if (quicktime) "mov" else "mp4")
+                }
             }
         }
         edit?.let {
             require(
                 it.start >= (gainmap?.end ?: layout.end) &&
-                    it.end <= (video?.start ?: file.length())
+                    it.end <= (video?.range?.start ?: file.length())
             ) {
                 "Overlapping image attachments"
             }
@@ -208,30 +223,46 @@ internal object Containers {
         return PhotoContainer(layout, gainmap, video, edit)
     }
 
+    private fun Element.property(namespace: String, name: String): String? {
+        if (hasAttributeNS(namespace, name)) return getAttributeNS(namespace, name)
+        var node = firstChild
+        while (node != null) {
+            if (node.namespaceURI == namespace && node.localName == name) return node.textContent.trim()
+            node = node.nextSibling
+        }
+        return null
+    }
+
+    private fun JpegPart.hasGainmapMetadata(): Boolean {
+        if (marker == 0xe2) return payload.startsWith(isoGainmapPrefix) && payload.size > isoGainmapPrefix.size + 4
+        val doc = xmp() ?: return false
+        val descriptions = doc.getElementsByTagNameNS("http://www.w3.org/1999/02/22-rdf-syntax-ns#", "Description")
+        return (0 until descriptions.length).any { (descriptions.item(it) as Element).property(HDRGM, "Version") == "1.0" }
+    }
+
     fun clean(
         source: File,
         target: File,
+        info: PhotoContainer,
         static: Boolean,
-        flatten: Boolean,
         metadata: Boolean,
         check: () -> Unit = {},
     ) {
         require(source.canonicalFile != target.canonicalFile)
-        val info = requireNotNull(inspect(source)) { "JPEG container required" }
         val gainmap = if (metadata) info.gainmap else null
         if (gainmap == null) {
-            writeClean(source, info, target, static, flatten, metadata, null, check)
+            writeClean(source, info, target, static, metadata, null, check)
             return
         }
         val auxiliary = File.createTempFile("gainmap-", ".jpg", target.parentFile)
         val cleaned = File.createTempFile("gainmap-clean-", ".jpg", target.parentFile)
         try {
             RandomAccessFile(source, "r").use { input ->
-                auxiliary.outputStream().use { copyRange(input, it, gainmap, check) }
+                auxiliary.outputStream().use { copyRange(input, it, gainmap, check = check) }
             }
             val auxiliaryInfo = requireNotNull(inspect(auxiliary)) { "JPEG gainmap required" }
-            writeClean(auxiliary, auxiliaryInfo, cleaned, true, true, true, null, check)
-            writeClean(source, info, target, static, flatten, metadata, cleaned, check)
+            writeClean(auxiliary, auxiliaryInfo, cleaned, true, true, null, check)
+            writeClean(source, info, target, static, metadata, cleaned, check)
         } finally {
             auxiliary.delete()
             cleaned.delete()
@@ -243,18 +274,23 @@ internal object Containers {
         info: PhotoContainer,
         target: File,
         static: Boolean,
-        flatten: Boolean,
         metadata: Boolean,
         auxiliary: File?,
         check: () -> Unit,
         exif: ByteArray? = null,
-    ) {
+    ): PhotoContainer {
         val keepVideo = !static && !metadata && info.video != null
-        val keepEdit = !flatten && !static && !metadata && info.edit != null
+        val gainmapLength = auxiliary?.length() ?: info.gainmap?.length
+        val directoryItems = buildList {
+            if (gainmapLength != null || keepVideo) add(Triple("Primary", 0L, "image/jpeg"))
+            if (gainmapLength != null) add(Triple("GainMap", gainmapLength, "image/jpeg"))
+            if (keepVideo) add(Triple("MotionPhoto", info.video.range.length, MediaFiles.mime(info.video.extension, ImportType.VIDEO)))
+        }
         val rewritten = mutableListOf<Pair<JpegPart, ByteArray?>>()
         val parts = info.jpeg.parts.toMutableList()
         if (exif != null && parts.none { it.marker == 0xe1 && it.payload.startsWith("Exif\u0000\u0000".toByteArray()) })
             parts.add(0, JpegPart(0xe1, ByteRange(2, 0), "Exif\u0000\u0000".toByteArray()))
+        val directoryPacket = parts.firstOrNull { it.marker == 0xe1 && it.payload.startsWith(xmpPrefix) }
         for (part in parts) {
             val content = part.payload
             val isXmp = part.marker == 0xe1 && content.startsWith(xmpPrefix)
@@ -262,13 +298,16 @@ internal object Containers {
             val essential =
                 (part.marker == 0xe2 &&
                     (content.startsWith("ICC_PROFILE".toByteArray()) ||
-                        content.startsWith("urn:iso:std:iso:ts:21496".toByteArray()))) ||
+                        content.startsWith(isoGainmapPrefix))) ||
                     (part.marker == 0xee && content.startsWith("Adobe".toByteArray()))
             val replacement =
                 when {
                     exif != null && part.marker == 0xe1 && content.startsWith("Exif\u0000\u0000".toByteArray()) -> exif
-                    isMpf -> if (info.gainmap == null && exif == null) null else content.copyOf()
-                    isXmp -> if (exif != null) content else rewriteXmp(content, keepVideo, keepEdit, metadata, info)
+                    isMpf -> if (exif != null) content.copyOf() else info.gainmap?.let {
+                        gainmapIndex(content, it.start - part.range.start - 8)
+                    }
+                    isXmp -> if (exif != null) content else rewriteXmp(part.xmp(), keepVideo, metadata,
+                        if (part === directoryPacket) directoryItems else emptyList())
                     metadata && part.marker == 0xe0 ->
                         if (content.startsWith("JFIF\u0000".toByteArray()) && content.size >= 14)
                             content.copyOf(14).apply {
@@ -276,7 +315,7 @@ internal object Containers {
                                 this[13] = 0
                             }
                         else null
-                    (metadata || flatten || static) && part.marker == 0xe4 -> null
+                    exif == null && info.edit != null && part.marker == 0xe4 -> null
                     metadata && part.marker in 0xe1..0xef && !essential -> null
                     metadata && part.marker == 0xfe -> null
                     else -> content
@@ -295,31 +334,31 @@ internal object Containers {
                     payload.startsWith("MPF\u0000".toByteArray())
             ) {
                 val buffer = mpf(payload)
-                val table = requireNotNull(mpEntries(buffer))
-                val gainmapLength = if (exif != null) buffer.getInt(table + 20).toLong() and 0xffffffffL
-                    else auxiliary?.length() ?: requireNotNull(info.gainmap).length
-                require(primaryLength <= 0xffffffffL && gainmapLength <= 0xffffffffL)
-                buffer.putInt(table + 4, primaryLength.toInt())
-                buffer.putInt(table + 20, gainmapLength.toInt())
-                val offset = if (exif != null)
-                    (buffer.getInt(table + 24).toLong() and 0xffffffffL) + delta - precedingDelta
-                else primaryLength - part.range.start - precedingDelta - 8
-                require(offset in 0..0xffffffffL)
-                buffer.putInt(table + 24, offset.toInt())
+                mpEntries(buffer)?.let { entries ->
+                    require(primaryLength <= 0xffffffffL)
+                    buffer.putInt(entries.first + 4, primaryLength.toInt())
+                    for (at in entries.drop(1)) {
+                        val length = auxiliary?.length() ?: (buffer.getInt(at + 4).toLong() and 0xffffffffL)
+                        val offset = if (exif != null)
+                            (buffer.getInt(at + 8).toLong() and 0xffffffffL) + delta - precedingDelta
+                        else primaryLength - part.range.start - precedingDelta - 8
+                        require(length in 1..0xffffffffL && offset in 0..0xffffffffL)
+                        buffer.putInt(at + 4, length.toInt())
+                        buffer.putInt(at + 8, offset.toInt())
+                    }
+                }
             }
             precedingDelta += (payload?.size?.plus(4)?.toLong() ?: 0L) - part.range.length
         }
         RandomAccessFile(source, "r").use { input ->
             target.outputStream().buffered(256 * 1024).use { output ->
+                val buffer = ByteArray(256 * 1024)
+                fun copy(range: ByteRange, file: RandomAccessFile = input) =
+                    copyRange(file, output, range, buffer, check)
                 output.write(byteArrayOf(-1, -40))
                 var position = 2L
                 for ((part, payload) in rewritten) {
-                    copyRange(
-                        input,
-                        output,
-                        ByteRange(position, part.range.start - position),
-                        check,
-                    )
+                    copy(ByteRange(position, part.range.start - position))
                     if (payload != null) {
                         output.write(255)
                         output.write(part.marker)
@@ -329,46 +368,44 @@ internal object Containers {
                     }
                     position = part.range.end
                 }
-                copyRange(input, output, ByteRange(position, info.jpeg.end - position), check)
+                copy(ByteRange(position, info.jpeg.end - position))
                 if (exif != null) {
-                    copyRange(input, output, ByteRange(info.jpeg.end, source.length() - info.jpeg.end), check)
+                    copy(ByteRange(info.jpeg.end, source.length() - info.jpeg.end))
                 } else {
                     if (auxiliary != null)
                         RandomAccessFile(auxiliary, "r").use {
-                            copyRange(it, output, ByteRange(0, auxiliary.length()), check)
+                            copy(ByteRange(0, auxiliary.length()), it)
                         }
-                    else info.gainmap?.let { copyRange(input, output, it, check) }
-                    if (keepEdit) copyRange(input, output, info.edit, check)
-                    if (keepVideo) copyRange(input, output, info.video, check)
+                    else info.gainmap?.let { copy(it) }
+                    if (keepVideo) copy(info.video.range)
                 }
             }
         }
         val result = requireNotNull(inspect(target))
         kotlin.check(result.jpeg.width == info.jpeg.width && result.jpeg.height == info.jpeg.height)
-        kotlin.check((result.video != null) == keepVideo && (result.edit != null) == keepEdit)
+        kotlin.check((result.video != null) == keepVideo && (result.edit != null) == (exif != null && info.edit != null))
+        kotlin.check(result.gainmap?.length == gainmapLength)
+        return result
     }
 
-    fun replaceExif(source: File, target: File, exif: ByteArray, check: () -> Unit = {}) {
+    fun replaceExif(source: File, target: File, info: PhotoContainer, exif: ByteArray, check: () -> Unit = {}): PhotoContainer {
         require(source.canonicalFile != target.canonicalFile)
         require(exif.size <= 65533)
-        writeClean(source, requireNotNull(inspect(source)), target, false, false, false, null, check, exif)
+        return writeClean(source, info, target, false, false, null, check, exif)
     }
 
     private fun rewriteXmp(
-        bytes: ByteArray,
+        source: Document?,
         video: Boolean,
-        edit: Boolean,
         metadata: Boolean,
-        info: PhotoContainer,
+        directoryItems: List<Triple<String, Long, String>>,
     ): ByteArray? {
-        val source = xml(bytes.copyOfRange(xmpPrefix.size, bytes.size))
         val doc =
             if (metadata) {
                 val fresh =
                     xml(
-                        ("<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">" +
-                                "<rdf:Description rdf:about=\"\"/></rdf:RDF></x:xmpmeta>")
-                            .toByteArray()
+                        "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">" +
+                            "<rdf:Description rdf:about=\"\"/></rdf:RDF></x:xmpmeta>"
                     )
                 val destination =
                     fresh
@@ -377,20 +414,17 @@ internal object Containers {
                             "Description",
                         )
                         .item(0) as Element
-                val nodes = source.getElementsByTagName("*")
-                for (i in 0 until nodes.length) {
+                val nodes = source?.getElementsByTagName("*")
+                if (nodes != null) for (i in 0 until nodes.length) {
                     val element = nodes.item(i) as Element
                     if (
-                        element.namespaceURI == "http://ns.adobe.com/hdr-gain-map/1.0/" &&
+                        element.namespaceURI == HDRGM &&
                             element.parentNode.localName == "Description"
                     )
                         destination.appendChild(fresh.importNode(element, true))
                     for (j in 0 until element.attributes.length) {
                         val attr = element.attributes.item(j)
-                        if (
-                            attr.namespaceURI == "http://ns.adobe.com/hdr-gain-map/1.0/" ||
-                                (video && attr.namespaceURI == CAMERA)
-                        )
+                        if (attr.namespaceURI == HDRGM)
                             destination.setAttributeNS(
                                 attr.namespaceURI,
                                 attr.nodeName,
@@ -399,30 +433,35 @@ internal object Containers {
                     }
                 }
                 fresh
-            } else source
+            } else source ?: throw UnsupportedMediaException(R.string.invalid_image_container)
         val nodes = doc.getElementsByTagName("*")
         val elements = (0 until nodes.length).map { nodes.item(it) as Element }
+        fun removeProperty(namespace: String?, name: String?): Boolean {
+            if (namespace != CAMERA) return namespace == EDIT
+            if (video) return name == "MotionPhoto" || name == "MotionPhotoVersion"
+            return name?.startsWith("MotionPhoto") == true || name?.startsWith("MicroVideo") == true
+        }
         for (element in elements) {
             val attributes = element.attributes
             for (i in attributes.length - 1 downTo 0) {
                 val attr = attributes.item(i)
                 if (
-                    (attr.namespaceURI == CAMERA && !video) ||
-                        (attr.namespaceURI == EDIT && !edit) ||
+                    removeProperty(attr.namespaceURI, attr.localName) ||
                         (metadata &&
                             attr.namespaceURI !in
                                 setOf(
                                     CAMERA,
                                     CONTAINER,
                                     ITEM,
-                                    "http://ns.adobe.com/hdr-gain-map/1.0/",
+                                    HDRGM,
                                     "http://www.w3.org/2000/xmlns/",
                                     "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
                                 ))
                 )
                     element.removeAttributeNode(attr as org.w3c.dom.Attr)
             }
-            if (element.namespaceURI == CONTAINER && element.localName == "Directory") {
+            if (removeProperty(element.namespaceURI, element.localName) ||
+                (element.namespaceURI == CONTAINER && element.localName == "Directory")) {
                 element.parentNode?.removeChild(element)
             }
         }
@@ -430,30 +469,25 @@ internal object Containers {
             doc.getElementsByTagNameNS("http://www.w3.org/1999/02/22-rdf-syntax-ns#", "Description")
         if (
             metadata &&
-                !video &&
+                directoryItems.isEmpty() &&
                 (0 until descriptions.length).all { index ->
                     val element = descriptions.item(index) as Element
                     return@all !element.hasChildNodes() &&
-                        (0 until element.attributes.length).none {
-                            element.attributes.item(it).namespaceURI ==
-                                "http://ns.adobe.com/hdr-gain-map/1.0/"
-                        }
+                        (0 until element.attributes.length).none { element.attributes.item(it).namespaceURI == HDRGM }
                 }
         )
             return null
-        if (video) {
-            val root = descriptions.item(0) as? Element ?: error("Missing XMP description")
-            root.setAttributeNS(CAMERA, "GCamera:MotionPhoto", "1")
-            root.setAttributeNS(CAMERA, "GCamera:MotionPhotoVersion", "1")
+        if (directoryItems.isNotEmpty()) {
+            val root = descriptions.item(0) as? Element ?: throw UnsupportedMediaException(R.string.invalid_image_container)
+            if (video) {
+                root.setAttributeNS(CAMERA, "GCamera:MotionPhoto", "1")
+                root.setAttributeNS(CAMERA, "GCamera:MotionPhotoVersion", "1")
+            }
             val directory = doc.createElementNS(CONTAINER, "Container:Directory")
             val seq = doc.createElementNS("http://www.w3.org/1999/02/22-rdf-syntax-ns#", "rdf:Seq")
             directory.appendChild(seq)
             root.appendChild(directory)
-            for ((semantic, length, mime) in
-                listOf(
-                    Triple("Primary", 0L, "image/jpeg"),
-                    Triple("MotionPhoto", info.video!!.length, "video/mp4"),
-                )) {
+            for ((semantic, length, mime) in directoryItems) {
                 val li =
                     doc.createElementNS("http://www.w3.org/1999/02/22-rdf-syntax-ns#", "rdf:li")
                 li.setAttributeNS(
@@ -484,19 +518,21 @@ internal object Containers {
         return result
     }
 
-    private fun xml(bytes: ByteArray): org.w3c.dom.Document {
-        val text = bytes.toString(Charsets.UTF_8)
-        require(!text.contains("<!DOCTYPE", true) && !text.contains("<!ENTITY", true)) {
-            "Unsupported XML declaration"
-        }
-        return DocumentBuilderFactory.newInstance()
+    private fun JpegPart.xmp(): Document? {
+        if (marker != 0xe1 || !payload.startsWith(xmpPrefix)) return null
+        val text = payload.decodeToString(xmpPrefix.size, payload.size).removePrefix("\uFEFF").trimEnd('\u0000')
+        if (text.contains("<!DOCTYPE", true) || text.contains("<!ENTITY", true)) return null
+        return try { xml(text) } catch (_: SAXException) { null }
+    }
+
+    private fun xml(text: String): Document =
+        DocumentBuilderFactory.newInstance()
             .apply {
                 isNamespaceAware = true
                 isExpandEntityReferences = false
             }
             .newDocumentBuilder()
             .parse(InputSource(StringReader(text)))
-    }
 
     private fun checkedRange(file: File, start: Long, length: Long, minimum: Long): ByteRange {
         require(
@@ -518,30 +554,49 @@ internal object Containers {
         return buffer
     }
 
-    private fun mpEntries(buffer: ByteBuffer): Int? {
+    private fun mpEntries(buffer: ByteBuffer): IntProgression? {
         val offset = buffer.getInt(4)
-        require(offset >= 8 && offset + 2 <= buffer.capacity())
+        require(offset in 8..buffer.capacity() - 2)
         val count = buffer.getShort(offset).toInt() and 65535
-        require(count <= 128 && offset + 2 + count * 12 <= buffer.capacity())
+        require(offset + 2 + count * 12 <= buffer.capacity())
         for (i in 0 until count) {
             val at = offset + 2 + i * 12
             if ((buffer.getShort(at).toInt() and 65535) == 0xb002) {
                 val length = buffer.getInt(at + 4)
                 val table = buffer.getInt(at + 8)
-                require(length == 32 && table >= 8 && table + length <= buffer.capacity()) {
+                require(length >= 16 && length % 16 == 0 && table in 8..buffer.capacity() - length) {
                     "Unsupported MPF layout"
                 }
-                return table
+                return table until table + length step 16
             }
         }
         return null
     }
 
-    fun extractVideo(source: File, target: File, check: () -> Unit = {}) {
+    // A cleaned photo retains only the current picture and its HDR gainmap.
+    private fun gainmapIndex(payload: ByteArray, gainmapOffset: Long): ByteArray? {
+        val buffer = mpf(payload)
+        val entries = mpEntries(buffer) ?: return null
+        val gainmap = entries.drop(1).firstOrNull {
+            (buffer.getInt(it + 8).toLong() and 0xffffffffL) == gainmapOffset
+        } ?: return null
+        return ByteBuffer.allocate(86).order(buffer.order()).apply {
+            put(payload, 0, 8)
+            putInt(8).putShort(3)
+            putShort(0xb000.toShort()).putShort(7).putInt(4).put("0100".toByteArray())
+            putShort(0xb001.toShort()).putShort(4).putInt(1).putInt(2)
+            putShort(0xb002.toShort()).putShort(7).putInt(32).putInt(50).putInt(0)
+            for (at in listOf(entries.first, gainmap)) {
+                putInt(buffer.getInt(at) and 0x3fffffff)
+                putInt(buffer.getInt(at + 4)).putInt(0).putInt(0)
+            }
+        }.array()
+    }
+
+    fun extractVideo(source: File, target: File, range: ByteRange, check: () -> Unit = {}) {
         try {
-            val range = requireNotNull(inspect(source)?.video) { "Motion photo has no embedded video" }
             RandomAccessFile(source, "r").use { input ->
-                target.outputStream().use { output -> copyRange(input, output, range, check) }
+                target.outputStream().use { output -> copyRange(input, output, range, check = check) }
             }
         } catch (error: Exception) {
             target.delete()
@@ -553,11 +608,12 @@ internal object Containers {
         input: RandomAccessFile,
         output: OutputStream,
         range: ByteRange,
+        buffer: ByteArray = ByteArray(256 * 1024),
         check: () -> Unit,
     ) {
         require(range.length >= 0)
+        if (range.length == 0L) return
         input.seek(range.start)
-        val buffer = ByteArray(256 * 1024)
         var remaining = range.length
         while (remaining > 0) {
             check()

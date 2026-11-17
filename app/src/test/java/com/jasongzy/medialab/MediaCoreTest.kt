@@ -5,6 +5,8 @@ import java.io.ByteArrayOutputStream
 import java.io.File
 import java.nio.ByteBuffer
 import javax.imageio.ImageIO
+import javax.xml.parsers.DocumentBuilderFactory
+import org.w3c.dom.Element
 import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
@@ -32,8 +34,11 @@ class MediaCoreTest {
             val file = folder.newFile()
             val bytes = "RIFF".toByteArray() + byteArrayOf(14, 0, 0, 0) +
                 "WEBP$type".toByteArray() + byteArrayOf(2, 0, 0, 0, 0, 0)
-            file.writeBytes(bytes)
+            file.writeBytes(bytes + "appended data".toByteArray())
             assertEquals(model, RasterMetadata.colorModel(file, "image/webp"))
+            val clean = folder.newFile()
+            RasterMetadata.clean(file, clean, "image/webp") {}
+            assertArrayEquals(bytes, clean.readBytes())
             file.writeBytes(bytes.copyOf(bytes.size - 1))
             assertNull(RasterMetadata.colorModel(file, "image/webp"))
         }
@@ -43,37 +48,36 @@ class MediaCoreTest {
     fun compoundPhotoKeepsCurrentPixelsAndGainmap() {
         val source = compoundPhoto()
         val before = Containers.inspect(source)!!
-        assertNotNull(before.video)
-        assertNotNull(before.edit)
-        assertNotNull(before.gainmap)
+        val videoRange = checkNotNull(before.video).range
+        assertEquals(before.edit!!.start, before.gainmap!!.end)
         val tagged = folder.newFile("tagged.jpg")
-        Containers.replaceExif(source, tagged, "Exif\u0000\u0000updated-tag".toByteArray())
-        val taggedInfo = Containers.inspect(tagged)!!
+        val taggedInfo = Containers.replaceExif(source, tagged, before, "Exif\u0000\u0000updated-tag".toByteArray())
         assertArrayEquals(scan(source, before.jpeg), scan(tagged, taggedInfo.jpeg))
-        assertArrayEquals(range(source, before.gainmap!!), range(tagged, taggedInfo.gainmap!!))
-        assertArrayEquals(range(source, before.video!!), range(tagged, taggedInfo.video!!))
-        assertArrayEquals(range(source, before.edit!!), range(tagged, taggedInfo.edit!!))
+        assertArrayEquals(range(source, ByteRange(before.jpeg.end, source.length() - before.jpeg.end)),
+            range(tagged, ByteRange(taggedInfo.jpeg.end, tagged.length() - taggedInfo.jpeg.end)))
+        assertArrayEquals(range(source, before.gainmap), range(tagged, taggedInfo.gainmap!!))
+        assertArrayEquals(range(source, videoRange), range(tagged, taggedInfo.video!!.range))
+        assertArrayEquals(range(source, before.edit), range(tagged, taggedInfo.edit!!))
         assertArrayEquals(before.jpeg.parts.first { it.marker == 0xe1 }.payload,
             taggedInfo.jpeg.parts.first { it.marker == 0xe1 &&
                 it.payload.toString(Charsets.UTF_8).startsWith("http://ns.adobe.com/xap/1.0/") }.payload)
-        val extracted = folder.newFile("motion.mp4")
-        Containers.extractVideo(source, extracted)
-        assertArrayEquals(range(source, before.video), extracted.readBytes())
+        assertEquals("mov", before.video.extension)
+        val extracted = folder.newFile("motion.mov")
+        Containers.extractVideo(source, extracted, videoRange)
+        assertArrayEquals(range(source, videoRange), extracted.readBytes())
         assertThrows(InterruptedException::class.java) {
-            Containers.extractVideo(source, extracted) { throw InterruptedException() }
+            Containers.extractVideo(source, extracted, videoRange) { throw InterruptedException() }
         }
         assertFalse(extracted.exists())
         val target = folder.newFile("static.jpg")
-        Containers.clean(source, target, static = true, flatten = true, metadata = true)
+        Containers.clean(source, target, before, static = false, metadata = true)
         val after = Containers.inspect(target)!!
         assertNull(after.video)
         assertNull(after.edit)
         assertNotNull(after.gainmap)
-        val privateCleanup = folder.newFile("private.jpg")
-        Containers.clean(source, privateCleanup, static = false, flatten = false, metadata = true)
-        assertNull(Containers.inspect(privateCleanup)!!.video)
-        assertNull(Containers.inspect(privateCleanup)!!.edit)
         assertEquals(after.gainmap!!.end, target.length())
+        assertEquals(after.jpeg.end, after.gainmap.start)
+        assertEquals(listOf("Primary" to 0L, "GainMap" to after.gainmap.length), directory(after))
         assertArrayEquals(scan(source, before.jpeg), scan(target, after.jpeg))
         assertArrayEquals(
             scan(source, Containers.jpeg(source, before.gainmap.start)),
@@ -87,16 +91,33 @@ class MediaCoreTest {
             result.getRGB(0, 0, 32, 24, null, 0, 32),
         )
         val motion = folder.newFile("motion.jpg")
-        Containers.clean(source, motion, static = false, flatten = true, metadata = false)
+        Containers.clean(source, motion, before, static = false, metadata = false)
         val motionInfo = Containers.inspect(motion)!!
         assertNull(motionInfo.edit)
-        assertArrayEquals(range(source, before.video), range(motion, motionInfo.video!!))
-        val unchanged = folder.newFile("retained.jpg")
-        Containers.clean(source, unchanged, static = false, flatten = false, metadata = false)
-        assertArrayEquals(
-            range(source, before.edit),
-            range(unchanged, Containers.inspect(unchanged)!!.edit!!),
-        )
+        assertTrue(motion.readBytes().decodeToString().contains("video/quicktime"))
+        assertEquals(listOf("Primary" to 0L, "GainMap" to motionInfo.gainmap!!.length,
+            "MotionPhoto" to motionInfo.video!!.range.length), directory(motionInfo))
+        assertEquals(motionInfo.gainmap.end, motionInfo.video.range.start)
+        assertArrayEquals(range(source, videoRange), range(motion, motionInfo.video.range))
+    }
+
+    @Test
+    fun scanMarkersCrossReadBoundaries() {
+        val block = 64 * 1024
+        val scan = ByteArray(3 * block)
+        scan[block - 1] = -1 // FF 00
+        scan[2 * block - 1] = -1
+        scan[2 * block] = 0xd7.toByte()
+        scan[scan.lastIndex - 1] = -1
+        scan[scan.lastIndex] = -1
+        val sos = segment(0xda, byteArrayOf(1, 1, 0, 0, 63, 0))
+        val file = folder.newFile()
+        file.writeBytes(byteArrayOf(-1, -40) + sos + scan + byteArrayOf(0xfe.toByte(), 0, 3, 42) +
+            sos + byteArrayOf(1, -1, -39, 99))
+        val layout = Containers.jpeg(file)
+        assertEquals(listOf(0xda, 0xfe, 0xda), layout.parts.map { it.marker })
+        assertEquals(ByteRange((2 + sos.size + scan.lastIndex).toLong(), 5), layout.parts[1].range)
+        assertEquals(file.length() - 1, layout.end)
     }
 
     @Test
@@ -104,27 +125,63 @@ class MediaCoreTest {
         val image = BufferedImage(3, 2, BufferedImage.TYPE_INT_RGB)
         val jpeg = ByteArrayOutputStream().also { ImageIO.write(image, "jpeg", it) }.toByteArray()
         val video = ByteBuffer.allocate(24).putInt(24).put("ftypmp42".toByteArray()).array()
-        for ((flag, offset, append) in listOf(
-            Triple("0", 0, false), Triple("0", 24, true),
-            Triple("1", 24, false), Triple("1", 24, true), Triple("", 24, true),
+        for ((flags, append, expected) in listOf(
+            Triple("GCamera:MicroVideo=\"0\"", true, false),
+            Triple("GCamera:MicroVideo=\"1\"", true, true),
+            Triple("GCamera:MotionPhoto=\"0\" GCamera:MicroVideo=\"1\"", true, false),
+            Triple("GCamera:MotionPhoto=\"1\" GCamera:MicroVideo=\"0\"", true, true),
+            Triple("GCamera:MotionPhoto=\"1\"", false, false),
+            Triple("", true, true),
         )) {
-            val attributes = "xmlns:GCamera=\"http://ns.google.com/photos/1.0/camera/\" " +
-                (if (flag.isEmpty()) "" else "GCamera:MotionPhoto=\"$flag\" ") + "GCamera:MicroVideoOffset=\"$offset\""
+            val attributes = "xmlns:GCamera=\"http://ns.google.com/photos/1.0/camera/\" $flags GCamera:MicroVideoOffset=\"24\""
             val source = folder.newFile()
-            source.writeBytes(jpeg.take(2).toByteArray() + segment(0xe1, xmp(attributes)) +
+            source.writeBytes(jpeg.take(2).toByteArray() + segment(0xe1, xmp(attributes) + byteArrayOf(0)) +
                 jpeg.drop(2).toByteArray() + if (append) video else byteArrayOf())
-            assertEquals(append && flag != "0", Containers.inspect(source)!!.video != null)
-            val output = folder.newFile()
-            Containers.clean(source, output, true, true, true)
-            assertNull(Containers.inspect(output)!!.video)
-            assertEquals(jpeg.size.toLong(), output.length())
+            val info = Containers.inspect(source)!!
+            assertEquals(expected, info.video != null)
+            if (!append) {
+                val output = folder.newFile()
+                Containers.clean(source, output, info, static = true, metadata = true)
+                assertArrayEquals(jpeg, output.readBytes())
+            }
         }
+        for (flag in listOf("0", "1")) {
+            val source = folder.newFile()
+            source.writeBytes(jpeg.take(2).toByteArray() + segment(0xe1, xmp(
+                "xmlns:GCamera=\"http://ns.google.com/photos/1.0/camera/\" GCamera:MicroVideoOffset=\"0\" GCamera:BurstID=\"burst-123\"",
+                "<GCamera:MotionPhoto>$flag</GCamera:MotionPhoto><GCamera:SpecialTypeID>Camera feature</GCamera:SpecialTypeID>" +
+                    "<Item:Item xmlns:Item=\"http://ns.google.com/photos/1.0/container/item/\"><Item:Semantic>MotionPhoto</Item:Semantic><Item:Length>24</Item:Length></Item:Item>",
+            )) + segment(0xe4, "camera-specific data".toByteArray()) + jpeg.drop(2).toByteArray() + video)
+            val info = Containers.inspect(source)!!
+            assertEquals(if (flag == "1") "mp4" else null, info.video?.extension)
+            val output = folder.newFile()
+            Containers.clean(source, output, info, static = true, metadata = false)
+            val cleaned = output.readBytes().decodeToString()
+            assertFalse(cleaned.contains("<GCamera:MotionPhoto>"))
+            assertFalse(cleaned.contains("MicroVideoOffset"))
+            assertTrue(cleaned.contains("burst-123") && cleaned.contains("Camera feature"))
+            assertTrue(cleaned.contains("camera-specific data"))
+        }
+    }
+
+    @Test
+    fun unreadableXmpDoesNotHideThePictureOrValidAttachments() {
+        val bytes = compoundPhoto().readBytes()
         val source = folder.newFile()
-        source.writeBytes(jpeg.take(2).toByteArray() + segment(0xe1, xmp(
-            "xmlns:GCamera=\"http://ns.google.com/photos/1.0/camera/\" GCamera:MotionPhoto=\"1\" GCamera:MicroVideoOffset=\"0\"",
-            "<Item:Item xmlns:Item=\"http://ns.google.com/photos/1.0/container/item/\" Item:Semantic=\"MotionPhoto\" Item:Length=\"24\"/>",
-        )) + jpeg.drop(2).toByteArray() + video)
-        assertEquals(24L, Containers.inspect(source)!!.video!!.length)
+        val badPacket = segment(0xe1, "http://ns.adobe.com/xap/1.0/\u0000<broken".toByteArray())
+        source.writeBytes(bytes.copyOfRange(0, 2) + badPacket + bytes.copyOfRange(2, bytes.size))
+        val info = Containers.inspect(source)!!
+        assertNotNull(info.video)
+        assertNotNull(info.edit)
+        val output = folder.newFile()
+        assertThrows(UnsupportedMediaException::class.java) {
+            Containers.clean(source, output, info, static = true, metadata = false)
+        }
+        Containers.clean(source, output, info, static = false, metadata = true)
+        val cleaned = Containers.inspect(output)!!
+        assertArrayEquals(scan(source, info.jpeg), scan(output, cleaned.jpeg))
+        assertEquals(listOf("Primary" to 0L, "GainMap" to cleaned.gainmap!!.length), directory(cleaned))
+        assertFalse(output.readBytes().decodeToString().contains("<broken"))
     }
 
     @Test
@@ -139,7 +196,7 @@ class MediaCoreTest {
         broken.writeBytes(data)
         assertThrows(IllegalArgumentException::class.java) { Containers.inspect(broken) }
         assertThrows(InterruptedException::class.java) {
-            Containers.clean(source, folder.newFile(), true, true, true) {
+            Containers.clean(source, folder.newFile(), Containers.inspect(source)!!, true, true) {
                 throw InterruptedException()
             }
         }
@@ -151,20 +208,27 @@ class MediaCoreTest {
         val image = BufferedImage(7, 9, BufferedImage.TYPE_INT_ARGB)
         image.setRGB(2, 3, 0x814599ff.toInt())
         val encoded = ByteArrayOutputStream().also { ImageIO.write(image, "png", it) }.toByteArray()
-        val text = "Comment\u0000private-location".toByteArray()
-        val chunk =
-            ByteBuffer.allocate(text.size + 12)
-                .putInt(text.size)
-                .put("tEXt".toByteArray())
-                .put(text)
-                .putInt(0)
-                .array()
-        source.writeBytes(
-            encoded.copyOfRange(0, 33) + chunk + encoded.copyOfRange(33, encoded.size)
-        )
+        fun chunk(type: String, data: ByteArray): ByteArray {
+            val payload = type.toByteArray(Charsets.US_ASCII) + data
+            val crc = java.util.zip.CRC32().apply { update(payload) }
+            return ByteBuffer.allocate(payload.size + 8).putInt(data.size).put(payload).putInt(crc.value.toInt()).array()
+        }
+        val color = chunk("sBIT", byteArrayOf(8, 8, 8, 8)) + chunk("cICP", byteArrayOf(9, 16, 0, 1)) +
+            chunk("mDCV", ByteArray(24)) + chunk("cLLI", ByteBuffer.allocate(8).putInt(10000000).putInt(2500000).array())
+        val expected = encoded.copyOfRange(0, 33) + color + encoded.copyOfRange(33, encoded.size)
+        source.writeBytes(encoded.copyOfRange(0, 33) + chunk("tEXt", "Comment\u0000private-location".toByteArray()) +
+            expected.copyOfRange(33, expected.size))
         val output = folder.newFile("output.png")
+        output.writeBytes(source.readBytes())
         RasterMetadata.clean(source, output, "image/png") {}
-        assertArrayEquals(encoded, output.readBytes())
+        assertArrayEquals(expected, output.readBytes())
+        for (end in listOf(byteArrayOf(), chunk("IEND", byteArrayOf(1)))) {
+            source.writeBytes(encoded.copyOf(encoded.size - 12) + end)
+            val error = assertThrows(UnsupportedMediaException::class.java) {
+                RasterMetadata.clean(source, output, "image/png") {}
+            }
+            assertEquals(R.string.invalid_image_container, error.messageRes)
+        }
     }
 
     @Test
@@ -192,6 +256,10 @@ class MediaCoreTest {
             (x * 7 shl 16) or (y * 10 shl 8) or 0x55,
         )
         val jpeg = ByteArrayOutputStream().also { ImageIO.write(image, "jpeg", it) }.toByteArray()
+        val alternate = jpeg.take(2).toByteArray() +
+            segment(0xfe, "hdr-gain-map".toByteArray()) +
+            segment(0xe1, xmp("", "<note>http://ns.adobe.com/hdr-gain-map/1.0/</note>")) +
+            jpeg.drop(2).toByteArray()
         val gainmap =
             jpeg.copyOfRange(0, 2) +
                 segment(
@@ -200,14 +268,14 @@ class MediaCoreTest {
                         "xmlns:hdrgm=\"http://ns.adobe.com/hdr-gain-map/1.0/\" hdrgm:Version=\"1.0\""
                     ),
                 ) +
-                jpeg.copyOfRange(2, jpeg.size)
+                segment(0xfe, "private-location".toByteArray()) + jpeg.copyOfRange(2, jpeg.size)
         val edit = "private-original-and-edit-record".toByteArray()
         val video =
             ByteBuffer.allocate(24)
                 .putInt(24)
-                .put("ftypmp42".toByteArray())
+                .put("ftypqt  ".toByteArray())
                 .putInt(0)
-                .put("mp42isom".toByteArray())
+                .put("qt  isom".toByteArray())
                 .array()
         val xmp =
             segment(
@@ -219,23 +287,27 @@ class MediaCoreTest {
                 ),
             )
         val mpf =
-            ByteBuffer.allocate(86)
+            ByteBuffer.allocate(102)
                 .put("MPF\u0000MM".toByteArray())
                 .putShort(42)
                 .putInt(8)
                 .putShort(3)
         mpf.putShort(0xb000.toShort()).putShort(7).putInt(4).put("0100".toByteArray())
-        mpf.putShort(0xb001.toShort()).putShort(4).putInt(1).putInt(2)
-        mpf.putShort(0xb002.toShort()).putShort(7).putInt(32).putInt(50).putInt(0)
-        val primaryLength = jpeg.size + xmp.size + 90
+        mpf.putShort(0xb001.toShort()).putShort(4).putInt(1).putInt(3)
+        mpf.putShort(0xb002.toShort()).putShort(7).putInt(48).putInt(50).putInt(0)
+        val fill = byteArrayOf(-1, -1)
+        val primaryLength = jpeg.size + xmp.size + fill.size + 4 + mpf.capacity()
+        val secondOffset = primaryLength - (2 + xmp.size + fill.size + 8)
         mpf.putInt(0x030000).putInt(primaryLength).putInt(0).putInt(0)
-        mpf.putInt(0).putInt(gainmap.size).putInt(primaryLength - (2 + xmp.size + 8)).putInt(0)
+        mpf.putInt(0).putInt(alternate.size).putInt(secondOffset).putInt(0)
+        mpf.putInt(0).putInt(gainmap.size).putInt(secondOffset + alternate.size).putInt(0)
         return folder.newFile().apply {
             writeBytes(
                 jpeg.copyOfRange(0, 2) +
-                    xmp +
+                    xmp + fill +
                     segment(0xe2, mpf.array()) +
                     jpeg.copyOfRange(2, jpeg.size) +
+                    alternate +
                     gainmap +
                     edit +
                     video
@@ -258,6 +330,21 @@ class MediaCoreTest {
 
     private fun range(file: File, range: ByteRange): ByteArray =
         file.readBytes().copyOfRange(range.start.toInt(), range.end.toInt())
+
+    private fun directory(photo: PhotoContainer): List<Pair<String, Long>> {
+        val parser = DocumentBuilderFactory.newInstance().apply { isNamespaceAware = true }.newDocumentBuilder()
+        val ns = "http://ns.google.com/photos/1.0/container/item/"
+        return photo.jpeg.parts.filter { it.marker == 0xe1 && it.payload.decodeToString().startsWith("http://ns.adobe.com/xap/") }
+            .flatMap { part ->
+                val start = part.payload.indexOf(0) + 1
+                val xml = parser.parse(part.payload.inputStream(start, part.payload.size - start))
+                val items = xml.getElementsByTagNameNS("http://ns.google.com/photos/1.0/container/", "Item")
+                (0 until items.length).map { index ->
+                    val item = items.item(index) as Element
+                    item.getAttributeNS(ns, "Semantic") to (item.getAttributeNS(ns, "Length").toLongOrNull() ?: 0L)
+                }
+            }
+    }
 
     private fun scan(file: File, jpeg: JpegLayout): ByteArray =
         range(

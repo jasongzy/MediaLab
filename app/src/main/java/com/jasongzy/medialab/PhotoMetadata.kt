@@ -1,10 +1,12 @@
 package com.jasongzy.medialab
 
 import androidx.exifinterface.media.ExifInterface
-import android.graphics.Bitmap
 import java.io.File
 import java.io.RandomAccessFile
+import java.time.LocalDate
 import java.time.LocalDateTime
+import java.time.LocalTime
+import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import java.time.format.ResolverStyle
 import kotlin.math.abs
@@ -12,6 +14,9 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 
 internal object PhotoMetadata {
+    // An empty TIFF directory inside an EXIF segment lets ExifInterface validate edits in memory.
+    private val emptyExif = "45786966000049492a0008000000000000000000".hexToByteArray()
+
     fun group(key: String, metadata: List<Pair<String, String>>): List<Pair<String, String>> {
         val groups = listOf(
             listOf("GPSLatitude", "GPSLatitudeRef", "GPSLongitude", "GPSLongitudeRef"),
@@ -25,24 +30,16 @@ internal object PhotoMetadata {
         return keys.mapNotNull { tag -> metadata.firstOrNull { it.first == tag } }
     }
 
-    suspend fun normalize(directory: File, changes: Map<String, String?>): Map<String, String?> {
-        if (retained(changes.map { it.key to it.value.orEmpty() }).size != changes.size ||
-            changes.any { (key, value) -> !validValue(key, value) })
+    fun normalize(changes: Map<String, String?>): Map<String, String?> {
+        if (changes.any { (key, value) -> !validValue(key, value) })
             throw UnsupportedMediaException(R.string.invalid_metadata)
-        val file = MediaFiles.temporary(directory, "png")
-        val bitmap = Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888)
-        try {
-            file.outputStream().use { check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)) }
-            val exif = ExifInterface(file)
-            changes.forEach { (key, value) -> exif.setAttribute(key, value) }
-            return changes.mapValues { (key, value) ->
-                val normalized = exif.getAttribute(key)
-                if (!sameValue(value, normalized)) throw UnsupportedMediaException(R.string.invalid_metadata)
-                normalized
-            }
-        } finally {
-            bitmap.recycle()
-            file.delete()
+        if (changes.values.all { it == null }) return changes
+        val exif = ExifInterface(emptyExif.inputStream(), ExifInterface.STREAM_TYPE_EXIF_DATA_ONLY)
+        changes.forEach { (key, value) -> exif.setAttribute(key, value) }
+        return changes.mapValues { (key, value) ->
+            val normalized = exif.getAttribute(key)
+            if (!sameValue(value, normalized)) throw UnsupportedMediaException(R.string.invalid_metadata)
+            normalized
         }
     }
 
@@ -53,7 +50,18 @@ internal object PhotoMetadata {
             when {
                 key.startsWith("DateTime") -> LocalDateTime.parse(value,
                     DateTimeFormatter.ofPattern("uuuu:MM:dd HH:mm:ss").withResolverStyle(ResolverStyle.STRICT))
-                key.startsWith("OffsetTime") -> java.time.ZoneOffset.of(value)
+                key.startsWith("OffsetTime") -> {
+                    require(value.length == 6 && value[3] == ':')
+                    ZoneOffset.of(value)
+                }
+                key == "GPSDateStamp" -> {
+                    require(value.length == 10)
+                    LocalDate.parse(value, DateTimeFormatter.ofPattern("uuuu:MM:dd").withResolverStyle(ResolverStyle.STRICT))
+                }
+                key == "GPSTimeStamp" -> {
+                    require(value.length == 8)
+                    if (value != "23:59:60") LocalTime.parse(value)
+                }
                 key.startsWith("SubSecTime") -> require(value.all(Char::isDigit))
                 key == "GPSLatitudeRef" -> require(value in listOf("N", "S"))
                 key == "GPSLongitudeRef" -> require(value in listOf("E", "W"))
@@ -95,9 +103,8 @@ internal object PhotoMetadata {
         return result.takeIf { it.isFinite() }
     }
 
-    suspend fun update(source: File, target: File, changes: Map<String, String?>) {
+    suspend fun update(source: File, target: File, container: PhotoContainer?, changes: Map<String, String?>): PhotoContainer? {
         val coroutine = currentCoroutineContext()
-        val container = Containers.inspect(source)
         val working = if (container == null) target else MediaFiles.temporary(checkNotNull(target.parentFile), "jpg")
         try {
             working.outputStream().use { output ->
@@ -109,36 +116,24 @@ internal object PhotoMetadata {
             ExifInterface(working).apply {
                 changes.forEach { (key, value) -> setAttribute(key, value) }
                 saveAttributes()
-                changes.forEach { (key, value) ->
-                    if (!sameValue(value, getAttribute(key))) throw UnsupportedMediaException(R.string.metadata_not_saved)
-                }
             }
-            if (container != null) {
+            val updated = if (container != null) {
                 val exif = Containers.jpeg(working).parts.first {
                     it.marker == 0xe1 && it.payload.take(6) == "Exif\u0000\u0000".toByteArray().toList()
                 }.payload
-                Containers.replaceExif(source, target, exif) { coroutine.ensureActive() }
-            }
+                Containers.replaceExif(source, target, container, exif) { coroutine.ensureActive() }
+            } else null
             val result = ExifInterface(target)
             changes.forEach { (key, value) ->
                 if (!sameValue(value, result.getAttribute(key))) throw UnsupportedMediaException(R.string.metadata_not_saved)
             }
+            return updated
         } finally {
             if (working != target) working.delete()
         }
     }
-    fun read(exif: ExifInterface): List<Pair<String, String>> {
-        return ExifInterface::class.java.fields
-            .filter { it.name.startsWith("TAG_") && it.type == String::class.java }
-            .mapNotNull { field ->
-                val tag = field.get(null) as String
-                exif.getAttribute(tag)?.let { tag to it }
-            }
-            .distinctBy { it.first }
-            .sortedBy { it.first }
-    }
 
-    private val captureTags = setOf(
+    private val captureTags = sortedSetOf(
         ExifInterface.TAG_DATETIME,
         ExifInterface.TAG_DATETIME_ORIGINAL,
         ExifInterface.TAG_DATETIME_DIGITIZED,
@@ -184,20 +179,23 @@ internal object PhotoMetadata {
         ExifInterface.TAG_DIGITAL_ZOOM_RATIO,
         ExifInterface.TAG_FOCAL_LENGTH_IN_35MM_FILM,
         ExifInterface.TAG_SCENE_CAPTURE_TYPE,
-    )
+    ).apply {
+        for (field in ExifInterface::class.java.fields)
+            if (field.name.startsWith("TAG_GPS_")) add(field.get(null) as String)
+    }
 
-    // Geometry, thumbnails, MakerNote and XMP can refer to pixels removed by editing.
-    fun retained(metadata: List<Pair<String, String>>): List<Pair<String, String>> =
-        metadata.filter { (tag, _) -> tag in captureTags || tag.startsWith("GPS") }
+    fun read(exif: ExifInterface): List<Pair<String, String>> =
+        captureTags.mapNotNull { tag -> exif.getAttribute(tag)?.let { tag to it } }
 
     suspend fun write(file: File, metadata: List<Pair<String, String>>, width: Int, height: Int,
         changes: Map<String, String?> = emptyMap()) {
-        val values = retained(metadata).toMap() + changes
+        val values = metadata.toMap() + changes
         if (values.isEmpty()) return
-        if (Containers.inspect(file)?.gainmap != null) {
+        val container = Containers.inspect(file)
+        if (container?.gainmap != null) {
             val target = MediaFiles.temporary(checkNotNull(file.parentFile), "jpg")
             try {
-                update(file, target, values + mapOf(
+                update(file, target, container, values + mapOf(
                     ExifInterface.TAG_ORIENTATION to ExifInterface.ORIENTATION_NORMAL.toString(),
                     ExifInterface.TAG_IMAGE_WIDTH to width.toString(),
                     ExifInterface.TAG_IMAGE_LENGTH to height.toString(),

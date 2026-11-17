@@ -2,8 +2,14 @@ package com.jasongzy.medialab
 
 import java.io.File
 import java.io.RandomAccessFile
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 
 internal object RasterMetadata {
+    private val pngChunks = setOf(
+        "IHDR", "PLTE", "IDAT", "IEND", "tRNS", "iCCP", "sRGB", "gAMA", "cHRM", "cICP", "sBIT", "mDCV", "cLLI",
+    )
+    private val webpChunks = setOf("VP8X", "VP8 ", "VP8L", "ALPH", "ICCP")
     fun colorModel(file: File, mime: String): String? {
         if (mime !in listOf("image/png", "image/webp")) return null
         RandomAccessFile(file, "r").use { input ->
@@ -24,10 +30,10 @@ internal object RasterMetadata {
                 val type = input.readInt()
                 val length = Integer.reverseBytes(input.readInt()).toLong() and 0xffffffffL
                 val padded = length + length % 2
-                if (length == 0L || padded > end - input.filePointer) return null
+                if (padded > end - input.filePointer) return null
                 when (type) {
-                    0x56503820 -> return "YCbCr"
-                    0x5650384c -> return "RGB"
+                    0x56503820 -> return "YCbCr".takeIf { length > 0 }
+                    0x5650384c -> return "RGB".takeIf { length > 0 }
                 }
                 input.seek(input.filePointer + padded)
             }
@@ -39,11 +45,18 @@ internal object RasterMetadata {
         RandomAccessFile(source, "r").use { input ->
             RandomAccessFile(target, "rw").use { output ->
                 val png = mime == "image/png"
+                val retained = if (png) pngChunks else webpChunks
                 val header = ByteArray(if (png) 8 else 12)
+                if (input.length() < header.size) invalidContainer()
                 input.readFully(header)
                 output.write(header)
-                while (input.filePointer < input.length()) {
+                val end = if (png) input.length() else
+                    8 + (ByteBuffer.wrap(header, 4, 4).order(ByteOrder.LITTLE_ENDIAN).int.toLong() and 0xffffffffL)
+                if (end !in header.size.toLong()..input.length()) invalidContainer()
+                val buffer = ByteArray(256 * 1024)
+                while (png || input.filePointer < end) {
                     check()
+                    if (end - input.filePointer < 8) invalidContainer()
                     val lengthBytes = ByteArray(4)
                     input.readFully(lengthBytes)
                     val typeBytes = ByteArray(4)
@@ -51,47 +64,31 @@ internal object RasterMetadata {
                     val type: String
                     val length: Long
                     if (png) {
-                        length = java.nio.ByteBuffer.wrap(lengthBytes).int.toLong() and 0xffffffffL
+                        length = ByteBuffer.wrap(lengthBytes).int.toLong() and 0xffffffffL
                         type = typeBytes.toString(Charsets.US_ASCII)
                     } else {
                         type = lengthBytes.toString(Charsets.US_ASCII)
                         length =
-                            java.nio.ByteBuffer.wrap(typeBytes)
-                                .order(java.nio.ByteOrder.LITTLE_ENDIAN)
+                            ByteBuffer.wrap(typeBytes)
+                                .order(ByteOrder.LITTLE_ENDIAN)
                                 .int
                                 .toLong() and 0xffffffffL
                     }
-                    require(type !in setOf("acTL", "ANIM", "ANMF")) { "Choose a still image" }
+                    if (type == "acTL" || type == "ANIM" || type == "ANMF")
+                        throw UnsupportedMediaException(R.string.select_image_only)
+                    val last = png && type == "IEND"
+                    if (last && length != 0L) invalidContainer()
                     val padded = length + if (png) 4 else length % 2
-                    require(padded <= input.length() - input.filePointer) {
-                        "Truncated image chunk"
-                    }
-                    val keep =
-                        if (png)
-                            type in
-                                setOf(
-                                    "IHDR",
-                                    "PLTE",
-                                    "IDAT",
-                                    "IEND",
-                                    "tRNS",
-                                    "iCCP",
-                                    "sRGB",
-                                    "gAMA",
-                                    "cHRM",
-                                    "cICP",
-                                )
-                        else type in setOf("VP8X", "VP8 ", "VP8L", "ALPH", "ICCP")
-                    if (keep) {
+                    if (padded > end - input.filePointer) invalidContainer()
+                    if (type in retained) {
                         output.write(lengthBytes)
                         output.write(typeBytes)
                         var left = padded
                         if (!png && type == "VP8X") {
-                            require(length == 10L)
+                            if (length != 10L) invalidContainer()
                             output.write(input.readUnsignedByte() and 0xf3)
                             left--
                         }
-                        val buffer = ByteArray(256 * 1024)
                         while (left > 0) {
                             check()
                             val count = minOf(left, buffer.size.toLong()).toInt()
@@ -100,14 +97,16 @@ internal object RasterMetadata {
                             left -= count
                         }
                     } else input.seek(input.filePointer + padded)
-                    if (png && type == "IEND") break
+                    if (last) break
                 }
+                output.setLength(output.filePointer)
                 if (!png) {
-                    require(output.length() - 8 <= 0xffffffffL)
                     output.seek(4)
                     output.writeInt(Integer.reverseBytes((output.length() - 8).toInt()))
                 }
             }
         }
     }
+
+    private fun invalidContainer(): Nothing = throw UnsupportedMediaException(R.string.invalid_image_container)
 }

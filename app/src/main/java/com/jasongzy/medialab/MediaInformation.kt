@@ -84,7 +84,7 @@ internal fun PhotoInformation(info: PhotoInfo, model: LabViewModel) {
                 }
             ),
         )
-        val metadata = PhotoMetadata.retained(info.metadata)
+        val metadata = info.metadata
         if (metadata.isNotEmpty()) {
             HorizontalDivider()
             Text(
