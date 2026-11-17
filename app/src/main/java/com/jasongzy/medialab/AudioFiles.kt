@@ -2,6 +2,7 @@ package com.jasongzy.medialab
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.ImageDecoder
 import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.net.Uri
@@ -10,8 +11,8 @@ import com.arthenica.ffmpegkit.MediaInformation
 import com.kyant.taglib.AudioProperties
 import com.kyant.taglib.Picture
 import com.kyant.taglib.TagLib
-import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.IOException
 import java.io.InputStream
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -49,6 +50,8 @@ internal data class AudioDocument(
 }
 
 internal object AudioFiles {
+    private const val MAX_ARTWORK_MIB = 64
+
     suspend fun inspect(file: File): Pair<AudioProperties, MediaInformation?> {
         val properties = TagLib.getAudioProperties(fd(file))
             ?: throw UnsupportedMediaException(R.string.select_audio_only)
@@ -159,12 +162,14 @@ internal object AudioFiles {
         }
     }
 
-    fun thumbnail(data: ByteArray, size: Int = 512): Bitmap? {
-        val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        BitmapFactory.decodeByteArray(data, 0, data.size, options)
-        options.inSampleSize = maxOf(1, maxOf(options.outWidth, options.outHeight) / size)
-        options.inJustDecodeBounds = false
-        return BitmapFactory.decodeByteArray(data, 0, data.size, options)
+    fun decodeArtwork(data: ByteArray, maxEdge: Int? = null): Bitmap? {
+        if (data.isEmpty()) return null
+        return try {
+            ImageDecoder.decodeBitmap(ImageDecoder.createSource(data)) { decoder, info, _ ->
+                decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+                if (maxEdge != null) decoder.fitWithin(info.size, maxEdge)
+            }
+        } catch (_: IOException) { null }
     }
 
     fun pictureMime(data: ByteArray): String {
@@ -175,17 +180,26 @@ internal object AudioFiles {
         return options.outMimeType
     }
 
-    private fun mp4Picture(picture: Picture): Picture {
+    fun pngArtwork(bitmap: Bitmap, directory: File, limitMiB: Int): ByteArray {
+        val file = MediaFiles.temporary(directory, "png")
+        try {
+            file.outputStream().use { check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)) }
+            checkArtworkSize(file.length(), limitMiB)
+            return file.readBytes()
+        } finally { file.delete() }
+    }
+
+    private fun checkArtworkSize(bytes: Long, limitMiB: Int) {
+        if (bytes > limitMiB * 1024L * 1024)
+            throw UnsupportedMediaException(R.string.artwork_size_limit, limitMiB.toString())
+    }
+
+    private fun mp4Picture(picture: Picture, directory: File): Picture {
         val mime = pictureMime(picture.data)
         if (mime in setOf("image/jpeg", "image/png", "image/gif", "image/bmp"))
             return picture.copy(description = "", pictureType = "", mimeType = mime)
-        val bitmap = checkNotNull(BitmapFactory.decodeByteArray(picture.data, 0, picture.data.size))
-        val data = try {
-            ByteArrayOutputStream().use {
-                check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, it))
-                it.toByteArray()
-            }
-        } finally { bitmap.recycle() }
+        val bitmap = decodeArtwork(picture.data) ?: throw UnsupportedMediaException(R.string.select_image_only)
+        val data = try { pngArtwork(bitmap, directory, MAX_ARTWORK_MIB) } finally { bitmap.recycle() }
         return picture.copy(data = data, description = "", pictureType = "", mimeType = "image/png")
     }
 
@@ -216,7 +230,8 @@ internal object AudioFiles {
     ) {
         val tagsChanged = original.tags != tags
         val outputPictures = if (target.extension in mp4AudioExtensions) pictures.mapIndexed { index, picture ->
-            original.pictures.getOrNull(index)?.takeIf { it.data.contentEquals(picture.data) } ?: mp4Picture(picture)
+            original.pictures.getOrNull(index)?.takeIf { it.data.contentEquals(picture.data) }
+                ?: mp4Picture(picture, target.parentFile!!)
         } else pictures
         val picturesChanged = !samePictures(original.pictures, outputPictures)
         currentCoroutineContext().ensureActive()
@@ -226,9 +241,7 @@ internal object AudioFiles {
                 throw UnsupportedMediaException(R.string.metadata_not_saved)
         }
         if (picturesChanged) {
-            val limitMiB = 64
-            if (outputPictures.sumOf { it.data.size.toLong() } > limitMiB * 1024 * 1024)
-                throw UnsupportedMediaException(R.string.artwork_size_limit, limitMiB.toString())
+            checkArtworkSize(outputPictures.sumOf { it.data.size.toLong() }, MAX_ARTWORK_MIB)
             if (!TagLib.savePictures(fd(target, true), outputPictures.toTypedArray()))
                 throw UnsupportedMediaException(R.string.artwork_not_saved)
         }

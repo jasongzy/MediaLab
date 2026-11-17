@@ -1288,21 +1288,8 @@ internal class LabViewModel(application: Application, savedState: SavedStateHand
             try {
                 val info = Photos.info(file)
                 val bitmap = Photos.decode(file, info)
-                try {
-                    val bytes =
-                        java.io.ByteArrayOutputStream().use {
-                            check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, it))
-                            it.toByteArray()
-                        }
-                    val limitMiB = 32
-                    if (bytes.size > limitMiB * 1024 * 1024)
-                        throw UnsupportedMediaException(R.string.artwork_size_limit, limitMiB.toString())
-                    withContext(Dispatchers.Main) {
-                        ready(Picture(bytes, "", "Front Cover", "image/png"))
-                    }
-                } finally {
-                    bitmap.recycle()
-                }
+                val bytes = try { AudioFiles.pngArtwork(bitmap, workspace.work, 32) } finally { bitmap.recycle() }
+                withContext(Dispatchers.Main) { ready(Picture(bytes, "", "Front Cover", "image/png")) }
             } catch (_: android.graphics.ImageDecoder.DecodeException) {
                 throw UnsupportedMediaException(R.string.select_image_only)
             } finally {

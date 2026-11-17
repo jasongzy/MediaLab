@@ -16,6 +16,7 @@ import android.graphics.Path
 import android.graphics.Rect
 import android.graphics.RectF
 import android.os.Build
+import android.util.Size
 import android.webkit.MimeTypeMap
 import androidx.core.graphics.createBitmap
 import androidx.core.graphics.withClip
@@ -29,6 +30,17 @@ import kotlin.math.max
 import kotlin.math.roundToInt
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+
+internal fun ImageDecoder.fitWithin(size: Size, maxEdge: Int) {
+    val longest = maxOf(size.width, size.height)
+    if (longest > maxEdge) {
+        val scale = maxEdge.toDouble() / longest
+        setTargetSize(
+            (size.width * scale).roundToInt().coerceAtLeast(1),
+            (size.height * scale).roundToInt().coerceAtLeast(1),
+        )
+    }
+}
 
 internal data class PhotoColor(
     val space: String? = null,
@@ -211,11 +223,7 @@ internal object Photos {
         ImageDecoder.decodeBitmap(ImageDecoder.createSource(file)) { decoder, info, _ ->
             if (info.isAnimated) throw UnsupportedMediaException(R.string.select_image_only)
             decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
-            val scale = minOf(1.0, 1800.0 / maxOf(info.size.width, info.size.height))
-            decoder.setTargetSize(
-                maxOf(1, (info.size.width * scale).toInt()),
-                maxOf(1, (info.size.height * scale).toInt()),
-            )
+            decoder.fitWithin(info.size, 1800)
         }
 
     fun preview(bitmap: Bitmap, keepHdr: Boolean = true): Bitmap {

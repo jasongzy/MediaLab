@@ -41,7 +41,6 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.fromHtml
 import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.dp
-import kotlin.math.roundToInt
 
 @Composable
 internal fun VideoScreen(model: LabViewModel, state: LabState, active: Boolean) {
@@ -652,11 +651,7 @@ private fun GifPreview(file: java.io.File, active: Boolean) {
                     android.graphics.ImageDecoder.decodeDrawable(
                         android.graphics.ImageDecoder.createSource(file)
                     ) { decoder, info, _ ->
-                        val scale = minOf(1.0, 1280.0 / maxOf(info.size.width, info.size.height))
-                        decoder.setTargetSize(
-                            (info.size.width * scale).roundToInt().coerceAtLeast(1),
-                            (info.size.height * scale).roundToInt().coerceAtLeast(1),
-                        )
+                        decoder.fitWithin(info.size, 1280)
                     }
                 }
         } catch (cancelled: kotlinx.coroutines.CancellationException) {

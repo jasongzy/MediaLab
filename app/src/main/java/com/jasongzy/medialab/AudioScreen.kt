@@ -268,7 +268,7 @@ internal fun AudioScreen(model: LabViewModel, state: LabState, active: Boolean) 
                                 val bitmap by
                                     produceState<Bitmap?>(null, picture.data) {
                                         value =
-                                            withContext(Dispatchers.IO) { AudioFiles.thumbnail(picture.data) }
+                                            withContext(Dispatchers.IO) { AudioFiles.decodeArtwork(picture.data, 512) }
                                     }
                                 Row(
                                     Modifier.fillMaxWidth().padding(16.dp),
@@ -425,7 +425,7 @@ internal fun AudioScreen(model: LabViewModel, state: LabState, active: Boolean) 
             var picture by draft::picture
             val bitmap by
                 produceState<Bitmap?>(null, picture.data) {
-                    value = withContext(Dispatchers.IO) { AudioFiles.thumbnail(picture.data, 1024) }
+                    value = withContext(Dispatchers.IO) { AudioFiles.decodeArtwork(picture.data, 1024) }
                 }
             var deleting by draft::deleting
             AlertDialog(

@@ -4,6 +4,7 @@ import android.app.Application
 import android.app.Instrumentation
 import android.graphics.Bitmap
 import android.net.Uri
+import androidx.exifinterface.media.ExifInterface
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModelStore
 import androidx.media3.common.C
@@ -16,7 +17,6 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.audio.AudioSink
 import com.kyant.taglib.Picture
-import java.io.ByteArrayOutputStream
 import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -45,19 +45,28 @@ internal object AudioRegression {
         check(numberedResult.tags["TRACKNUMBER"] == listOf("3/12"))
         for ((format, mime) in listOf(Bitmap.CompressFormat.JPEG to "image/jpg",
             Bitmap.CompressFormat.WEBP_LOSSLESS to "image/webp")) {
-            val bitmap = Bitmap.createBitmap(2, 2, Bitmap.Config.ARGB_8888).apply { eraseColor(0x804080c0.toInt()) }
-            val bytes = ByteArrayOutputStream().use { bitmap.compress(format, 100, it); it.toByteArray() }
+            val bitmap = Bitmap.createBitmap(16, 8, Bitmap.Config.ARGB_8888).apply { eraseColor(0x804080c0.toInt()) }
+            val image = File(app.cacheDir, "artwork")
+            image.outputStream().use { check(bitmap.compress(format, 100, it)) }
             bitmap.recycle()
+            ExifInterface(image).apply {
+                setAttribute(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_ROTATE_90.toString())
+                saveAttributes()
+            }
+            val bytes = image.readBytes()
             val picture = Picture(bytes, "测试封面", "Front Cover", mime)
             AudioFiles.writeTags(numbered, numberedMp3.tags, listOf(picture))
             val document = AudioFiles.read(numbered, numbered.name)
             val output = exportAudio(app.cacheDir, document, AudioExportOptions(AudioFormat.M4A))
-            val cover = AudioFiles.read(output, output.name).pictures.single()
+            val result = AudioFiles.read(output, output.name)
+            val cover = result.pictures.single()
+            val thumb = checkNotNull(AudioFiles.decodeArtwork(cover.data, 8))
+            try { check(thumb.width == 4 && thumb.height == 8) } finally { thumb.recycle() }
             if (format == Bitmap.CompressFormat.JPEG) {
                 check(cover.data.contentEquals(bytes) && cover.mimeType == "image/jpeg")
             } else {
-                val expected = checkNotNull(AudioFiles.thumbnail(bytes))
-                val actual = checkNotNull(AudioFiles.thumbnail(cover.data))
+                val expected = checkNotNull(AudioFiles.decodeArtwork(bytes))
+                val actual = checkNotNull(AudioFiles.decodeArtwork(cover.data))
                 try { check(actual.sameAs(expected) && cover.mimeType == "image/png") }
                 finally { expected.recycle(); actual.recycle() }
             }
@@ -208,11 +217,7 @@ internal object AudioRegression {
             }
             idle()
             val audio = checkNotNull(model.state.value.audio)
-            val picture = Bitmap.createBitmap(2, 2, Bitmap.Config.ARGB_8888).let { bitmap ->
-                val bytes = ByteArrayOutputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it); it.toByteArray() }
-                bitmap.recycle()
-                Picture(bytes, "测试封面", "Front Cover", "image/png")
-            }
+            val picture = m4aCover.copy(description = "测试封面", pictureType = "Front Cover")
             instrumentation.runOnMainSync {
                 audio.editor.tags.change(mapOf("TITLE" to listOf("测试")))
                 audio.editor.pictures.change(listOf(picture))
