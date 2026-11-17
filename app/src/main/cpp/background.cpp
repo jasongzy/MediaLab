@@ -62,8 +62,6 @@ Java_com_jasongzy_medialab_MnnEngine_infer(
         MNN::Tensor hostOutput(output, MNN::Tensor::CAFFE);
         if (!hostOutput.host<float>()) throw std::bad_alloc();
         if (!output->copyToHostTensor(&hostOutput)) throw std::runtime_error("Cannot read model output");
-        if (net->updateCacheFile(session) != MNN::NO_ERROR)
-            throw std::runtime_error("Cannot update compiled model");
         auto mask = env->NewFloatArray(pixels);
         if (mask) env->SetFloatArrayRegion(mask, 0, pixels, hostOutput.host<float>());
         return mask;

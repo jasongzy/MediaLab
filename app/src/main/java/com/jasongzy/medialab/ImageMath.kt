@@ -132,7 +132,6 @@ internal object ImageMath {
         normalizationHeight: Int = height,
         writeRow: (Int, IntArray) -> Unit,
     ) {
-        require(mask.size == SIZE * SIZE && mask.all { it.isFinite() }) { "Invalid model output" }
         require(width > 0 && height > 0 && normalizationWidth > 0 && normalizationHeight > 0)
         if (model == BackgroundModel.RMBG20) {
             // RMBG 2.0 uses ToPILImage before resizing, so quantization precedes interpolation.

@@ -23,7 +23,6 @@ internal sealed class CutoutMask(val model: BackgroundModel) {
         normalizationHeight: Int = height,
         writeRow: (Int, IntArray) -> Unit,
     ) {
-        require(width > 0 && height > 0)
         when (this) {
             is Inferred -> ImageMath.alpha(
                 values, width, height, checkCancelled, model, normalizationWidth, normalizationHeight, writeRow,

@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.ContextWrapper
 import android.os.Build
 import android.system.Os
+import android.util.Log
 import com.google.ai.edge.litert.Accelerator
 import com.google.ai.edge.litert.CompiledModel
 import com.google.ai.edge.litert.Environment
@@ -16,7 +17,7 @@ import kotlinx.coroutines.sync.withLock
 import org.json.JSONObject
 
 internal class BackgroundEngine(private val context: Context) {
-    suspend fun prepare(model: BackgroundModel): File = preparation.withLock {
+    private suspend fun prepare(model: BackgroundModel): File {
         val manifest = context.assets.open("models/${model.file.substringBeforeLast('.')}.json").bufferedReader().use {
             JSONObject(it.readText())
         }
@@ -25,7 +26,7 @@ internal class BackgroundEngine(private val context: Context) {
             check(isDirectory || mkdirs()) { "Cannot create model directory" }
         }
         val target = File(directory, model.file)
-        if (target.length() == manifest.getLong("bytes")) return@withLock target
+        if (target.length() == manifest.getLong("bytes")) return target
         val temporary = File(directory, "model.part")
         try {
             val digest = MessageDigest.getInstance("SHA-256")
@@ -46,13 +47,14 @@ internal class BackgroundEngine(private val context: Context) {
                 "Model checksum mismatch"
             }
             check(temporary.renameTo(target)) { "Cannot install model" }
-            target
+            return target
         } finally {
             temporary.delete()
         }
     }
 
     suspend fun infer(model: BackgroundModel, input: FloatArray, progress: (Int) -> Unit): FloatArray = execution.withLock {
+        if (!model.supportsRuntime) throw UnsupportedMediaException(R.string.model_arm64_required)
         require(input.size == ImageMath.SIZE * ImageMath.SIZE * 3)
         val coroutine = currentCoroutineContext()
         coroutine.ensureActive()
@@ -138,7 +140,8 @@ internal class BackgroundEngine(private val context: Context) {
                 coroutine.ensureActive()
                 progress(R.string.running_model)
             })
-            check(temporary.length() > 0 && temporary.renameTo(program)) { "Cannot save compiled model" }
+            if (temporary.length() > 0 && !temporary.renameTo(program))
+                Log.w("BackgroundEngine", "Could not store the compiled OpenCL program")
             return mask
         } catch (_: UnsupportedOperationException) {
             throw UnsupportedMediaException(R.string.model_gpu_unavailable)
@@ -150,7 +153,6 @@ internal class BackgroundEngine(private val context: Context) {
     }
 
     private companion object {
-        val preparation = Mutex()
         // GPU memory and compilation files are shared across workspaces.
         val execution = Mutex()
     }

@@ -502,8 +502,13 @@ private fun BackgroundPanel(model: LabViewModel, photo: PhotoState, hasStoredMas
         }
     }
     Text(stringResource(R.string.background_description), style = MaterialTheme.typography.bodySmall)
-    if (editor.backgroundModel == BackgroundModel.RMBG20) Text(
-        stringResource(R.string.model_rmbg20_hint),
+    val modelHint = when {
+        !editor.backgroundModel.supportsRuntime -> R.string.model_arm64_required
+        editor.backgroundModel == BackgroundModel.RMBG20 -> R.string.model_rmbg20_hint
+        else -> null
+    }
+    if (modelHint != null) Text(
+        stringResource(modelHint),
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
@@ -579,9 +584,9 @@ private fun BackgroundPanel(model: LabViewModel, photo: PhotoState, hasStoredMas
             Text(stringResource(R.string.load_mask))
         }
         val infer: () -> Unit = { editor.dropper = false; model.removeBackground(editor.backgroundModel) }
-        if (draft == null) Button(infer) {
+        if (draft == null) Button(infer, enabled = editor.backgroundModel.supportsRuntime) {
             Text(stringResource(R.string.remove_background))
-        } else TextButton(infer) {
+        } else TextButton(infer, enabled = editor.backgroundModel.supportsRuntime) {
             Text(stringResource(R.string.reinfer))
         }
     }

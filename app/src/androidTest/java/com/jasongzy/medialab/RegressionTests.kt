@@ -46,7 +46,7 @@ class RegressionTests : Instrumentation() {
                     "artwork" to { media.artwork() },
                     "video" to { VideoRegression.run(app, this@RegressionTests) },
                     "audio" to { AudioRegression.run(app, this@RegressionTests) },
-                    "modelStorage" to { ModelStorageRegression.run(targetContext) },
+                    "modelStorage" to { ModelStorageRegression.run(this@RegressionTests) },
                 )
                 .filter { selectedTest == null || it.first == selectedTest }
         check(tests.isNotEmpty()) { "Unknown test: $selectedTest" }
