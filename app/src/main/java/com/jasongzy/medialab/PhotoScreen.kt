@@ -1422,7 +1422,7 @@ private fun ExportPanel(model: LabViewModel, state: LabState) {
             showPreview = false
             model.previewExport(options) { showPreview = true }
         },
-        share = { model.shareImage(options) { MediaFiles.share(context, it) } },
+        share = { model.shareImage(options) { MediaFiles.share(context, it, state.photo.name) } },
         save = { model.saveImage(options) },
     )
     if (showPreview && !state.busy && state.exportPreview != null && previewOptions == options)

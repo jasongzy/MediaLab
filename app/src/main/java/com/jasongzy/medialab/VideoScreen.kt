@@ -485,7 +485,7 @@ internal fun VideoScreen(model: LabViewModel, state: LabState, active: Boolean) 
                                         preview = model::previewVideo,
                                         share = {
                                             model.shareVideo {
-                                                MediaFiles.share(context, it)
+                                                MediaFiles.share(context, it, video.name)
                                             }
                                         },
                                         save = model::saveVideo,

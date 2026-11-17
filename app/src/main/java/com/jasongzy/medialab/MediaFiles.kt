@@ -57,13 +57,14 @@ internal object OpenMediaDocument : ActivityResultContracts.OpenDocument() {
 internal class UnsupportedMediaException(val messageRes: Int) : Exception()
 
 internal object MediaFiles {
-    fun share(context: Context, file: File) {
-        val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", file)
+    fun share(context: Context, file: File, sourceName: String) {
+        val name = outputName(sourceName, file.extension)
+        val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", file, name)
         val intent = Intent(Intent.ACTION_SEND)
             .setType(mime(file.extension))
             .putExtra(Intent.EXTRA_STREAM, uri)
             .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            .apply { clipData = ClipData.newRawUri(file.name, uri) }
+            .apply { clipData = ClipData.newRawUri(name, uri) }
         context.startActivity(Intent.createChooser(intent, null))
     }
 
@@ -402,10 +403,10 @@ internal object MediaFiles {
             values.clear()
             values.put(MediaStore.MediaColumns.IS_PENDING, 0)
             check(resolver.update(uri, values, null, null) == 1) { "Cannot publish output" }
-            return relativePath + sourceName(context, uri)
         } catch (error: Exception) {
             runCatching { resolver.delete(uri, null, null) }.onFailure(error::addSuppressed)
             throw error
         }
+        return displayName(context, uri)?.let { relativePath + it } ?: uri.toString()
     }
 }

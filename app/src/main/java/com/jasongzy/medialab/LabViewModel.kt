@@ -115,7 +115,6 @@ internal class LabViewModel(application: Application, savedState: SavedStateHand
     private var pendingPick: Pair<Int, Int>? = null
     private val settings = context.getSharedPreferences("settings", 0)
     private var exportOptions: ExportOptions? = null
-    private var exportedSource: PhotoFrame? = null
     private val playbackPositions = mutableMapOf<File, Long>()
     private var history: PhotoHistory? = null
     private var resizePreview: ResizePreview? = null
@@ -364,7 +363,7 @@ internal class LabViewModel(application: Application, savedState: SavedStateHand
             it.copy(photo = photo, tab = ImportType.IMAGE.ordinal, exportFile = null, exportPreview = null)
         }
         old?.close()
-        oldExport?.delete()
+        oldExport?.let(workspace::discard)
     }
 
     private suspend fun acceptFile(file: File, name: String, uri: Uri?, requested: ImportType?) {
@@ -427,7 +426,7 @@ internal class LabViewModel(application: Application, savedState: SavedStateHand
                     enterWorkspace {
                         it.copy(audio = document, batchPage = false, tab = type.ordinal)
                     }
-                    old.forEach { it.delete() }
+                    old.forEach(workspace::discard)
                 }
                 ImportType.VIDEO -> {
                     val document =
@@ -440,7 +439,7 @@ internal class LabViewModel(application: Application, savedState: SavedStateHand
                     }
                     val old = state.value.video
                     enterWorkspace { it.copy(video = document, tab = type.ordinal) }
-                    old?.files?.forEach { it.delete() }
+                    old?.files?.forEach(workspace::discard)
                 }
             }
         } catch (error: UnsupportedMediaException) {
@@ -537,7 +536,7 @@ internal class LabViewModel(application: Application, savedState: SavedStateHand
                 editor.showPreview = false
             }
             video.previews.retain(next, preview, editor.history.snapshot().steps)
-            oldExport?.delete()
+            oldExport?.let(workspace::discard)
         } finally {
             if (generated != video.appliedPreview) generated?.delete()
         }
@@ -601,7 +600,7 @@ internal class LabViewModel(application: Application, savedState: SavedStateHand
         val old = video.previewFile
         video.previewEdits = options
         video.previewFile = target
-        old?.delete()
+        old?.let(workspace::discard)
         return target
     }
 
@@ -627,7 +626,7 @@ internal class LabViewModel(application: Application, savedState: SavedStateHand
 
     fun shareVideo(ready: (File) -> Unit) = work(R.string.preparing_video) {
         val file = renderVideo() ?: return@work
-        shareOutput(file, checkNotNull(state.value.video).name, ready)
+        shareOutput(file, ImportType.VIDEO, ready) { checkNotNull(state.value.video).previewFile = it }
     }
 
     fun extractMotionVideo(save: Boolean) = work(R.string.preparing_video) {
@@ -707,7 +706,7 @@ internal class LabViewModel(application: Application, savedState: SavedStateHand
                 notice = notice?.let { message -> Notice(message) },
             )
         }
-        oldExport?.delete()
+        oldExport?.let(workspace::discard)
     }
 
     private fun photoDraft(tool: PhotoTool): PhotoDraft? =
@@ -1104,12 +1103,7 @@ internal class LabViewModel(application: Application, savedState: SavedStateHand
         val photo = state.value.photo
         if (photo.pending.isNotEmpty() && !confirm(Confirmation.EXPORT)) return null
         val frame = checkNotNull(photo.frame)
-        if (
-            exportOptions == options &&
-                exportedSource === frame &&
-                state.value.exportFile?.isFile == true
-        )
-            return state.value.exportFile!!
+        if (exportOptions == options) state.value.exportFile?.takeIf { it.isFile }?.let { return it }
         discardResize()
         val file =
             if (frame.source != null) Photos.export(workspace.work, frame.source, frame.info, options)
@@ -1124,24 +1118,20 @@ internal class LabViewModel(application: Application, savedState: SavedStateHand
                 )
                 Photos.export(workspace.work, bitmap, frame.info, options)
             }
-        val preview =
-            try {
-                Photos.preview(file).also { currentCoroutineContext().ensureActive() }
-            } catch (error: Throwable) {
-                file.delete()
-                throw error
-            }
         val old = state.value.exportFile
-        mutable.update { it.copy(exportFile = file, exportPreview = preview) }
-        old?.delete()
+        mutable.update { it.copy(exportFile = file, exportPreview = null) }
+        old?.let(workspace::discard)
         exportOptions = options
-        exportedSource = frame
         return file
     }
 
     fun previewExport(options: ExportOptions, ready: () -> Unit) =
         work(R.string.preparing_image) {
-            prepare(options) ?: return@work
+            val file = prepare(options) ?: return@work
+            if (state.value.exportPreview == null) {
+                val preview = Photos.preview(file)
+                mutable.update { it.copy(exportPreview = preview) }
+            }
             withContext(Dispatchers.Main) { ready() }
         }
 
@@ -1160,21 +1150,13 @@ internal class LabViewModel(application: Application, savedState: SavedStateHand
     fun shareImage(options: ExportOptions, ready: (File) -> Unit) =
         work(R.string.preparing_image) {
             val file = prepare(options) ?: return@work
-            shareOutput(file, state.value.photo.name, ready)
+            shareOutput(file, ImportType.IMAGE, ready) { shared -> mutable.update { it.copy(exportFile = shared) } }
         }
 
-    private suspend fun shareOutput(file: File, name: String, ready: (File) -> Unit) {
-        val directory = workspace.exports.apply { mkdirs() }
-        val target = File(directory, MediaFiles.outputName(name, file.extension))
-        try {
-            file.inputStream().use { input ->
-                target.outputStream().use { MediaFiles.copy(input, it) }
-            }
-            withContext(Dispatchers.Main) { ready(target) }
-        } catch (error: Exception) {
-            target.delete()
-            throw error
-        }
+    private suspend fun shareOutput(file: File, type: ImportType, ready: (File) -> Unit, updateExport: (File) -> Unit) {
+        val target = workspace.share(file, type)
+        if (target != file) updateExport(target)
+        withContext(Dispatchers.Main) { ready(target) }
     }
 
     private fun commitAudio(document: AudioDocument, frame: AudioFrame, action: Int) {
@@ -1271,7 +1253,7 @@ internal class LabViewModel(application: Application, savedState: SavedStateHand
         val old = editor.preview
         val preview = AudioExportPreview(file, frame, options)
         editor.preview = preview
-        old?.files?.forEach { it.delete() }
+        old?.files?.forEach(workspace::discard)
         return preview
     }
 
@@ -1280,14 +1262,18 @@ internal class LabViewModel(application: Application, savedState: SavedStateHand
         val audio = checkNotNull(state.value.audio)
         if (preview.playable == preview.file || !preview.playable.isFile)
             audio.editor.preview = preview.copy(playable = AudioFiles.preparePlayback(
-                preview.file, preview.options.encoding(audio.encoding),
+                preview.file, preview.options.encoding(audio.encoding), workspace.work,
             ))
         audio.editor.showPreview = true
     }
 
     fun shareAudio(ready: (File) -> Unit) = work(R.string.processing_audio) {
         val preview = prepareAudio() ?: return@work
-        shareOutput(preview.file, checkNotNull(state.value.audio).name, ready)
+        shareOutput(preview.file, ImportType.AUDIO, ready) { shared ->
+            checkNotNull(state.value.audio).editor.preview = preview.copy(
+                file = shared, playable = if (preview.playable == preview.file) shared else preview.playable,
+            )
+        }
     }
 
     fun saveAudio() = work(R.string.processing_audio) {

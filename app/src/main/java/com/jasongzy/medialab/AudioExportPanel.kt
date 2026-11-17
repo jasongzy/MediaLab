@@ -80,7 +80,7 @@ internal fun AudioExportPanel(audio: AudioDocument, model: LabViewModel) {
             }) Text(stringResource(R.string.audio_m4a_artwork_hint), style = MaterialTheme.typography.bodySmall)
         ExportActions(
             preview = model::previewAudio,
-            share = { model.shareAudio { MediaFiles.share(context, it) } },
+            share = { model.shareAudio { MediaFiles.share(context, it, audio.name) } },
             save = model::saveAudio, enabled = valid && problem == null,
         ) {
             TextButton({

@@ -135,9 +135,9 @@ internal object AudioFiles {
         }
     }
 
-    suspend fun preparePlayback(file: File, encoding: AudioEncoding?): File {
+    suspend fun preparePlayback(file: File, encoding: AudioEncoding?, directory: File = checkNotNull(file.parentFile)): File {
         if (encoding?.container != "aac") return file
-        val target = MediaFiles.temporary(checkNotNull(file.parentFile), "m4a")
+        val target = MediaFiles.temporary(directory, "m4a")
         try {
             // MP4 indexes every AAC packet, giving the player exact duration and seek positions.
             MediaProcessing.execute(listOf("-protocol_whitelist", "file,pipe", "-i", file.path,

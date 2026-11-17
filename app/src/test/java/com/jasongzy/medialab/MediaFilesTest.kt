@@ -115,7 +115,14 @@ class MediaFilesTest {
             val frames = history.map { PhotoFrame(it, info) }
             val audio = file(first.work, "tagged.mp3")
             val export = file(first.work, "export.webp")
-            val shared = file(first.exports, "shared.png")
+            val shared = first.share(export, ImportType.IMAGE)
+            val newExport = file(first.work, "next.webp").apply { writeText("new version") }
+            val nextShare = first.share(newExport, ImportType.IMAGE)
+            first.discard(shared)
+            assertFalse(newExport.exists())
+            assertEquals(shared, first.share(shared, ImportType.IMAGE))
+            assertEquals("media", shared.readText())
+            assertEquals("new version", nextShare.readText())
             val videoFile = file(first.work, "video.mp4")
             val videoInfo = VideoInfo(32, 32, 1000, 30.0, 1000, "h264", emptyList(), "mp4", false, "", 0, emptyList())
             val video = VideoDocument(videoFile, videoFile.name, null, videoInfo, videoFile)
@@ -126,19 +133,18 @@ class MediaFilesTest {
             video.previews.retain(previous, VideoPreviewCache.Preview(historicalPreview, videoInfo), listOf(previous))
             video.previews.retain(current, VideoPreviewCache.Preview(activePreview, videoInfo), listOf(previous, current))
             video.appliedPreview = activePreview
-            val exportPreview = file(first.work, "export.mp4")
+            val exportPreview = first.share(file(first.work, "export.mp4"), ImportType.VIDEO)
             video.previewFile = exportPreview
             video.editor.showPreview = true
             val state =
                 LabState(
                     photo = PhotoState(history = frames, position = 1),
                     audio = AudioDocument(audio, audio.name, null, AudioMetadata(emptyMap(), emptyList()), emptyList()),
-                    exportFile = export,
+                    exportFile = shared,
                     video = video,
                 )
             firstFiles = state.workingFiles
             val stale = listOf(
-                export,
                 file(first.work, "unused.png"),
                 file(cache, "exports/stale.png"),
                 file(cache, "ncm/decoded.flac"),
@@ -174,7 +180,7 @@ class MediaFilesTest {
                 clearing.await()
                 for (kept in firstFiles + secondFiles + listOf(saved, model, settings))
                     assertEquals(kept.path, "media", kept.readText())
-                assertTrue((stale + otherStale + shared).none { it.exists() })
+                assertTrue((stale + otherStale + shared + nextShare).none { it.exists() })
                 assertFalse(historicalPreview.exists())
                 assertNull(video.previews[previous])
                 assertEquals(activePreview, video.previews[current]?.file)

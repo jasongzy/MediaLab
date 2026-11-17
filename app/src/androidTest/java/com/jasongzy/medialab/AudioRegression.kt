@@ -255,11 +255,14 @@ internal object AudioRegression {
             }
             instrumentation.runOnMainSync {
                 audio.editor.exportOptions = AudioExportOptions(AudioFormat.AAC)
-                model.previewAudio()
+                model.shareAudio {}
             }
             idle()
+            val shared = checkNotNull(audio.editor.preview).file
+            instrumentation.runOnMainSync { model.previewAudio() }
+            idle()
             val preview = checkNotNull(audio.editor.preview)
-            check(preview.playable != preview.file && preview.playable.extension == "m4a")
+            check(preview.file == shared && preview.playable.parentFile == audio.file.parentFile && preview.playable.extension == "m4a")
             instrumentation.runOnMainSync { audio.editor.showPreview = false; model.previewAudio() }
             idle()
             check(audio.editor.preview == preview)

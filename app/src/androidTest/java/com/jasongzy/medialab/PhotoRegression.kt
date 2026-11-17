@@ -1130,9 +1130,13 @@ internal class PhotoRegression(
             idle(model)
             check(model.state.value.photo.history.size == 3 && resized.pixels == null)
             check(!expectedPreview.isRecycled)
-            instrumentation.runOnMainSync { model.previewExport(ExportOptions()) {} }
+            instrumentation.runOnMainSync { model.shareImage(ExportOptions()) {} }
             idle(model)
             val export = checkNotNull(model.state.value.exportFile)
+            check(model.state.value.exportPreview == null)
+            instrumentation.runOnMainSync { model.previewExport(ExportOptions()) {} }
+            idle(model)
+            check(model.state.value.exportFile == export && model.state.value.exportPreview != null)
             val decoded = Photos.decode(export, Photos.info(export))
             try {
                 check(decoded.width == 16 && decoded.height == 16 && decoded.hasAlpha())

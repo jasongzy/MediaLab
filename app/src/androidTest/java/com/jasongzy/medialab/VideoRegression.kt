@@ -843,9 +843,13 @@ internal object VideoRegression {
             }
             reject(Confirmation.EXPORT)
             check(video.previewFile == preview && video.editor.pending == listOf(VideoTool.RESIZE))
-            onMain { video.editor.resetDrafts(); model.previewVideo() }
+            onMain { video.editor.resetDrafts(); model.shareVideo {} }
             idle()
-            check(video.previewFile == preview)
+            val shared = checkNotNull(video.previewFile)
+            check(shared.isFile && !preview.exists())
+            onMain { model.previewVideo() }
+            idle()
+            check(video.previewFile == shared)
             onMain {
                 video.editor.showPreview = false
                 model.extractVideo(false, false)
@@ -927,7 +931,7 @@ internal object VideoRegression {
             onMain { model.answerConfirmation(true) }
             idle()
             check(model.state.value.photo === motionPhoto)
-            check(replacedFiles.none { it.exists() })
+            check(replacedFiles.filter { it.exists() } == listOf(shared))
             check(
                 checkNotNull(model.state.value.video)
                     .file
