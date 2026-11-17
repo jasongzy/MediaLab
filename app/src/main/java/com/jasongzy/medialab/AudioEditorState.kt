@@ -11,12 +11,12 @@ internal data class AudioMetadata(val tags: Map<String, List<String>>, val pictu
 
 internal data class AudioMedia(
     val file: File,
-    val properties: AudioProperties?,
+    val properties: AudioProperties,
     val technical: List<Pair<String, String>>,
 ) {
-    val durationMs get() = properties?.length?.toLong() ?: 0L
-    val channels get() = properties?.channels ?: 0
-    val canEdit get() = durationMs in 1..Int.MAX_VALUE.toLong() && channels in 1..8
+    val durationMs get() = properties.length.toLong()
+    val channels get() = properties.channels
+    val canEdit get() = durationMs > 0 && channels in 1..8
 }
 
 internal data class AudioFrame(val media: AudioMedia, val metadata: AudioMetadata)

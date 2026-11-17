@@ -17,7 +17,7 @@
     <string name="audio_compression">Compression level: %1$d</string>
     <string name="audio_flac_hint">Higher levels take longer to encode and can produce smaller files. Audio quality stays lossless</string>
     <string name="audio_bit_depth">Bit depth</string>
-    <string name="audio_m4a_artwork_hint">M4A can preserve artwork images, but their types and descriptions will be lost</string>
+    <string name="audio_mp4_artwork_hint">%1$s can preserve artwork images, but their types and descriptions will be lost</string>
     <string name="audio_copy_hint">Keeps the original audio encoding and writes the applied tags and artwork</string>
     <string name="audio_original_unavailable">Cannot export these edits in the original format. Choose another format</string>
     <string name="audio_mp3_channels">MP3 supports up to two channels. Merge or delete channels, or choose another format</string>

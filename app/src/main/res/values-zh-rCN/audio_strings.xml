@@ -17,7 +17,7 @@
     <string name="audio_compression">压缩等级：%1$d</string>
     <string name="audio_flac_hint">压缩等级越高，编码越耗时，文件可能更小。音质始终无损</string>
     <string name="audio_bit_depth">位深</string>
-    <string name="audio_m4a_artwork_hint">M4A 能保留封面图像，但会丢失封面类型和说明</string>
+    <string name="audio_mp4_artwork_hint">%1$s 能保留封面图像，但会丢失封面类型和说明</string>
     <string name="audio_copy_hint">保留原音频编码，写入已应用的标签和封面</string>
     <string name="audio_original_unavailable">编辑后无法编码为原格式，请选择其他导出格式</string>
     <string name="audio_mp3_channels">MP3 最多支持两个声道，请合并或删除声道，或选择其他格式</string>

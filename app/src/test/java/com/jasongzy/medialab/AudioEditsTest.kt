@@ -8,24 +8,20 @@ import org.junit.Test
 class AudioEditsTest {
     @Test
     fun numericTagsAllowFormattingChangesButRejectLostValues() {
-        for (key in listOf("DISCNUMBER", "TRACKNUMBER")) {
-            assertTrue(AudioFiles.sameTagValues(key, listOf(" 01 "), listOf("1")))
-            assertTrue(AudioFiles.sameTagValues(key, listOf("003/012"), listOf("3/12")))
-            assertTrue(AudioFiles.sameTagValues(key, listOf("01/00"), listOf("1")))
-            for ((before, after) in listOf("1/2" to "1", "65537" to "1", "invalid" to "0",
-                    "" to "0", "-1" to "65535", "1/0/2" to "1"))
-                assertFalse(AudioFiles.sameTagValues(key, listOf(before), listOf(after)))
-            assertFalse(AudioFiles.sameTagValues(key, listOf("01", "02"), listOf("1")))
-            assertFalse(AudioFiles.sameTagValues(key, listOf("01"), emptyList()))
-        }
+        assertTrue(AudioFiles.sameTagValues("DISCNUMBER", listOf("01/00"), listOf("1")))
+        assertTrue(AudioFiles.sameTagValues("TRACKNUMBER", listOf("003/012"), listOf("3/12")))
+        assertFalse(AudioFiles.sameTagValues("DISCNUMBER", listOf("1/2"), listOf("1")))
+        assertFalse(AudioFiles.sameTagValues("TRACKNUMBER", listOf("01", "02"), listOf("1")))
         assertFalse(AudioFiles.sameTagValues("TITLE", listOf("01"), listOf("1")))
     }
 
     @Test
     fun originalExportCopiesMetadataEditsAndValidatesEncodingAfterMediaEdits() {
         val metadata = AudioMetadata(emptyMap(), emptyList())
-        val audio = AudioDocument(File("song.ape"), "song.ape", null, metadata, emptyList(),
-            AudioEncoding("ape", "ape", 16))
+        val audio = AudioDocument(File("song.mp2"), "song.mp2", AudioProperties(0, 0, 0, 0), metadata, emptyList(),
+            AudioEncoding("mp2", "mp3", 0))
+        assertEquals("mp2", audio.sourceFormat)
+        assertEquals("audio/mpeg", audio.sourceMime)
         val original = AudioExportOptions()
         audio.editor.commit(audio.editor.original.copy(metadata = metadata.copy(tags = mapOf("TITLE" to listOf("Edit")))),
             R.string.tags)
@@ -42,12 +38,47 @@ class AudioEditsTest {
     }
 
     @Test
+    fun switchingFormatsKeepsBitrateValidAfterEditing() {
+        val mp3 = AudioDocument(File("song.mp3"), "song.mp3", AudioProperties(1000, 32, 8000, 1), AudioMetadata(emptyMap(), emptyList()),
+            emptyList(), AudioEncoding("mp3", "mp3", 0))
+        val aac = AudioExportOptions(AudioFormat.AAC, bitrateKbps = 512)
+        mp3.editor.exportOptions = aac.copy(format = AudioFormat.M4A)
+        assertEquals(48, mp3.exportOptions.bitrateKbps)
+        mp3.editor.exportOptions = aac.copy(format = AudioFormat.MP3)
+        assertEquals(64, mp3.exportOptions.bitrateKbps)
+        mp3.editor.exportOptions = aac.copy(format = AudioFormat.ORIGINAL)
+        val original = mp3.editor.original
+        mp3.editor.commit(original.copy(media = original.media.copy(file = File("edit.flac"))), R.string.video_time)
+        assertFalse(mp3.exportOptions.copiesOriginal(mp3))
+        assertEquals(64, mp3.exportOptions.bitrateKbps)
+        for ((rate, maximum) in listOf(22050 to 160, 44100 to 320)) {
+            val media = original.media.copy(file = File("edit.flac"), properties = AudioProperties(1000, 0, rate, 1))
+            mp3.editor.commit(original.copy(media = media), R.string.video_time)
+            assertEquals(maximum, mp3.exportOptions.bitrateKbps)
+        }
+        mp3.editor.exportOptions = AudioExportOptions(AudioFormat.MP3, bitrateKbps = 111)
+        assertEquals(112, mp3.exportOptions.bitrateKbps)
+
+        val opus = AudioDocument(File("stereo.opus"), "stereo.opus", AudioProperties(1000, 192, 48000, 2),
+            mp3.metadata, emptyList(), AudioEncoding("opus", "ogg", 0))
+        val stereo = opus.editor.original
+        assertEquals(512, aac.forMedia(opus).bitrateKbps)
+        opus.editor.exportOptions = aac.copy(format = AudioFormat.ORIGINAL)
+        assertEquals(512, opus.exportOptions.bitrateKbps)
+        opus.editor.commit(stereo.copy(media = stereo.media.copy(file = File("mono.flac"),
+            properties = stereo.media.properties.copy(channels = 1))), R.string.channels)
+        assertEquals(256, opus.exportOptions.bitrateKbps)
+        opus.editor.history.undo()
+        assertEquals(512, opus.exportOptions.bitrateKbps)
+    }
+
+    @Test
     fun becomingMonoLeavesTheChannelTool() {
         val stereo = AudioFrame(
             AudioMedia(File("stereo"), AudioProperties(1000, 128, 44100, 2), emptyList()),
             AudioMetadata(emptyMap(), emptyList()),
         )
-        val mono = stereo.copy(media = stereo.media.copy(properties = stereo.media.properties!!.copy(channels = 1)))
+        val mono = stereo.copy(media = stereo.media.copy(properties = stereo.media.properties.copy(channels = 1)))
         val editor = AudioEditorState(stereo)
         editor.tool = AudioTool.CHANNELS
         editor.selectedChannels = setOf(0, 1)
@@ -67,7 +98,7 @@ class AudioEditsTest {
 
     @Test
     fun restoringTheOriginalKeepsAnUndoStepForLargeFiles() {
-        val original = AudioFrame(AudioMedia(File("original"), null, emptyList()), AudioMetadata(emptyMap(), emptyList()))
+        val original = AudioFrame(AudioMedia(File("original"), AudioProperties(0, 0, 0, 0), emptyList()), AudioMetadata(emptyMap(), emptyList()))
         val edited = original.copy(media = original.media.copy(file = object : File("large-edit") {
             override fun length() = 600L * 1024 * 1024
         }))

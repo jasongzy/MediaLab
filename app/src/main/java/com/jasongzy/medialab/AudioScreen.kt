@@ -118,7 +118,7 @@ internal fun AudioScreen(model: LabViewModel, state: LabState, active: Boolean) 
                     audio.sourceMime,
                     audio.sourceBytes,
                     R.string.original_duration to (
-                        audio.sourceDuration?.takeIf { it > 0 }?.let(::playbackTime)
+                        audio.properties.length.toLong().takeIf { it > 0 }?.let(::playbackTime)
                             ?: stringResource(R.string.unknown)
                     ),
                 )
@@ -329,28 +329,14 @@ internal fun AudioScreen(model: LabViewModel, state: LabState, active: Boolean) 
                                     "${format.uppercase()} · ${Formatter.formatFileSize(context, media.file.length())}",
                                     style = MaterialTheme.typography.bodyMedium,
                                 )
-                                media.properties?.let { properties ->
-                                    DetailRow(
-                                        stringResource(R.string.duration),
-                                        properties.length.takeIf { it > 0 }?.let { playbackTime(it.toLong()) }
-                                            ?: stringResource(R.string.unknown),
-                                    )
-                                    DetailRow(
-                                        stringResource(R.string.bitrate),
-                                        properties.bitrate.takeIf { it > 0 }?.let { "$it kb/s" }
-                                            ?: stringResource(R.string.unknown),
-                                    )
-                                    DetailRow(
-                                        stringResource(R.string.sample_rate),
-                                        properties.sampleRate.takeIf { it > 0 }?.let { "$it Hz" }
-                                            ?: stringResource(R.string.unknown),
-                                    )
-                                    DetailRow(
-                                        stringResource(R.string.channels),
-                                        properties.channels.takeIf { it > 0 }?.toString()
-                                            ?: stringResource(R.string.unknown),
-                                    )
-                                }
+                                val unknown = stringResource(R.string.unknown)
+                                DetailRow(stringResource(R.string.duration),
+                                    media.durationMs.takeIf { it > 0 }?.let(::playbackTime) ?: unknown)
+                                DetailRow(stringResource(R.string.bitrate),
+                                    media.properties.bitrate.takeIf { it > 0 }?.let { "$it kb/s" } ?: unknown)
+                                DetailRow(stringResource(R.string.sample_rate),
+                                    media.properties.sampleRate.takeIf { it > 0 }?.let { "$it Hz" } ?: unknown)
+                                DetailRow(stringResource(R.string.channels), media.channels.takeIf { it > 0 }?.toString() ?: unknown)
                                 media.technical.forEach { (key, value) -> DetailRow(key, value) }
                             }
                         }

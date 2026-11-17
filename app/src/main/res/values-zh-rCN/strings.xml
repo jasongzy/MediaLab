@@ -3,6 +3,8 @@
     <string name="loading_raw">正在显影 RAW 图像…</string>
     <string name="raw_unsupported">无法读取此 RAW 文件，请选择支持且完整的 RAW 图像</string>
     <string name="artwork_not_saved">无法完整保存封面信息，请调整封面说明或类型后重试</string>
+    <string name="artwork_size_limit">封面图像超过 %1$s MiB 大小限制</string>
+    <string name="audio_tag_not_saved">无法保存对 %1$s 标签的修改，请调整标签或选择其他格式</string>
     <string name="app_name">Media Lab</string>
     <string name="image_tab">图像</string>
     <string name="audio_tab">音频</string>

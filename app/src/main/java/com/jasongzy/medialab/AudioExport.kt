@@ -1,9 +1,7 @@
 package com.jasongzy.medialab
 
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
-import java.io.ByteArrayOutputStream
 import java.io.File
+import kotlin.math.abs
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 
@@ -11,12 +9,22 @@ internal enum class AudioFormat(val label: String) {
     ORIGINAL(""), MP3("MP3"), AAC("AAC"), M4A("M4A"), FLAC("FLAC"), WAV("WAV"),
 }
 
+private val mp3SampleRates = listOf(48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000)
+private val aacSampleRates = listOf(96000, 88200, 64000) + mp3SampleRates + 7350
+
+private val mpeg25Bitrates = listOf(8, 16, 24, 32, 40, 48, 56, 64)
+private val mpeg2Bitrates = mpeg25Bitrates + listOf(80, 96, 112, 128, 144, 160)
+private val mpeg1Bitrates = listOf(32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320)
+internal val mp4AudioExtensions = setOf("m4a", "mov", "3ga", "3g2")
+
 internal data class AudioEncoding(val codec: String, val container: String, val bits: Int) {
     val extension get() = when (container) {
-        "mov" -> "m4a"
+        "mp4" -> "m4a"
+        "3gp" -> "3ga"
+        "mp3" -> if (codec == "mp1" || codec == "mp2") codec else container
         "ogg" -> if (codec == "opus") "opus" else "ogg"
         "asf" -> "wma"
-        "mp3", "aac", "flac", "wav", "aiff", "wv", "ape" -> container
+        "aac", "m4a", "mov", "3g2", "flac", "wav", "aiff", "wv", "ape" -> container
         else -> null
     }
     val encoder get() = when (codec) {
@@ -24,11 +32,42 @@ internal data class AudioEncoding(val codec: String, val container: String, val 
         "vorbis" -> "libvorbis"
         "opus" -> "libopus"
         "aac", "flac", "alac", "wavpack", "wmav1", "wmav2",
-        "pcm_u8", "pcm_s16le", "pcm_s24le", "pcm_s32le", "pcm_f32le", "pcm_f64le",
-        "pcm_s16be", "pcm_s24be", "pcm_s32be" -> codec
+        "pcm_alaw", "pcm_mulaw", "pcm_u8", "pcm_s8",
+        "pcm_s16le", "pcm_s24le", "pcm_s32le", "pcm_f32le", "pcm_f64le",
+        "pcm_s16be", "pcm_s24be", "pcm_s32be", "pcm_f32be", "pcm_f64be" -> codec
         else -> null
     }
-    val lossy get() = codec in setOf("mp3", "aac", "vorbis", "opus", "wmav1", "wmav2")
+    fun sampleRate(media: AudioMedia): Int? {
+        val rates = when (codec) {
+            "aac" -> aacSampleRates
+            "mp3" -> mp3SampleRates
+            else -> return null
+        }
+        val source = media.properties.sampleRate.takeIf { it > 0 } ?: return if (codec == "mp3") 44100 else null
+        return rates.minBy { abs(it - source) }
+    }
+
+    fun bitrateSteps(media: AudioMedia): List<Int>? = if (codec != "mp3") null else when (sampleRate(media)) {
+        in 8000..12000 -> mpeg25Bitrates
+        in 16000..24000 -> mpeg2Bitrates
+        else -> mpeg1Bitrates
+    }
+
+    fun bitrateRange(media: AudioMedia): IntRange? = when (codec) {
+        "opus" -> 32..(if (media.channels == 1) 256 else 512)
+        "aac" -> {
+            // AAC-LC allows 6144 bits per channel in a frame of 1024 samples.
+            val rate = sampleRate(media)
+            val maximum = if (rate == null || media.channels <= 0) 512
+                else minOf(512L, 6L * rate * media.channels / 1000).toInt()
+            32..maximum
+        }
+        "wmav1", "wmav2" -> 32..512
+        else -> null
+    }
+
+    fun bitrate(media: AudioMedia, requested: Int): Int? =
+        bitrateSteps(media)?.minBy { abs(it - requested) } ?: bitrateRange(media)?.let { requested.coerceIn(it) }
 }
 
 internal data class AudioExportOptions(
@@ -36,12 +75,13 @@ internal data class AudioExportOptions(
     val bitrateKbps: Int = 192,
     val compression: Int = 5,
     val bits: Int = 24,
+    val vorbisQuality: Int = 5,
 ) {
     fun encoding(original: AudioEncoding?): AudioEncoding? = when (format) {
         AudioFormat.ORIGINAL -> original
         AudioFormat.MP3 -> AudioEncoding("mp3", "mp3", 0)
         AudioFormat.AAC -> AudioEncoding("aac", "aac", 0)
-        AudioFormat.M4A -> AudioEncoding("aac", "mov", 0)
+        AudioFormat.M4A -> AudioEncoding("aac", "m4a", 0)
         AudioFormat.FLAC -> AudioEncoding("flac", "flac", 0)
         AudioFormat.WAV -> AudioEncoding("pcm_s${bits}le", "wav", bits)
     }
@@ -58,7 +98,15 @@ internal data class AudioExportOptions(
             else -> null
         }
     }
+
+    fun forMedia(document: AudioDocument): AudioExportOptions {
+        val bitrate = encoding(document.encoding)?.bitrate(document.current, bitrateKbps) ?: return this
+        return if (bitrate == bitrateKbps) this else copy(bitrateKbps = bitrate)
+    }
 }
+
+internal val AudioDocument.exportOptions: AudioExportOptions
+    get() = editor.exportOptions.forMedia(this)
 
 internal data class AudioExportPreview(
     val file: File, val frame: AudioFrame, val options: AudioExportOptions, val playable: File = file,
@@ -75,15 +123,17 @@ internal suspend fun exportAudio(
     options.problem(document)?.let { throw UnsupportedMediaException(it) }
     val frame = document.editor.history.value
     if (options.copiesOriginal(document))
-        return AudioFiles.save(directory, document, frame.metadata.tags, frame.metadata.pictures)
-    val encoding = options.encoding(document.encoding)
-    val target = MediaFiles.temporary(directory, encoding?.extension ?: document.file.extension)
+        return AudioFiles.saveOriginal(directory, document, frame.metadata.tags, frame.metadata.pictures)
+    val encoding = checkNotNull(options.encoding(document.encoding))
+    val target = MediaFiles.temporary(directory, checkNotNull(encoding.extension))
     try {
-        checkNotNull(encoding)
+        val sampleRate = encoding.sampleRate(frame.media)?.let { listOf("-ar", it.toString()) }.orEmpty()
+        val bitrate = encoding.bitrate(frame.media, options.bitrateKbps)
         val quality = when {
-            encoding.lossy -> {
-                require(options.bitrateKbps in 32..(if (encoding.codec == "mp3") 320 else 512))
-                listOf("-b:a", "${options.bitrateKbps}k")
+            bitrate != null -> listOf("-b:a", "${bitrate}k")
+            encoding.codec == "vorbis" -> {
+                require(options.vorbisQuality in 0..10)
+                listOf("-q:a", options.vorbisQuality.toString())
             }
             encoding.codec == "flac" -> {
                 require(options.compression in 0..12)
@@ -92,30 +142,16 @@ internal suspend fun exportAudio(
             else -> emptyList()
         }
         if (options.format == AudioFormat.WAV) require(options.bits in listOf(16, 24, 32))
+        val muxer = if (encoding.container == "3gp" || encoding.container == "mp4")
+            listOf("-f", encoding.container) else emptyList()
         MediaProcessing.execute(
             listOf("-protocol_whitelist", "file,pipe", "-threads", "2", "-i", frame.media.file.path,
                 "-map", "0:a:0", "-vn", "-map_metadata", "-1", "-c:a", checkNotNull(encoding.encoder)) +
-                quality + listOf("-threads", "2", target.path),
+                sampleRate + quality + muxer + listOf("-threads", "2", target.path),
         ) { time ->
             progress(frame.media.durationMs.takeIf { it > 0 }?.let { (time.toFloat() / it).coerceIn(0f, 1f) })
         }
-        val pictures = if (encoding.container == "mov") frame.metadata.pictures.map { picture ->
-            val mime = AudioFiles.pictureMime(picture.data)
-            if (mime in setOf("image/jpeg", "image/png", "image/gif", "image/bmp"))
-                picture.copy(description = "", pictureType = "", mimeType = mime)
-            else {
-                val bitmap = checkNotNull(BitmapFactory.decodeByteArray(picture.data, 0, picture.data.size))
-                val data = try {
-                    ByteArrayOutputStream().use {
-                        check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, it))
-                        it.toByteArray()
-                    }
-                } finally { bitmap.recycle() }
-                picture.copy(data = data, description = "", pictureType = "", mimeType = "image/png")
-            }
-        }
-        else frame.metadata.pictures
-        AudioFiles.writeTags(target, frame.metadata.tags, pictures)
+        AudioFiles.writeTags(target, frame.metadata.tags, frame.metadata.pictures)
         currentCoroutineContext().ensureActive()
         return target
     } catch (error: Throwable) {

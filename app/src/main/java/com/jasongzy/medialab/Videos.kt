@@ -185,15 +185,8 @@ internal object Videos {
         if (width <= 0 || height <= 0 || duration <= 0)
             throw UnsupportedMediaException(R.string.select_video_only)
         val transfer = properties.optString("color_transfer")
-        val format = when (val container = info.format.orEmpty().substringBefore(',')) {
-            "mov" -> {
-                val brand = info.tags?.optString("major_brand").orEmpty().trim()
-                when {
-                    brand == "qt" -> "mov"
-                    brand.startsWith("3g") -> brand.take(3)
-                    else -> "mp4"
-                }
-            }
+        val format = when (val container = info.container()) {
+            "m4a" -> "mp4"
             "matroska" -> {
                 // FFprobe shares a demuxer for Matroska and WebM; the EBML header identifies WebM.
                 val header = ByteArray(256)

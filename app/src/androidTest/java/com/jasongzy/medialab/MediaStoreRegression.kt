@@ -255,7 +255,6 @@ internal class MediaStoreRegression(private val app: Context, private val fixtur
         val document = AudioFiles.read(source, source.name)
         val copy = exportAudio(app.cacheDir, document, AudioExportOptions())
         try { check(copy.readBytes().contentEquals(original)) } finally { copy.delete() }
-        check(document.properties != null)
         check(document.technical.any { it.first == "mime" })
         check(document.technical.none { it.first in listOf("durationUs", "bitrate", "sample-rate", "channel-count") })
         val propertyName = if (source.extension == "flac") "CUSTOM".repeat(50) else "说明🧪"
@@ -274,7 +273,7 @@ internal class MediaStoreRegression(private val app: Context, private val fixtur
                 }
             check(AudioFiles.pictureMime(data) == mime)
             val picture = Picture(data, "中文封面 café e\u0301 🧪 𠮷", "Back Cover", mime)
-            val edited = AudioFiles.save(app.cacheDir, document, tags, listOf(picture))
+            val edited = AudioFiles.saveOriginal(app.cacheDir, document, tags, listOf(picture))
             try {
                 val read = AudioFiles.read(edited, source.name)
                 val cover = read.pictures.single()
@@ -288,7 +287,7 @@ internal class MediaStoreRegression(private val app: Context, private val fixtur
                 verifyDescriptions(edited, tags, propertyName)
                 if (format == Bitmap.CompressFormat.PNG) {
                     val failure = runCatching {
-                        AudioFiles.save(
+                        AudioFiles.saveOriginal(
                             app.cacheDir,
                             document,
                             tags,
@@ -323,7 +322,7 @@ internal class MediaStoreRegression(private val app: Context, private val fixtur
         val imported = AudioFiles.read(existing, existing.name)
         for (description in listOf(imported.pictures.single().description, "", "新的中文说明 🎵 𠮷")) {
             val edited =
-                AudioFiles.save(
+                AudioFiles.saveOriginal(
                     app.cacheDir,
                     imported,
                     tags + ("TITLE" to listOf("更新标题 🎵")),

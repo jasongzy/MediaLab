@@ -158,7 +158,7 @@ internal class LabViewModel(application: Application, savedState: SavedStateHand
                 pickJob?.cancelAndJoin()
                 withContext(Dispatchers.IO) { action() }
             } catch (_: CancellationException) {} catch (error: UnsupportedMediaException) {
-                mutable.update { it.copy(notice = Notice(error.messageRes)) }
+                mutable.update { it.copy(notice = Notice(error.messageRes, error.argument)) }
             } catch (error: Exception) {
                 mutable.update { it.copy(error = error.stackTraceToString()) }
             } catch (error: OutOfMemoryError) {
@@ -1245,7 +1245,7 @@ internal class LabViewModel(application: Application, savedState: SavedStateHand
         val editor = audio.editor
         if (editor.pending.isNotEmpty() && !confirm(Confirmation.EXPORT)) return null
         val frame = editor.history.value
-        val options = editor.exportOptions
+        val options = audio.exportOptions
         editor.preview?.takeIf { it.frame == frame && it.options == options && it.file.isFile }?.let { return it }
         val file = exportAudio(workspace.work, audio, options) { progress ->
             mutable.update { it.copy(progress = progress) }
@@ -1297,7 +1297,9 @@ internal class LabViewModel(application: Application, savedState: SavedStateHand
                             check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, it))
                             it.toByteArray()
                         }
-                    require(bytes.size <= 32 * 1024 * 1024) { "Cover exceeds 32 MB" }
+                    val limitMiB = 32
+                    if (bytes.size > limitMiB * 1024 * 1024)
+                        throw UnsupportedMediaException(R.string.artwork_size_limit, limitMiB.toString())
                     withContext(Dispatchers.Main) {
                         ready(Picture(bytes, "", "Front Cover", "image/png"))
                     }

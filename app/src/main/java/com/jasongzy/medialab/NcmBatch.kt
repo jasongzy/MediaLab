@@ -671,7 +671,7 @@ internal object NcmBatch {
                 if (appName.isNullOrBlank()) context.getString(R.string.batch_provider_unavailable)
                 else context.getString(R.string.batch_provider_unavailable_named, appName)
             }
-            is UnsupportedMediaException -> context.getString(error.messageRes)
+            is UnsupportedMediaException -> context.getString(error.messageRes, error.argument.orEmpty())
             is java.io.FileNotFoundException -> context.getString(R.string.batch_file_unavailable)
             is SecurityException -> context.getString(R.string.batch_permission_error)
             else ->

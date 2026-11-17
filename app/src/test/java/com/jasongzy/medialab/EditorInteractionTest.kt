@@ -5,6 +5,7 @@ import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.geometry.center
 import androidx.compose.ui.unit.IntSize
+import com.kyant.taglib.AudioProperties
 import com.kyant.taglib.Picture
 import java.io.File
 import org.junit.Assert.*
@@ -41,7 +42,7 @@ class EditorInteractionTest {
     @Test
     fun audioMetadataDraftsHaveIndependentHistoryAndApplySeparately() {
         val metadata = AudioMetadata(mapOf("TITLE" to listOf("Original")), emptyList())
-        val audio = AudioDocument(File("song.mp3"), "song.mp3", null, metadata, emptyList())
+        val audio = AudioDocument(File("song.mp3"), "song.mp3", AudioProperties(0, 0, 0, 0), metadata, emptyList())
         val editor = audio.editor
         val tags = mapOf("TITLE" to listOf("Edited"))
         val picture = Picture(byteArrayOf(1, 2, 3), "Cover", "Front Cover", "image/png")

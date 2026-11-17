@@ -21,6 +21,19 @@ internal val MediaInformation.videoTrack get() = streams.firstOrNull {
     it.type == "video" && it.allProperties.optJSONObject("disposition")?.optInt("attached_pic") != 1
 }
 
+internal fun MediaInformation.container(): String {
+    val demuxer = format.orEmpty().substringBefore(',')
+    if (demuxer != "mov") return demuxer
+    val brand = tags?.optString("major_brand").orEmpty().trim()
+    return when {
+        brand == "qt" -> "mov"
+        brand == "M4A" -> "m4a"
+        brand.startsWith("3g2") -> "3g2"
+        brand.startsWith("3g") -> "3gp"
+        else -> "mp4"
+    }
+}
+
 internal object MediaProcessing {
     private val access = Mutex()
 

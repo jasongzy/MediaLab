@@ -273,6 +273,7 @@ internal class BatchFiles(private val context: Context, val tree: Uri?) {
                 "flac",
                 "wav",
                 "m4a",
+                "3ga",
                 "ogg",
                 "ape",
                 "opus",

@@ -1,5 +1,6 @@
 package com.jasongzy.medialab
 
+import com.kyant.taglib.AudioProperties
 import com.sun.net.httpserver.HttpServer
 import java.io.ByteArrayOutputStream
 import java.io.EOFException
@@ -139,7 +140,7 @@ class MediaFilesTest {
             val state =
                 LabState(
                     photo = PhotoState(history = frames, position = 1),
-                    audio = AudioDocument(audio, audio.name, null, AudioMetadata(emptyMap(), emptyList()), emptyList()),
+                    audio = AudioDocument(audio, audio.name, AudioProperties(0, 0, 0, 0), AudioMetadata(emptyMap(), emptyList()), emptyList()),
                     exportFile = shared,
                     video = video,
                 )

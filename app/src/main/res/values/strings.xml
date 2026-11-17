@@ -3,6 +3,8 @@
     <string name="loading_raw">Developing RAW image…</string>
     <string name="raw_unsupported">Unable to read this RAW file. Please select a supported, complete RAW image</string>
     <string name="artwork_not_saved">This artwork information could not be preserved. Try a different description or picture type</string>
+    <string name="artwork_size_limit">Artwork exceeds the %1$s MiB limit</string>
+    <string name="audio_tag_not_saved">Could not save changes to the %1$s tag. Edit the tag or choose another format</string>
     <string name="app_name">Media Lab</string>
     <string name="image_tab">Images</string>
     <string name="audio_tab">Audio</string>

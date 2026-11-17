@@ -49,22 +49,32 @@ import kotlinx.coroutines.withTimeoutOrNull
 
 internal enum class ImportType { IMAGE, VIDEO, AUDIO }
 
+class SharedMediaProvider : FileProvider() {
+    override fun getType(uri: Uri): String? {
+        val path = uri.pathSegments
+        val type = ImportType.entries.firstOrNull { it.name == path.getOrNull(path.lastIndex - 1) }
+            ?: return super.getType(uri)
+        return MediaFiles.mime(path.last().substringAfterLast('.'), type)
+    }
+}
+
 internal object OpenMediaDocument : ActivityResultContracts.OpenDocument() {
     override fun createIntent(context: Context, input: Array<String>): Intent =
         super.createIntent(context, input).apply { input.singleOrNull()?.let { type = it } }
 }
 
-internal class UnsupportedMediaException(val messageRes: Int) : Exception()
+internal class UnsupportedMediaException(val messageRes: Int, val argument: String? = null) : Exception()
 
 internal object MediaFiles {
     fun share(context: Context, file: File, sourceName: String) {
         val name = outputName(sourceName, file.extension)
         val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", file, name)
+        val clip = ClipData.newUri(context.contentResolver, name, uri)
         val intent = Intent(Intent.ACTION_SEND)
-            .setType(mime(file.extension))
+            .setType(clip.description.getMimeType(0))
             .putExtra(Intent.EXTRA_STREAM, uri)
             .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            .apply { clipData = ClipData.newRawUri(name, uri) }
+            .apply { clipData = clip }
         context.startActivity(Intent.createChooser(intent, null))
     }
 
@@ -254,12 +264,15 @@ internal object MediaFiles {
         }
     }
 
-    fun mime(extension: String, type: ImportType? = null): String =
+    fun mime(extension: String, type: ImportType): String =
         when (val ext = extension.lowercase()) {
             "flac" -> "audio/flac"
-            "mp3" -> "audio/mpeg"
+            "mp1", "mp2", "mp3" -> "audio/mpeg"
             "m4a" -> "audio/mp4"
             "mp4" -> if (type == ImportType.AUDIO) "audio/mp4" else "video/mp4"
+            "mov" -> "video/quicktime"
+            "3ga" -> "audio/3gpp"
+            "3g2" -> if (type == ImportType.AUDIO) "audio/3gpp2" else "video/3gpp2"
             "opus" -> "audio/ogg"
             "ogg" -> if (type == ImportType.VIDEO) "video/ogg" else "audio/ogg"
             "mpegts" -> "video/mp2t"
@@ -369,16 +382,18 @@ internal object MediaFiles {
     suspend fun save(context: Context, file: File, name: String, type: ImportType): String {
         val resolver = context.contentResolver
         val volume = MediaStore.VOLUME_EXTERNAL_PRIMARY
-        val collection = when (type) {
-            ImportType.IMAGE -> MediaStore.Images.Media.getContentUri(volume)
-            ImportType.VIDEO -> if (file.extension == "gif") MediaStore.Images.Media.getContentUri(volume)
-                else MediaStore.Video.Media.getContentUri(volume)
-            ImportType.AUDIO -> MediaStore.Audio.Media.getContentUri(volume)
-        }
-        val relativePath = when (type) {
-            ImportType.IMAGE -> "Pictures/MediaLab/"
-            ImportType.VIDEO -> if (file.extension == "gif") "Pictures/MediaLab/" else "Movies/MediaLab/"
-            ImportType.AUDIO -> "Music/MediaLab/"
+        val mimeType = mime(file.extension, type)
+        val types = MimeTypeMap.getSingleton()
+        val (collection, relativePath) = when {
+            // Typed collections reject unknown MIME types unless the extension matches their media family.
+            types.getExtensionFromMimeType(mimeType) == null &&
+                types.getMimeTypeFromExtension(file.extension.lowercase())?.substringBefore('/') != mimeType.substringBefore('/') ->
+                MediaStore.Downloads.getContentUri(volume) to "Download/MediaLab/"
+            type == ImportType.IMAGE || (type == ImportType.VIDEO && mimeType.startsWith("image/")) ->
+                MediaStore.Images.Media.getContentUri(volume) to "Pictures/MediaLab/"
+            type == ImportType.VIDEO || mimeType.startsWith("video/") ->
+                MediaStore.Video.Media.getContentUri(volume) to "Movies/MediaLab/"
+            else -> MediaStore.Audio.Media.getContentUri(volume) to "Music/MediaLab/"
         }
         val existing = indexedFiles(context, collection, relativePath)
         val values =
@@ -387,7 +402,7 @@ internal object MediaFiles {
                     MediaStore.MediaColumns.DISPLAY_NAME,
                     BatchFiles.uniqueName(name, existing.map { it.name }),
                 )
-                put(MediaStore.MediaColumns.MIME_TYPE, mime(file.extension, type))
+                put(MediaStore.MediaColumns.MIME_TYPE, mimeType)
                 put(
                     MediaStore.MediaColumns.RELATIVE_PATH,
                     relativePath,

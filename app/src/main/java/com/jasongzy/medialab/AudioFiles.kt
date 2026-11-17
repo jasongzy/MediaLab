@@ -10,6 +10,7 @@ import com.arthenica.ffmpegkit.MediaInformation
 import com.kyant.taglib.AudioProperties
 import com.kyant.taglib.Picture
 import com.kyant.taglib.TagLib
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.InputStream
 import kotlinx.coroutines.currentCoroutineContext
@@ -19,7 +20,7 @@ import org.json.JSONObject
 internal data class AudioDocument(
     val file: File,
     val name: String,
-    val properties: AudioProperties?,
+    val properties: AudioProperties,
     val metadata: AudioMetadata,
     val technical: List<Pair<String, String>>,
     val encoding: AudioEncoding? = null,
@@ -30,7 +31,6 @@ internal data class AudioDocument(
     )),
     val sourceUri: Uri? = null,
     val sourceBytes: Long? = null,
-    val sourceDuration: Long? = properties?.length?.toLong(),
 ) {
     val tags: Map<String, List<String>>
         get() = editor.history.value.metadata.tags
@@ -38,7 +38,8 @@ internal data class AudioDocument(
         get() = editor.history.value.metadata.pictures
     val current get() = editor.history.value.media
     val sourceFormat get() = encoding?.extension ?: file.extension
-    val sourceMime get() = MediaFiles.mime(sourceFormat, ImportType.AUDIO).takeIf { it.startsWith("audio/") } ?: "audio/*"
+    val sourceMime get() = MediaFiles.mime(sourceFormat, ImportType.AUDIO)
+        .takeIf { it.startsWith("audio/") || sourceFormat in mp4AudioExtensions } ?: "audio/*"
     val playbackFile get() = if (current.file == file) playable else current.file
     val files get() = editor.files + playable + editor.preview?.files.orEmpty()
     val workingFiles get() = editor.files + playable + editor.preview?.takeIf { editor.showPreview }?.files.orEmpty()
@@ -64,11 +65,13 @@ internal object AudioFiles {
             )
             .detachFd()
 
+    private fun readMetadata(file: File): AudioMetadata? = TagLib.getMetadata(fd(file))?.let {
+        AudioMetadata(it.propertyMap.mapValues { (_, values) -> values.toList() }, it.pictures.toList())
+    }
+
     suspend fun read(file: File, name: String): AudioDocument {
         var (properties, info) = inspect(file)
-        val metadata =
-            TagLib.getMetadata(fd(file))
-                ?: throw UnsupportedMediaException(R.string.select_audio_only)
+        val metadata = readMetadata(file) ?: throw UnsupportedMediaException(R.string.select_audio_only)
         val propertyKeys = setOf(
             MediaFormat.KEY_DURATION, MediaFormat.KEY_BIT_RATE, MediaFormat.KEY_SAMPLE_RATE, MediaFormat.KEY_CHANNEL_COUNT,
         )
@@ -112,19 +115,25 @@ internal object AudioFiles {
         }
         val stream = info?.streams?.firstOrNull { it.type == "audio" }
         val encoding = stream?.let {
-            AudioEncoding(it.codec.orEmpty(), info.format.orEmpty().substringBefore(','),
+            AudioEncoding(it.codec.orEmpty(), info.container(),
                 it.allProperties.optInt("bits_per_raw_sample", 0).takeIf { bits -> bits > 0 }
                     ?: it.allProperties.optInt("bits_per_sample", 0))
         }
         val playable = preparePlayback(file, encoding)
         try {
             if (playable != file) properties = checkNotNull(TagLib.getAudioProperties(fd(playable)))
+            stream?.allProperties?.let { track ->
+                properties = properties.copy(
+                    channels = properties.channels.takeIf { it > 0 } ?: track.optInt("channels"),
+                    sampleRate = properties.sampleRate.takeIf { it > 0 } ?: track.optInt("sample_rate"),
+                )
+            }
             currentCoroutineContext().ensureActive()
             return AudioDocument(
                 file,
                 name,
                 properties,
-                AudioMetadata(metadata.propertyMap.mapValues { it.value.toList() }, metadata.pictures.toList()),
+                metadata,
                 technical,
                 encoding,
                 playable,
@@ -165,21 +174,34 @@ internal object AudioFiles {
         return options.outMimeType
     }
 
-    suspend fun save(
+    private fun mp4Picture(picture: Picture): Picture {
+        val mime = pictureMime(picture.data)
+        if (mime in setOf("image/jpeg", "image/png", "image/gif", "image/bmp"))
+            return picture.copy(description = "", pictureType = "", mimeType = mime)
+        val bitmap = checkNotNull(BitmapFactory.decodeByteArray(picture.data, 0, picture.data.size))
+        val data = try {
+            ByteArrayOutputStream().use {
+                check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, it))
+                it.toByteArray()
+            }
+        } finally { bitmap.recycle() }
+        return picture.copy(data = data, description = "", pictureType = "", mimeType = "image/png")
+    }
+
+    suspend fun saveOriginal(
         directory: File,
         document: AudioDocument,
         tags: Map<String, List<String>>,
         pictures: List<Picture>,
     ): File {
-        val extension = if (document.current.file == document.file) document.sourceFormat else document.current.file.extension
-        val target = MediaFiles.temporary(directory, extension)
+        val target = MediaFiles.temporary(directory, document.sourceFormat)
         try {
-            document.current.file.inputStream().use { input ->
+            document.file.inputStream().use { input ->
                 target.outputStream().use { MediaFiles.copy(input, it) }
             }
-            writeTags(target, tags, pictures)
+            writeTags(target, tags, pictures, document.metadata)
             return target
-        } catch (error: Exception) {
+        } catch (error: Throwable) {
             target.delete()
             throw error
         }
@@ -189,33 +211,32 @@ internal object AudioFiles {
         target: File,
         tags: Map<String, List<String>>,
         pictures: List<Picture>,
+        original: AudioMetadata = checkNotNull(readMetadata(target)),
     ) {
-        val original = requireNotNull(TagLib.getMetadata(fd(target)))
-        val originalTags = original.propertyMap
-        val tagsChanged = originalTags.keys != tags.keys ||
-            tags.any { (key, values) -> originalTags[key]?.asList() != values }
-        val picturesChanged = !samePictures(original.pictures.toList(), pictures)
+        val tagsChanged = original.tags != tags
+        val outputPictures = if (target.extension in mp4AudioExtensions) pictures.mapIndexed { index, picture ->
+            original.pictures.getOrNull(index)?.takeIf { it.data.contentEquals(picture.data) } ?: mp4Picture(picture)
+        } else pictures
+        val picturesChanged = !samePictures(original.pictures, outputPictures)
         currentCoroutineContext().ensureActive()
         if (!tagsChanged && !picturesChanged) return
         if (tagsChanged) {
-            check(TagLib.savePropertyMap(fd(target, true), HashMap(tags.mapValues { it.value.toTypedArray() }))) {
-                "Cannot save audio tags"
-            }
+            if (!TagLib.savePropertyMap(fd(target, true), HashMap(tags.mapValues { it.value.toTypedArray() })))
+                throw UnsupportedMediaException(R.string.metadata_not_saved)
         }
         if (picturesChanged) {
-            require(pictures.sumOf { it.data.size.toLong() } <= 64 * 1024 * 1024)
-            check(TagLib.savePictures(fd(target, true), pictures.toTypedArray())) {
-                "Cannot save cover art"
-            }
+            val limitMiB = 64
+            if (outputPictures.sumOf { it.data.size.toLong() } > limitMiB * 1024 * 1024)
+                throw UnsupportedMediaException(R.string.artwork_size_limit, limitMiB.toString())
+            if (!TagLib.savePictures(fd(target, true), outputPictures.toTypedArray()))
+                throw UnsupportedMediaException(R.string.artwork_not_saved)
         }
-        val result = requireNotNull(TagLib.getMetadata(fd(target)))
-        for ((key, values) in tags) check(sameTagValues(key, values, result.propertyMap[key]?.toList().orEmpty())) {
-            "Tag verification failed: $key"
-        }
-        check((originalTags.keys - tags.keys).none { it in result.propertyMap }) {
-            "Tag removal verification failed"
-        }
-        if (!samePictures(result.pictures.toList(), pictures))
+        val result = checkNotNull(readMetadata(target))
+        val rejected = tags.entries.firstOrNull { (key, values) ->
+            !sameTagValues(key, values, result.tags[key].orEmpty())
+        }?.key ?: original.tags.keys.firstOrNull { it !in tags && it in result.tags }
+        if (rejected != null) throw UnsupportedMediaException(R.string.audio_tag_not_saved, rejected)
+        if (!samePictures(result.pictures, outputPictures))
             throw UnsupportedMediaException(R.string.artwork_not_saved)
         currentCoroutineContext().ensureActive()
     }
@@ -267,9 +288,8 @@ internal object AudioFiles {
         check(temporary.renameTo(target)) { "Cannot publish decoded audio" }
         if (!restoreMetadata) return target
         try {
-            val original =
-                requireNotNull(TagLib.getMetadata(fd(target))) { "Cannot read decoded audio" }
-            val tags = original.propertyMap.mapValues { it.value.toList() }.toMutableMap()
+            val original = checkNotNull(readMetadata(target)) { "Cannot read decoded audio" }
+            val tags = original.tags.toMutableMap()
             result.metadata?.let {
                 val json = JSONObject(it)
                 for ((field, key) in listOf("musicName" to "TITLE", "album" to "ALBUM")) {
@@ -294,8 +314,8 @@ internal object AudioFiles {
                             pictureMime(result.cover),
                         )
                     )
-                } else original.pictures.toList()
-            writeTags(target, tags, pictures)
+                } else original.pictures
+            writeTags(target, tags, pictures, original)
             return target
         } catch (error: Exception) {
             target.delete()

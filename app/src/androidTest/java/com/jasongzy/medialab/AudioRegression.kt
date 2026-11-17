@@ -70,9 +70,18 @@ internal object AudioRegression {
         check(imported.current.canEdit && imported.current.channels == 1)
         check(abs(imported.current.durationMs - original.current.durationMs) < 100)
         check(imported.tags["TITLE"] == listOf("Recording"))
-        val tagged = AudioFiles.save(app.cacheDir, imported, mapOf("TITLE" to listOf("Edited")), emptyList())
+        val rejected = runCatching {
+            val invalid = imported.tags + ("DISCNUMBER" to listOf("Bonus"))
+            AudioFiles.saveOriginal(app.cacheDir, imported, invalid, imported.pictures)
+        }.exceptionOrNull()
+        check(rejected is UnsupportedMediaException && rejected.messageRes == R.string.audio_tag_not_saved &&
+            rejected.argument == "DISCNUMBER")
+        val artwork = AudioFiles.read(numbered, numbered.name).pictures
+        val tagged = AudioFiles.saveOriginal(app.cacheDir, imported, mapOf("TITLE" to listOf("Edited")), artwork)
         val rereadRecording = AudioFiles.read(tagged, tagged.name)
         check(rereadRecording.tags["TITLE"] == listOf("Edited") && rereadRecording.current.canEdit)
+        val m4aCover = rereadRecording.pictures.single()
+        check(m4aCover.mimeType == "image/png" && m4aCover.description.isEmpty() && m4aCover.pictureType.isEmpty())
         check(tagged.extension == "m4a" && imported.encoding?.codec == "aac")
         suspend fun aacPackets(file: File): ByteArray {
             val packets = File(app.cacheDir, "packets.aac")
@@ -126,13 +135,17 @@ internal object AudioRegression {
                 finally { wav.delete() }
             }
         }
-        val trimmed = renderAudio(imported.current, File(app.filesDir, "recording-trimmed.flac"), MediaTimeEdit(500))
-        check(trimmed.channels == 1 && abs(trimmed.durationMs - 500) <= 1)
-        imported.editor.commit(imported.editor.history.value.copy(media = trimmed), R.string.video_time)
-        val restoredFormat = exportAudio(app.cacheDir, imported, AudioExportOptions())
-        val restored = AudioFiles.read(restoredFormat, restoredFormat.name)
-        check(restored.encoding?.codec == "aac" && restored.current.channels == 1 &&
-            abs(restored.current.durationMs - 500) < 100)
+        val voice = File(app.filesDir, "voice.ogg")
+        MediaProcessing.execute(listOf("-f", "lavfi", "-i", "sine=sample_rate=8000:duration=1", "-c:a", "libvorbis", voice.path))
+        for (document in listOf(imported, AudioFiles.read(voice, voice.name))) {
+            val trimmed = renderAudio(document.current, File(app.filesDir, "${document.name}-trimmed.flac"), MediaTimeEdit(500))
+            check(trimmed.channels == 1 && abs(trimmed.durationMs - 500) <= 1)
+            document.editor.commit(document.editor.history.value.copy(media = trimmed), R.string.video_time)
+            val file = exportAudio(app.cacheDir, document, AudioExportOptions())
+            val restored = AudioFiles.read(file, file.name)
+            check(restored.encoding?.codec == document.encoding?.codec && restored.current.channels == 1 &&
+                restored.current.properties.sampleRate == trimmed.properties.sampleRate && abs(restored.current.durationMs - 500) < 100)
+        }
         suspend fun pcm(media: AudioMedia): ShortArray {
             val raw = File(app.cacheDir, "samples.pcm")
             MediaProcessing.execute(listOf("-i", media.file.path, "-map", "0:a:0", "-f", "s16le", raw.path))
@@ -144,6 +157,17 @@ internal object AudioRegression {
             channels = channelGroups(2, setOf(0), false))
         val deletedPcm = pcm(deleted)
         check(deletedPcm.size == originalPcm.size / 2 && deletedPcm.all { it == (-4096).toShort() })
+        for ((container, extension) in listOf("mov" to "mov", "mp4" to "m4a")) {
+            val source = File(app.filesDir, "pcm-$container.bin")
+            MediaProcessing.execute(listOf("-i", input.path, "-c:a", "pcm_s16be", "-f", container, source.path))
+            val movie = AudioFiles.read(source, source.name)
+            check(movie.current.canEdit && movie.current.channels == 2)
+            movie.editor.commit(movie.saved.copy(media = deleted), R.string.channels)
+            val output = exportAudio(app.cacheDir, movie, AudioExportOptions())
+            val restored = AudioFiles.read(output, output.name)
+            check(output.extension == extension && restored.encoding == movie.encoding)
+            check(pcm(restored.current).contentEquals(deletedPcm))
+        }
         val merged = renderAudio(original.current, File(app.filesDir, "merged.flac"),
             channels = channelGroups(2, setOf(0, 1), true))
         check(pcm(merged).all { abs(it - 2048) <= 1 })
@@ -164,7 +188,7 @@ internal object AudioRegression {
         }
         val edit = MediaTimeEdit(1000, startMs = 200, beforeMs = 200, afterMs = 300, speedPercent = 200)
         val timed = renderAudio(original.current, File(app.filesDir, "timed.flac"), edit)
-        check(abs(timed.durationMs - 900) <= 1 && timed.properties?.sampleRate == 48000)
+        check(abs(timed.durationMs - 900) <= 1 && timed.properties.sampleRate == 48000)
         val samples = pcm(timed)
         check(samples.take(2 * 9500).all { it == 0.toShort() })
         check(samples.drop(2 * 40000).all { it == 0.toShort() })
@@ -231,10 +255,6 @@ internal object AudioRegression {
             instrumentation.runOnMainSync { audio.editor.resetMetadata(); model.clearCache() }
             idle()
             check(audio.files.all { it.isFile })
-            val saved = AudioFiles.save(app.cacheDir, audio, audio.tags, audio.pictures)
-            val reread = AudioFiles.read(saved, saved.name)
-            check(reread.tags == audio.tags && reread.pictures.single().data.contentEquals(picture.data))
-            check(reread.current.durationMs == applied.durationMs)
             for (format in AudioFormat.entries) {
                 val output = exportAudio(app.cacheDir, audio, AudioExportOptions(format))
                 val exported = AudioFiles.read(output, output.name)
@@ -248,7 +268,7 @@ internal object AudioRegression {
                     AudioFormat.WAV -> "pcm_s24le"
                 })
                 if (format in listOf(AudioFormat.AAC, AudioFormat.M4A))
-                    check(exported.encoding.container == if (format == AudioFormat.AAC) "aac" else "mov")
+                    check(exported.encoding.container == if (format == AudioFormat.AAC) "aac" else "m4a")
                 if (format in listOf(AudioFormat.ORIGINAL, AudioFormat.FLAC, AudioFormat.WAV))
                     check(pcm(exported.current).contentEquals(pcm(applied)))
                 exported.files.forEach { it.delete() }
