@@ -33,19 +33,20 @@ internal object Ncm {
         try {
             val counted = CountingInput(source.buffered())
             DataInputStream(counted).use { input ->
-                fun block(limit: Int): ByteArray {
+                fun block(limit: Int, mask: Int = 0): ByteArray {
                     val size = input.littleInt()
                     require(size <= limit && (total < 0 || size <= total - counted.position)) {
                         "Invalid NCM block length"
                     }
-                    return ByteArray(size).also { input.readFully(it) }
+                    val bytes = ByteArray(size)
+                    input.readFully(bytes)
+                    if (mask != 0) for (i in bytes.indices) bytes[i] = (bytes[i].toInt() xor mask).toByte()
+                    return bytes
                 }
                 val magic = ByteArray(MAGIC.length).also { input.readFully(it) }
                 require(magic.contentEquals(MAGIC.toByteArray())) { "Invalid NCM header" }
                 input.readUnsignedShort()
-                val encryptedKey =
-                    block(16 * 1024 * 1024).map { (it.toInt() xor 0x64).toByte() }.toByteArray()
-                val key = decrypt(coreKey, encryptedKey)
+                val key = decrypt(coreKey, block(16 * 1024 * 1024, 0x64))
                 require(
                     key.size > 17 &&
                         key.copyOfRange(0, 17).contentEquals("neteasecloudmusic".toByteArray())
@@ -53,11 +54,10 @@ internal object Ncm {
                     "Invalid NCM key"
                 }
                 val stream = keyStream(key.copyOfRange(17, key.size))
-                val meta = block(16 * 1024 * 1024)
+                val encoded = block(16 * 1024 * 1024, 0x63)
                 val metadata =
-                    if (meta.isEmpty()) null
+                    if (encoded.isEmpty()) null
                     else {
-                        val encoded = meta.map { (it.toInt() xor 0x63).toByte() }.toByteArray()
                         require(
                             encoded.size > 22 &&
                                 encoded
@@ -126,7 +126,6 @@ internal object Ncm {
     }
 
     private fun keyStream(key: ByteArray): IntArray {
-        require(key.isNotEmpty())
         val box = IntArray(256) { it }
         var last = 0
         for (i in box.indices) {
@@ -162,8 +161,6 @@ internal object Ncm {
 
         override fun read(bytes: ByteArray, offset: Int, length: Int): Int =
             `in`.read(bytes, offset, length).also { if (it > 0) position += it }
-
-        override fun skip(count: Long): Long = `in`.skip(count).also { position += it }
     }
 
     private fun String.hex(): ByteArray = chunked(2).map { it.toInt(16).toByte() }.toByteArray()
