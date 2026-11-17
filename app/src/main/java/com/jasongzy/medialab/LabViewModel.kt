@@ -1318,6 +1318,8 @@ internal class LabViewModel(application: Application, savedState: SavedStateHand
                 } finally {
                     bitmap.recycle()
                 }
+            } catch (_: android.graphics.ImageDecoder.DecodeException) {
+                throw UnsupportedMediaException(R.string.select_image_only)
             } finally {
                 file.delete()
             }

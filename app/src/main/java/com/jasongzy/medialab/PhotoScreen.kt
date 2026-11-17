@@ -5,7 +5,6 @@ import android.graphics.Rect
 import android.text.format.Formatter
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -65,21 +64,11 @@ import kotlinx.coroutines.launch
 @Composable
 internal fun PhotoScreen(model: LabViewModel, state: LabState) {
     val photo = state.photo
-    val picker =
-        rememberLauncherForActivityResult(
-            remember {
-                object : ActivityResultContracts.OpenDocument() {
-                    override fun createIntent(
-                        context: android.content.Context,
-                        input: Array<String>,
-                    ) = super.createIntent(context, input).setType("image/*")
-                }
-            }
-        ) {
-            if (it != null) model.open(it, ImportType.IMAGE)
-        }
+    val picker = rememberLauncherForActivityResult(OpenMediaDocument) {
+        if (it != null) model.open(it, ImportType.IMAGE)
+    }
     val open = { picker.launch(arrayOf("image/*")) }
-    val rawPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) {
+    val rawPicker = rememberLauncherForActivityResult(OpenMediaDocument) {
         if (it != null) model.openRaw(it)
     }
     val importRaw = { rawPicker.launch(arrayOf("*/*")) }

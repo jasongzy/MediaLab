@@ -2,6 +2,10 @@ silence.mp3 and silence.flac contain 0.1 seconds of generated 8 kHz mono silence
 Generated with FFmpeg anullsrc, libmp3lame at 16 kbit/s and the FLAC encoder.
 These small fixtures exercise real audio containers during Unicode tag and artwork round trips.
 
+frame.mp4 contains one blue 16 x 16 MPEG-4 frame and mono AAC silence. artwork.m4a contains 0.1 seconds
+of 8 kHz mono AAC silence with a blue PNG cover. Both were generated with FFmpeg
+to check content detection when the filename lacks a media extension.
+
 held.gif is a generated 32 x 32 animation: red for 100 ms, then blue for 4900 ms.
 Created with Pillow using two solid RGB frames and duration=[100, 4900].
 It verifies extracting a frame during the final hold of a variable-rate animation.

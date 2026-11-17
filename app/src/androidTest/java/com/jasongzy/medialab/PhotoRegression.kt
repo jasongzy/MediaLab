@@ -681,10 +681,12 @@ internal class PhotoRegression(
         } finally {
             bitmap.recycle()
         }
-        val audio = File(app.cacheDir, "input.mp3")
-        instrumentation.context.assets.open("silence.mp3").use { input ->
-            audio.outputStream().use { input.copyTo(it) }
+        fun sample(asset: String, name: String) = File(app.cacheDir, name).apply {
+            instrumentation.context.assets.open(asset).use { input ->
+                outputStream().use { input.copyTo(it) }
+            }
         }
+        val audio = sample("silence.mp3", "input.mp3")
         try {
             instrumentation.runOnMainSync {
                 model = LabViewModel(app, SavedStateHandle())
@@ -759,6 +761,9 @@ internal class PhotoRegression(
             idle(model)
             check(model.state.value.notice?.message == R.string.select_audio_only)
             check(model.state.value.audio === editedAudio && work.listFiles()!!.toSet() == before)
+            instrumentation.runOnMainSync { model.cover(Uri.fromFile(audio)) { error("Expected image rejection") } }
+            idle(model)
+            check(model.state.value.notice?.message == R.string.select_image_only && work.listFiles()!!.toSet() == before)
             for ((name, content, expected) in listOf(
                     Triple("empty.bin", byteArrayOf(), R.string.empty_media_file),
                     Triple("document.txt", "not media".toByteArray(), R.string.select_media_only),
@@ -795,22 +800,21 @@ internal class PhotoRegression(
             check(model.state.value.photo.history.size == 1)
             check(photo.history.flatMap { it.files }.none { it.exists() })
             check(model.state.value.workingFiles.all { it.isFile })
-            val video = File(app.filesDir, "video.bin")
-            MediaProcessing.execute(listOf("-loop", "1", "-i", image.path, "-t", "0.2",
-                "-c:v", "mpeg4", "-pix_fmt", "yuv420p", "-f", "mp4", video.path))
+            val video = sample("frame.mp4", "video.part '1")
             instrumentation.runOnMainSync { model.open(Uri.fromFile(video), null) }
             idle(model)
             val openedVideo = checkNotNull(model.state.value.video)
-            check(model.state.value.tab == ImportType.VIDEO.ordinal)
-            val artworkAudio = File(app.filesDir, "artwork-audio.bin")
-            MediaProcessing.execute(listOf("-i", audio.path, "-c:a", "aac", "-f", "mp4", artworkAudio.path))
-            AudioFiles.writeTags(artworkAudio, emptyMap(), listOf(
-                com.kyant.taglib.Picture(image.readBytes(), "", "", "image/png"),
-            ))
+            check(model.state.value.tab == ImportType.VIDEO.ordinal && openedVideo.sourceMime == "video/mp4")
+            val previousAudio = model.state.value.audio
+            instrumentation.runOnMainSync { model.clearNotice(); model.open(Uri.fromFile(video), ImportType.AUDIO) }
+            idle(model)
+            check(model.state.value.notice?.message == R.string.select_audio_only && model.state.value.audio === previousAudio)
+            val artworkAudio = sample("artwork.m4a", "artwork-audio.bin")
             instrumentation.runOnMainSync { model.open(Uri.fromFile(artworkAudio), null) }
             idle(model)
             check(model.state.value.tab == ImportType.AUDIO.ordinal && model.state.value.video === openedVideo)
-            check(checkNotNull(model.state.value.audio).pictures.size == 1)
+            val withArtwork = checkNotNull(model.state.value.audio)
+            check(withArtwork.pictures.size == 1 && withArtwork.sourceMime == "audio/mp4")
         } finally {
             instrumentation.runOnMainSync { store.clear() }
         }

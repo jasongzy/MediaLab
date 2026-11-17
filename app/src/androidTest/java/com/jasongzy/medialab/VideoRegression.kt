@@ -458,7 +458,7 @@ internal object VideoRegression {
             }
             val audio = File(context.filesDir, "track.flac")
             Videos.audio(input, info, edits, info.audioTracks.single().index, audio)
-            AudioFiles.validate(audio)
+            AudioFiles.inspect(audio)
             val pcm = File(context.filesDir, "track.pcm")
             val samples = decodeAudio(audio, pcm)
             check((0 until 3200).all { abs(samples[it].toInt()) < 2 })

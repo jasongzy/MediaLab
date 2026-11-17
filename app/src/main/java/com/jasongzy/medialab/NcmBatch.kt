@@ -509,7 +509,7 @@ internal object NcmBatch {
                         }
             }
         check(output.length() > 0) { context.getString(R.string.empty_media_file) }
-        if (!source.ncm) AudioFiles.validate(output)
+        if (!source.ncm) AudioFiles.inspect(output)
         mutable.update { it.copy(progress = 0.6f) }
         return output to AudioFingerprint.hex(hash.digest())
     }

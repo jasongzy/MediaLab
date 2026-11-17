@@ -96,6 +96,7 @@ internal class VideoDocument(
     val playable: File,
 ) {
     val editor = VideoEditor(info.edits())
+    val sourceMime get() = MediaFiles.mime(info.format, ImportType.VIDEO).takeUnless { it == "application/octet-stream" } ?: "video/*"
     val previews = VideoPreviewCache()
     var selectedAudioTrack by mutableStateOf(info.audioTracks.firstOrNull()?.index)
     var audioTracksExpanded by mutableStateOf(false)
@@ -157,11 +158,7 @@ internal object Videos {
     suspend fun inspect(file: File): VideoInfo {
         val info = MediaProcessing.inspect(file, "mov,matroska,webm,avi,gif,mpeg,mpegts,flv,asf,ogg")
             ?: throw UnsupportedMediaException(R.string.select_video_only)
-        val stream =
-            info.streams.firstOrNull {
-                it.type == "video" &&
-                    it.allProperties.optJSONObject("disposition")?.optInt("attached_pic") != 1
-            } ?: throw UnsupportedMediaException(R.string.select_video_only)
+        val stream = info.videoTrack ?: throw UnsupportedMediaException(R.string.select_video_only)
         val properties = stream.allProperties
         val sideData = properties.optJSONArray("side_data_list")
         var rotation = 0

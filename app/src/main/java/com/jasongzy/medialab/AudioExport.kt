@@ -16,7 +16,7 @@ internal data class AudioEncoding(val codec: String, val container: String, val 
         "mov" -> "m4a"
         "ogg" -> if (codec == "opus") "opus" else "ogg"
         "asf" -> "wma"
-        "mp3", "aac", "flac", "wav", "aiff", "wv" -> container
+        "mp3", "aac", "flac", "wav", "aiff", "wv", "ape" -> container
         else -> null
     }
     val encoder get() = when (codec) {

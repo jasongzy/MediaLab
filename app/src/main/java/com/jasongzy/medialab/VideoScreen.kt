@@ -3,7 +3,6 @@ package com.jasongzy.medialab
 import android.graphics.Rect
 import android.text.format.Formatter
 import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
@@ -47,7 +46,7 @@ import kotlin.math.roundToInt
 @Composable
 internal fun VideoScreen(model: LabViewModel, state: LabState, active: Boolean) {
     val picker =
-        rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) {
+        rememberLauncherForActivityResult(OpenMediaDocument) {
             if (it != null) model.open(it, ImportType.VIDEO)
         }
     val open = { picker.launch(arrayOf("video/*", "image/gif")) }
@@ -98,7 +97,7 @@ internal fun VideoScreen(model: LabViewModel, state: LabState, active: Boolean) 
                 FileName(
                     video.name,
                     video.sourceUri,
-                    MediaFiles.mime(video.file),
+                    video.sourceMime,
                     video.file.length(),
                     R.string.original_duration to playbackTime(video.info.durationMs),
                     sourceDetails = { VideoSourceDetails(video.info) },

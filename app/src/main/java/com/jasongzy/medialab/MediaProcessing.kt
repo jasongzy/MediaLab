@@ -3,10 +3,10 @@ package com.jasongzy.medialab
 import com.arthenica.ffmpegkit.FFmpegKit
 import com.arthenica.ffmpegkit.FFmpegKitConfig
 import com.arthenica.ffmpegkit.FFmpegSession
-import com.arthenica.ffmpegkit.FFprobeKit
 import com.arthenica.ffmpegkit.MediaInformation
 import com.arthenica.ffmpegkit.MediaInformationSession
 import com.arthenica.ffmpegkit.ReturnCode
+import com.arthenica.ffmpegkit.Session
 import java.io.File
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -16,6 +16,10 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+
+internal val MediaInformation.videoTrack get() = streams.firstOrNull {
+    it.type == "video" && it.allProperties.optJSONObject("disposition")?.optInt("attached_pic") != 1
+}
 
 internal object MediaProcessing {
     private val access = Mutex()
@@ -29,19 +33,9 @@ internal object MediaProcessing {
         val arguments = listOf("-v", "error", "-protocol_whitelist", "file,pipe") +
             (formats?.let { listOf("-format_whitelist", it) } ?: emptyList()) +
             listOf("-show_format", "-show_streams", "-of", "json", file.path)
-        val session = FFprobeKit.getMediaInformationFromCommandAsync(
-            FFmpegKitConfig.argumentsToString(arguments.toTypedArray()),
-            { completed.complete(it) }, {}, 5000,
-        )
-        val result = try {
-            completed.await()
-        } catch (cancelled: CancellationException) {
-            FFmpegKit.cancel(session.sessionId)
-            withContext(NonCancellable) { completed.await() }
-            throw cancelled
-        }
-        currentCoroutineContext().ensureActive()
-        result.mediaInformation
+        val session = MediaInformationSession.create(arguments.toTypedArray(), { completed.complete(it) }, {})
+        FFmpegKitConfig.asyncGetMediaInformationExecute(session, 5000)
+        completed.awaitSession(session).mediaInformation
     }
 
     suspend fun execute(arguments: List<String>, progress: (Long) -> Unit = {}) = access.withLock {
@@ -66,18 +60,17 @@ internal object MediaProcessing {
                 {},
                 { progress(it.time.toLong()) },
             )
-        val result =
-            try {
-                completed.await()
-            } catch (cancelled: CancellationException) {
-                FFmpegKit.cancel(session.sessionId)
-                withContext(NonCancellable) { completed.await() }
-                throw cancelled
-            }
-        currentCoroutineContext().ensureActive()
+        val result = completed.awaitSession(session)
         check(ReturnCode.isSuccess(result.returnCode)) {
             "FFmpeg ${result.returnCode}: ${result.allLogsAsString.takeLast(6000)}"
         }
     }
 
+    private suspend fun <T : Session> CompletableDeferred<T>.awaitSession(session: T): T = try {
+        await().also { currentCoroutineContext().ensureActive() }
+    } catch (cancelled: CancellationException) {
+        FFmpegKit.cancel(session.sessionId)
+        withContext(NonCancellable) { await() }
+        throw cancelled
+    }
 }

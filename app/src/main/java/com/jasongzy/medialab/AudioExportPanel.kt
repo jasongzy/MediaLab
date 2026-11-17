@@ -37,7 +37,7 @@ internal fun AudioExportPanel(audio: AudioDocument, model: LabViewModel) {
                 bitrateKbps = options.bitrateKbps.coerceAtMost(320))
         }
         if (options.format == AudioFormat.ORIGINAL) Text(
-            listOfNotNull(audio.encoding?.extension ?: audio.file.extension, audio.encoding?.codec)
+            listOfNotNull(audio.sourceFormat, audio.encoding?.codec)
                 .filter { it.isNotEmpty() }.map { it.uppercase() }.distinct().joinToString(" · "),
             style = MaterialTheme.typography.bodyMedium,
         )

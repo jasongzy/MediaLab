@@ -6,6 +6,7 @@ import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.net.Uri
 import android.os.ParcelFileDescriptor
+import com.arthenica.ffmpegkit.MediaInformation
 import com.kyant.taglib.AudioProperties
 import com.kyant.taglib.Picture
 import com.kyant.taglib.TagLib
@@ -36,6 +37,8 @@ internal data class AudioDocument(
     val pictures: List<Picture>
         get() = editor.history.value.metadata.pictures
     val current get() = editor.history.value.media
+    val sourceFormat get() = encoding?.extension ?: file.extension
+    val sourceMime get() = MediaFiles.mime(sourceFormat, ImportType.AUDIO).takeIf { it.startsWith("audio/") } ?: "audio/*"
     val playbackFile get() = if (current.file == file) playable else current.file
     val files get() = editor.files + playable + editor.preview?.files.orEmpty()
     val workingFiles get() = editor.files + playable + editor.preview?.takeIf { editor.showPreview }?.files.orEmpty()
@@ -44,9 +47,13 @@ internal data class AudioDocument(
 }
 
 internal object AudioFiles {
-    fun validate(file: File) {
-        if (TagLib.getAudioProperties(fd(file)) == null)
+    suspend fun inspect(file: File): Pair<AudioProperties, MediaInformation?> {
+        val properties = TagLib.getAudioProperties(fd(file))
+            ?: throw UnsupportedMediaException(R.string.select_audio_only)
+        val info = MediaProcessing.inspect(file)
+        if (info != null && (info.videoTrack != null || info.streams.none { it.type == "audio" }))
             throw UnsupportedMediaException(R.string.select_audio_only)
+        return properties to info
     }
 
     private fun fd(file: File, writable: Boolean = false): Int =
@@ -58,11 +65,10 @@ internal object AudioFiles {
             .detachFd()
 
     suspend fun read(file: File, name: String): AudioDocument {
+        var (properties, info) = inspect(file)
         val metadata =
             TagLib.getMetadata(fd(file))
                 ?: throw UnsupportedMediaException(R.string.select_audio_only)
-        var properties = TagLib.getAudioProperties(fd(file))
-            ?: throw UnsupportedMediaException(R.string.select_audio_only)
         val propertyKeys = setOf(
             MediaFormat.KEY_DURATION, MediaFormat.KEY_BIT_RATE, MediaFormat.KEY_SAMPLE_RATE, MediaFormat.KEY_CHANNEL_COUNT,
         )
@@ -104,7 +110,6 @@ internal object AudioFiles {
         } finally {
             extractor.release()
         }
-        val info = MediaProcessing.inspect(file)
         val stream = info?.streams?.firstOrNull { it.type == "audio" }
         val encoding = stream?.let {
             AudioEncoding(it.codec.orEmpty(), info.format.orEmpty().substringBefore(','),
@@ -166,8 +171,8 @@ internal object AudioFiles {
         tags: Map<String, List<String>>,
         pictures: List<Picture>,
     ): File {
-        val extension = if (document.current.file == document.file) document.encoding?.extension else null
-        val target = MediaFiles.temporary(directory, extension ?: document.current.file.extension)
+        val extension = if (document.current.file == document.file) document.sourceFormat else document.current.file.extension
+        val target = MediaFiles.temporary(directory, extension)
         try {
             document.current.file.inputStream().use { input ->
                 target.outputStream().use { MediaFiles.copy(input, it) }

@@ -16,6 +16,7 @@ import android.graphics.Path
 import android.graphics.Rect
 import android.graphics.RectF
 import android.os.Build
+import android.webkit.MimeTypeMap
 import androidx.core.graphics.createBitmap
 import androidx.core.graphics.withClip
 import androidx.core.graphics.withTranslation
@@ -162,7 +163,7 @@ internal object Photos {
     fun info(file: File, preview: Bitmap? = null): PhotoInfo {
         val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeFile(file.path, options)
-        require(options.outWidth > 0 && options.outHeight > 0) { "Unsupported image format" }
+        if (options.outWidth <= 0 || options.outHeight <= 0) throw UnsupportedMediaException(R.string.select_image_only)
         val exif = ExifInterface(file)
         val orientation = exif.getAttributeInt(ExifInterface.TAG_ORIENTATION, 1).coerceIn(1, 8)
         val swapped = orientation in 5..8
@@ -268,7 +269,7 @@ internal object Photos {
         }
         fun decodeImage(): Bitmap =
             finish(ImageDecoder.decodeBitmap(ImageDecoder.createSource(file)) { decoder, image, _ ->
-                require(!image.isAnimated)
+                if (image.isAnimated) throw UnsupportedMediaException(R.string.select_image_only)
                 decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
                 decoder.isMutableRequired = true
                 decoder.setTargetColorSpace(space)
@@ -840,12 +841,8 @@ internal object Photos {
     ): File {
         val coroutine = currentCoroutineContext()
         val original = options.preservesSource(info)
-        val extension = when (info.mime) {
-            "image/jpeg" -> "jpg"
-            "image/png" -> "png"
-            "image/webp" -> "webp"
-            else -> source.extension
-        }
+        val extension = if (info.mime == "image/jpeg") "jpg"
+            else MimeTypeMap.getSingleton().getExtensionFromMimeType(info.mime) ?: source.extension
         if (original && !options.metadata && info.metadataEdits.isNotEmpty()) {
             if (info.mime !in listOf("image/jpeg", "image/png", "image/webp"))
                 throw UnsupportedMediaException(R.string.photo_metadata_format)

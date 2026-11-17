@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.res.AssetFileDescriptor
 import android.content.ClipData
 import android.content.Intent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.FileProvider
 import android.media.MediaScannerConnection
 import android.net.Uri
@@ -48,13 +49,18 @@ import kotlinx.coroutines.withTimeoutOrNull
 
 internal enum class ImportType { IMAGE, VIDEO, AUDIO }
 
+internal object OpenMediaDocument : ActivityResultContracts.OpenDocument() {
+    override fun createIntent(context: Context, input: Array<String>): Intent =
+        super.createIntent(context, input).apply { input.singleOrNull()?.let { type = it } }
+}
+
 internal class UnsupportedMediaException(val messageRes: Int) : Exception()
 
 internal object MediaFiles {
     fun share(context: Context, file: File) {
         val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", file)
         val intent = Intent(Intent.ACTION_SEND)
-            .setType(mime(file))
+            .setType(mime(file.extension))
             .putExtra(Intent.EXTRA_STREAM, uri)
             .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             .apply { clipData = ClipData.newRawUri(file.name, uri) }
@@ -247,14 +253,16 @@ internal object MediaFiles {
         }
     }
 
-    fun mime(file: File, type: ImportType? = null): String =
-        when (file.extension.lowercase()) {
+    fun mime(extension: String, type: ImportType? = null): String =
+        when (val ext = extension.lowercase()) {
             "flac" -> "audio/flac"
             "mp3" -> "audio/mpeg"
             "m4a" -> "audio/mp4"
             "mp4" -> if (type == ImportType.AUDIO) "audio/mp4" else "video/mp4"
-            "opus",
-            "ogg" -> "audio/ogg"
+            "opus" -> "audio/ogg"
+            "ogg" -> if (type == ImportType.VIDEO) "video/ogg" else "audio/ogg"
+            "mpegts" -> "video/mp2t"
+            "asf" -> "video/x-ms-asf"
             "wav" -> "audio/wav"
             "ape" -> "audio/x-ape"
             "wv" -> "audio/x-wavpack"
@@ -263,7 +271,7 @@ internal object MediaFiles {
             "aiff" -> "audio/x-aiff"
             "wma" -> "audio/x-ms-wma"
             else ->
-                MimeTypeMap.getSingleton().getMimeTypeFromExtension(file.extension.lowercase())
+                MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext)
                     ?: "application/octet-stream"
         }
 
@@ -378,7 +386,7 @@ internal object MediaFiles {
                     MediaStore.MediaColumns.DISPLAY_NAME,
                     BatchFiles.uniqueName(name, existing.map { it.name }),
                 )
-                put(MediaStore.MediaColumns.MIME_TYPE, mime(file, type))
+                put(MediaStore.MediaColumns.MIME_TYPE, mime(file.extension, type))
                 put(
                     MediaStore.MediaColumns.RELATIVE_PATH,
                     relativePath,

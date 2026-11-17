@@ -181,7 +181,7 @@ internal class BatchFiles(private val context: Context, val tree: Uri?) {
                     DocumentsContract.createDocument(
                         resolver,
                         checkNotNull(folder(directory, create = true)),
-                        MediaFiles.mime(file, ImportType.AUDIO),
+                        MediaFiles.mime(file.extension, ImportType.AUDIO),
                         stagingName,
                     )
                 )
@@ -191,7 +191,7 @@ internal class BatchFiles(private val context: Context, val tree: Uri?) {
                         collection,
                         ContentValues().apply {
                             put(MediaStore.MediaColumns.DISPLAY_NAME, stagingName)
-                            put(MediaStore.MediaColumns.MIME_TYPE, MediaFiles.mime(file, ImportType.AUDIO))
+                            put(MediaStore.MediaColumns.MIME_TYPE, MediaFiles.mime(file.extension, ImportType.AUDIO))
                             put(MediaStore.MediaColumns.RELATIVE_PATH, relativePath(directory))
                             put(MediaStore.MediaColumns.IS_PENDING, 1)
                         },

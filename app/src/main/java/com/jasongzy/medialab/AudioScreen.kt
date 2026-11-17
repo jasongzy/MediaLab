@@ -5,7 +5,6 @@ import android.text.format.Formatter
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -37,19 +36,9 @@ import kotlinx.coroutines.withContext
 
 @Composable
 internal fun AudioScreen(model: LabViewModel, state: LabState, active: Boolean) {
-    val picker =
-        rememberLauncherForActivityResult(
-            remember {
-                object : ActivityResultContracts.OpenDocument() {
-                    override fun createIntent(
-                        context: android.content.Context,
-                        input: Array<String>,
-                    ) = super.createIntent(context, input).setType("audio/*")
-                }
-            }
-        ) {
-            if (it != null) model.open(it, ImportType.AUDIO)
-        }
+    val picker = rememberLauncherForActivityResult(OpenMediaDocument) {
+        if (it != null) model.open(it, ImportType.AUDIO)
+    }
     val open = { picker.launch(arrayOf("audio/*")) }
     val importNcm = { model.showBatch(true) }
     val audio = state.audio
@@ -97,7 +86,7 @@ internal fun AudioScreen(model: LabViewModel, state: LabState, active: Boolean) 
     var editTag by editor::tag
     var editPicture by editor::picture
     val coverPicker =
-        rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        rememberLauncherForActivityResult(OpenMediaDocument) { uri ->
             val request = editor.coverRequest
             editor.coverRequest = null
             if (uri != null && request != null)
@@ -126,7 +115,7 @@ internal fun AudioScreen(model: LabViewModel, state: LabState, active: Boolean) 
             Column(Modifier.weight(1f)) {
                 FileName(
                     audio.name, audio.sourceUri,
-                    MediaFiles.mime(audio.file, ImportType.AUDIO).takeUnless { it == "application/octet-stream" } ?: "audio/*",
+                    audio.sourceMime,
                     audio.sourceBytes,
                     R.string.original_duration to (
                         audio.sourceDuration?.takeIf { it > 0 }?.let(::playbackTime)
@@ -335,8 +324,9 @@ internal fun AudioScreen(model: LabViewModel, state: LabState, active: Boolean) 
                         }
                         if (editor.tool == AudioTool.INFO) {
                             InformationPanel(Modifier.padding(16.dp)) {
+                                val format = if (media.file == audio.file) audio.sourceFormat else media.file.extension
                                 Text(
-                                    "${media.file.extension.uppercase()} · ${Formatter.formatFileSize(context, media.file.length())}",
+                                    "${format.uppercase()} · ${Formatter.formatFileSize(context, media.file.length())}",
                                     style = MaterialTheme.typography.bodyMedium,
                                 )
                                 media.properties?.let { properties ->
