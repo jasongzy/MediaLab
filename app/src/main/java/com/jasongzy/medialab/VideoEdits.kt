@@ -267,6 +267,7 @@ internal data class VideoEdits(
 internal class VideoEditor(initial: VideoEdits) {
     val history = ToolHistory(initial)
     val original = initial
+    val current by derivedStateOf { history.value.next() }
     private var drafts by mutableStateOf(newDrafts())
     private val appliedDrafts = IdentityHashMap<VideoEdits, VideoDraft>()
     var tool by mutableStateOf(VideoTool.TIME)
@@ -343,19 +344,7 @@ internal class VideoEditor(initial: VideoEdits) {
     val draft
         get() = checkNotNull(drafts[tool])
 
-    val current
-        get() = history.value.next()
-
-    val pending
-        get() =
-            VideoTool.entries.filter { tool ->
-                tool.editable &&
-                    applyTool(tool)
-                        .copy(
-                            cropRatio = 0f,
-                            canvasRatio = 0f,
-                        ) != current
-            }
+    val pending by derivedStateOf { VideoTool.entries.filter { it.editable && applyTool(it) != current } }
 
     fun applyTool(tool: VideoTool): VideoEdits =
         if (tool == VideoTool.CLEAN) history.value.copy(clearMetadata = true, metadataEdits = emptyMap())

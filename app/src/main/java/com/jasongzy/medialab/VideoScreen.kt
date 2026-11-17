@@ -176,10 +176,7 @@ internal fun VideoScreen(model: LabViewModel, state: LabState, active: Boolean) 
                         )
                     },
                 ) {
-                    if (video.playbackFile == file && history.value == applied) {
-                        model.rememberPlaybackPosition(file, it)
-                        editor.positionMs = it
-                    }
+                    if (video.playbackFile == file && history.value == applied) editor.positionMs = it
                 }
             },
             controls = {

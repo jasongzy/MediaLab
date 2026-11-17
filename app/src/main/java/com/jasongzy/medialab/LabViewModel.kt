@@ -13,6 +13,7 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.viewModelScope
 import com.kyant.taglib.Picture
 import java.io.File
+import java.util.WeakHashMap
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -113,7 +114,7 @@ internal class LabViewModel(application: Application, savedState: SavedStateHand
     private var pendingPick: PixelPick? = null
     private val settings = context.getSharedPreferences("settings", 0)
     private var exportOptions: ExportOptions? = null
-    private val playbackPositions = mutableMapOf<File, Long>()
+    private val playbackPositions = WeakHashMap<File, Long>()
     private var history: PhotoHistory? = null
     private var resizePreview: ResizePreview? = null
     private var confirmationAnswer: CompletableDeferred<Boolean>? = null
@@ -193,9 +194,7 @@ internal class LabViewModel(application: Application, savedState: SavedStateHand
         playbackPositions[file] ?: 0
 
     fun rememberPlaybackPosition(file: File, position: Long) {
-        val retained = state.value.workingFiles
-        playbackPositions.keys.retainAll(retained)
-        if (file in retained) playbackPositions[file] = position
+        playbackPositions[file] = position
     }
 
     fun clearError() {

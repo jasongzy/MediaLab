@@ -975,15 +975,7 @@ internal object VideoRegression {
             idle()
             val audio = checkNotNull(model.state.value.audio)
             check(audio.sourceUri == null && model.state.value.tab == ImportType.AUDIO.ordinal)
-            onMain {
-                model.rememberPlaybackPosition(video.file, 400)
-                model.rememberPlaybackPosition(audio.file, 300)
-                check(
-                    model.playbackPosition(video.file) == 400L &&
-                        model.playbackPosition(audio.file) == 300L
-                )
-                model.open(Uri.fromFile(input), null)
-            }
+            onMain { model.open(Uri.fromFile(input), null) }
             reject(Confirmation.VIDEO)
             check(
                 model.state.value.video === video &&
