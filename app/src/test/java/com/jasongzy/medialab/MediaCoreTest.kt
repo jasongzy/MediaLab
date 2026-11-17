@@ -245,6 +245,8 @@ class MediaCoreTest {
         assertEquals(4, result.size)
         assertEquals(samples[0], result.first())
         assertTrue(result.all { it in samples })
+        val grays = (0..3).map { 0xff808080.toInt() + it * 0x010101 }
+        assertEquals(grays.toSet(), representativeColors(grays).toSet())
         assertTrue(representativeColors(listOf(0)).isEmpty())
     }
 

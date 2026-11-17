@@ -290,6 +290,22 @@ internal object Photos {
         )
     }
 
+    private fun PhotoInfo.readRegion(decoder: BitmapRegionDecoder, crop: Rect): Bitmap {
+        val (left, top) = rawPoint(crop.left, crop.top, this)
+        val (right, bottom) = rawPoint(crop.right, crop.bottom, this)
+        val raw = Rect(left, top, right, bottom).apply { sort() }
+        val region = decodeBounds(raw)
+        budget(region.width(), region.height(), if (config == Bitmap.Config.RGBA_F16) 4 else 2)
+        val bitmap = checkNotNull(decoder.decodeRegion(region, regionOptions()))
+        if (orientation == 1 && region == raw) return bitmap
+        return try {
+            Bitmap.createBitmap(bitmap, raw.left - region.left, raw.top - region.top,
+                raw.width(), raw.height(), orientationMatrix(orientation), false)
+        } finally {
+            bitmap.recycle()
+        }
+    }
+
     fun decode(file: File, info: PhotoInfo, crop: Rect? = null, keepHdr: Boolean = false): Bitmap {
         fun finish(bitmap: Bitmap): Bitmap {
             if (!keepHdr || !info.canKeepHdr) clearGainmap(bitmap)
@@ -318,41 +334,14 @@ internal object Photos {
                 val bitmap = decode(file, info, keepHdr = true)
                 return try { cropBitmap(bitmap, crop, true) } finally { bitmap.recycle() }
             }
-            val corners =
-                listOf(
-                        crop.left to crop.top,
-                        crop.right to crop.top,
-                        crop.left to crop.bottom,
-                        crop.right to crop.bottom,
-                    )
-                    .map { (x, y) -> rawPoint(x, y, info) }
-            val raw =
-                Rect(
-                    corners.minOf { it.first },
-                    corners.minOf { it.second },
-                    corners.maxOf { it.first },
-                    corners.maxOf { it.second },
-                )
-            val region = info.decodeBounds(raw)
-            budget(region.width(), region.height(), if (info.config == Bitmap.Config.RGBA_F16) 4 else 2)
             val decoder =
                 try {
                     BitmapRegionDecoder.newInstance(file.path)
                 } catch (_: java.io.IOException) {
+                    budget(crop.width(), crop.height(), if (info.config == Bitmap.Config.RGBA_F16) 4 else 2)
                     return decodeImage()
                 }
-            val bitmap =
-                try {
-                    checkNotNull(decoder.decodeRegion(region, info.regionOptions()))
-                } finally {
-                    decoder.recycle()
-                }
-            val selected = if (region == raw) bitmap else try {
-                Bitmap.createBitmap(bitmap, raw.left - region.left, raw.top - region.top, raw.width(), raw.height())
-            } finally {
-                bitmap.recycle()
-            }
-            return finish(orient(selected, info.orientation))
+            return try { finish(info.readRegion(decoder, crop)) } finally { decoder.recycle() }
         }
         budget(info.width, info.height, if (info.config == Bitmap.Config.RGBA_F16) 4 else 2)
         return decodeImage()
@@ -389,28 +378,21 @@ internal object Photos {
             else -> x to y
         }
 
-    private fun orient(bitmap: Bitmap, orientation: Int): Bitmap {
-        if (orientation == 1) return bitmap
-        val matrix =
-            Matrix().apply {
-                when (orientation) {
-                    2 -> setScale(-1f, 1f)
-                    3 -> setRotate(180f)
-                    4 -> setScale(1f, -1f)
-                    5 -> {
-                        setRotate(90f)
-                        postScale(-1f, 1f)
-                    }
-                    6 -> setRotate(90f)
-                    7 -> {
-                        setRotate(90f)
-                        postScale(1f, -1f)
-                    }
-                    8 -> setRotate(270f)
-                }
+    private fun orientationMatrix(orientation: Int) = Matrix().apply {
+        when (orientation) {
+            2 -> setScale(-1f, 1f)
+            3 -> setRotate(180f)
+            4 -> setScale(1f, -1f)
+            5 -> {
+                setRotate(90f)
+                postScale(-1f, 1f)
             }
-        return Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, false).also {
-            if (it !== bitmap) bitmap.recycle()
+            6 -> setRotate(90f)
+            7 -> {
+                setRotate(90f)
+                postScale(1f, -1f)
+            }
+            8 -> setRotate(270f)
         }
     }
 
@@ -426,6 +408,11 @@ internal object Photos {
         } finally {
             bitmap.recycle()
         }
+    }
+
+    private fun palettePositions(size: Int): IntProgression {
+        val spacing = maxOf(1, size / 128)
+        return spacing / 2 until size step spacing
     }
 
     suspend fun palette(file: File, info: PhotoInfo): List<Int> {
@@ -448,18 +435,18 @@ internal object Photos {
         }
         return try {
             val samples = ArrayList<Int>()
-            val options = info.regionOptions()
-            val stepY = maxOf(1, info.rawHeight / 128)
-            val stepX = maxOf(1, info.rawWidth / 128)
-            for (y in stepY / 2 until info.rawHeight step stepY) {
+            val columns = palettePositions(info.width)
+            val sampleRows = palettePositions(info.height)
+            val stripBudget = Runtime.getRuntime().maxMemory() / 64
+            val rowsPerStrip = (stripBudget / bytesPerPixel / info.width / sampleRows.step).toInt().coerceAtLeast(1)
+            for (rows in sampleRows.chunked(rowsPerStrip)) {
                 currentCoroutineContext().ensureActive()
-                val region = info.decodeBounds(Rect(0, y, info.rawWidth, y + 1))
-                val row = checkNotNull(decoder.decodeRegion(region, options))
+                val crop = Rect(0, rows.first(), info.width, rows.last() + 1)
+                val strip = info.readRegion(decoder, crop)
                 try {
-                    for (x in stepX / 2 until info.rawWidth step stepX) samples +=
-                        row.getPixel(x, y - region.top)
+                    for (y in rows) for (x in columns) samples += strip.getPixel(x, y - crop.top)
                 } finally {
-                    row.recycle()
+                    strip.recycle()
                 }
             }
             representativeColors(samples)
@@ -470,11 +457,10 @@ internal object Photos {
 
     suspend fun palette(bitmap: Bitmap): List<Int> {
         val samples = ArrayList<Int>()
-        val stepX = maxOf(1, bitmap.width / 128)
-        val stepY = maxOf(1, bitmap.height / 128)
-        for (y in stepY / 2 until bitmap.height step stepY) {
+        val columns = palettePositions(bitmap.width)
+        for (y in palettePositions(bitmap.height)) {
             currentCoroutineContext().ensureActive()
-            for (x in stepX / 2 until bitmap.width step stepX) samples += bitmap.getPixel(x, y)
+            for (x in columns) samples += bitmap.getPixel(x, y)
         }
         return representativeColors(samples)
     }
@@ -977,19 +963,11 @@ internal object Photos {
 }
 
 internal fun representativeColors(samples: List<Int>): List<Int> {
-    val bins =
-        samples
-            .filter { it ushr 24 > 0 }
-            .groupBy {
-                (((it ushr 19) and 31) shl 10) or
-                    (((it ushr 11) and 31) shl 5) or
-                    ((it ushr 3) and 31)
-            }
-            .values
-            .sortedByDescending { it.size }
+    val colors = samples.asSequence().filter { it ushr 24 != 0 }.map { it or (255 shl 24) }
+    val bins = colors.groupBy { it and 0xf8f8f8 }.values.sortedByDescending { it.size }
     val selected = mutableListOf<Int>()
     for (bin in bins) {
-        val color = bin.groupingBy { it and 0xffffff }.eachCount().maxBy { it.value }.key
+        val color = bin.groupingBy { it }.eachCount().maxBy { it.value }.key
         if (
             selected.all { other ->
                 val distance =
@@ -1000,7 +978,11 @@ internal fun representativeColors(samples: List<Int>): List<Int> {
                 distance >= 32 * 32
             }
         )
-            selected += color or (255 shl 24)
+            selected += color
+        if (selected.size == 4) return selected
+    }
+    for ((color, _) in colors.groupingBy { it }.eachCount().entries.sortedByDescending { it.value }) {
+        if (color !in selected) selected += color
         if (selected.size == 4) break
     }
     return selected
