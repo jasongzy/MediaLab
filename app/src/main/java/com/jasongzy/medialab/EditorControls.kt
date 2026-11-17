@@ -118,7 +118,8 @@ internal fun ColorField(
     pick: (() -> Unit)? = null,
     change: (Int) -> Unit,
 ) {
-    var hex by rememberSaveable(color) { mutableStateOf("%06X".format(color and 0xffffff)) }
+    var draft by rememberSaveable(color) { mutableStateOf<String?>(null) }
+    val hex = draft ?: remember(color) { "%06X".format(color and 0xffffff) }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -136,11 +137,16 @@ internal fun ColorField(
                         }
                         .map { it.first to stringResource(it.second) },
                     color,
-                    change,
-                )
+                ) {
+                    draft = null
+                    change(it)
+                }
             }
             if (pick != null)
-                ToolButton(R.drawable.ic_dropper, R.string.pick_from_image, action = pick)
+                ToolButton(R.drawable.ic_dropper, R.string.pick_from_image) {
+                    draft = null
+                    pick()
+                }
         }
         if (color ushr 24 != 0)
             OutlinedTextField(
@@ -150,7 +156,7 @@ internal fun ColorField(
                         value.length <= 6 &&
                             value.all { it.isDigit() || it.lowercaseChar() in 'a'..'f' }
                     ) {
-                        hex = value
+                        draft = value
                         if (value.length == 6) change(value.toInt(16) or (255 shl 24))
                     }
                 },

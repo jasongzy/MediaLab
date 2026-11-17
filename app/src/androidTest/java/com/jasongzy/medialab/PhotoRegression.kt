@@ -984,11 +984,24 @@ internal class PhotoRegression(
                 draft.resize.method = 0
                 draft.export = ExportOptions(format = ImageFormat.JPEG, quality = 75)
                 draft.cropHistory.undo()
+                draft.tool = PhotoTool.COVER
+                draft.dropper = true
             }
             checkPicking(model, reference)
+            check(draft.color == reference.getPixel(reference.width - 1, reference.height - 1))
             check(model.state.value.photo.editor === draft)
             check(draft.cropHistory.canRedo && draft.resize.width == 32 && draft.resize.method == 0)
             instrumentation.runOnMainSync {
+                model.pick(0, 0)
+                draft.dropper = false
+                draft.color = Color.MAGENTA
+                draft.dropper = true
+            }
+            withTimeout(5_000) { model.state.first { it.photo.picked == reference.getPixel(0, 0) } }
+            check(draft.color == Color.MAGENTA)
+            instrumentation.runOnMainSync {
+                draft.dropper = false
+                draft.tool = PhotoTool.CROP
                 draft.cropHistory.redo()
                 check(draft.cropHistory.value.bounds == Rect(0, 0, 16, 16))
                 model.pick(3, 2)

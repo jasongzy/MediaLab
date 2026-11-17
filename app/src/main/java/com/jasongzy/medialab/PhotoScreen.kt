@@ -119,8 +119,6 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
     val bounds = frameHistory.value.bounds
     val ratio = frameHistory.value.ratio
     var background by editor::background
-    var rotationBackground by editor::rotationBackground
-    var cutoutBackground by editor::cutoutBackground
     val coverHistory = editor.coverHistory
     val cutout = editor.cutout.takeIf { tool == PhotoTool.BACKGROUND }
     val brushHistory = cutout?.history ?: coverHistory
@@ -137,19 +135,8 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
     var dropper by editor::dropper
     var pixelX by editor::pixelX
     var pixelY by editor::pixelY
-    LaunchedEffect(photo.picked, dropper, tool) {
-        if (dropper && photo.picked != null) {
-            val picked = photo.picked or (255 shl 24)
-            when (tool) {
-                PhotoTool.EXPAND -> background = picked
-                PhotoTool.ROTATE -> rotationBackground = picked
-                PhotoTool.BACKGROUND -> cutoutBackground = picked
-                else -> color = picked
-            }
-        }
-    }
-    LaunchedEffect(photo.frame, tool, dropper) {
-        if (tool == PhotoTool.COLORS || dropper) model.pick(pixelX, pixelY)
+    LaunchedEffect(photo.frame, tool) {
+        if (tool == PhotoTool.COLORS) model.pick(pixelX, pixelY)
     }
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {
@@ -224,7 +211,7 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
                     toolHistory.revision,
                     when {
                         expanding -> background
-                        tool == PhotoTool.ROTATE -> rotationBackground
+                        tool == PhotoTool.ROTATE -> editor.rotationBackground
                         cutout != null -> if (cutout.keep) android.graphics.Color.WHITE else android.graphics.Color.TRANSPARENT
                         else -> color
                     },
@@ -359,7 +346,7 @@ internal fun PhotoScreen(model: LabViewModel, state: LabState) {
                             }
                         }
                         PhotoTool.ROTATE -> RotationPanel(editor) { selection ->
-                            model.rotate(selection, rotationBackground)
+                            model.rotate(selection, editor.rotationBackground)
                         }
                         PhotoTool.BACKGROUND -> BackgroundPanel(model, photo, state.storedMask != null)
                         PhotoTool.COVER -> {
@@ -1284,8 +1271,8 @@ private fun ColorSwatch(color: Int, modifier: Modifier = Modifier) {
     val scope = rememberCoroutineScope()
     val hex = "%06X".format(color and 0xffffff)
     val copied = stringResource(R.string.color_copied, hex)
-    val foreground =
-        if (android.graphics.Color.luminance(color) > 0.45f) Color.Black else Color.White
+    val luminance = android.graphics.Color.luminance(color) + 0.05f
+    val foreground = if (luminance / 0.05f >= 1.05f / luminance) Color.Black else Color.White
     Surface(
         onClick = {
             scope.launch {

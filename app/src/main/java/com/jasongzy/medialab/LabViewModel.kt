@@ -110,13 +110,15 @@ internal class LabViewModel(application: Application, savedState: SavedStateHand
     private val workspace = WorkspaceCache(application.cacheDir, NcmBatch::retainsInput) { state.value.workingFiles }
     private var job: Job? = null
     private var pickJob: Job? = null
-    private var pendingPick: Pair<Int, Int>? = null
+    private var pendingPick: PixelPick? = null
     private val settings = context.getSharedPreferences("settings", 0)
     private var exportOptions: ExportOptions? = null
     private val playbackPositions = mutableMapOf<File, Long>()
     private var history: PhotoHistory? = null
     private var resizePreview: ResizePreview? = null
     private var confirmationAnswer: CompletableDeferred<Boolean>? = null
+
+    private data class PixelPick(val x: Int, val y: Int, val applyColor: ((Int) -> Unit)?)
 
     private data class ResizePreview(
         val source: PhotoFrame,
@@ -747,6 +749,7 @@ internal class LabViewModel(application: Application, savedState: SavedStateHand
                     Photos.preview(history.bitmap(frame), keepHdr = false) else preview
                 draft.restore(editor, sourcePreview)
                 editor.tool = draft.tool
+                editor.dropper = false
             }
             if (!metadataOnly) discardResize()
             history.move(position)
@@ -1013,13 +1016,15 @@ internal class LabViewModel(application: Application, savedState: SavedStateHand
 
     fun pick(x: Int, y: Int) {
         if (state.value.busy) return
-        val frame = state.value.photo.frame ?: return
-        pendingPick = x to y
+        val photo = state.value.photo
+        val frame = photo.frame ?: return
+        val editor = checkNotNull(photo.editor)
+        pendingPick = PixelPick(x, y, editor.applyPickedColor)
         if (pickJob?.isActive == true) return
         pickJob = viewModelScope.launch {
             try {
                 while (true) {
-                    val (sampleX, sampleY) = pendingPick ?: break
+                    val (sampleX, sampleY, applyColor) = pendingPick ?: break
                     pendingPick = null
                     val color =
                         withContext(Dispatchers.IO) {
@@ -1028,8 +1033,11 @@ internal class LabViewModel(application: Application, savedState: SavedStateHand
                                 else Photos.pixel(frame, sampleX, sampleY)
                             }
                         }
-                    if (color != null && state.value.photo.frame === frame && !state.value.busy)
+                    if (color != null && state.value.photo.frame === frame && !state.value.busy) {
+                        // A delayed sample belongs to the eyedropper that requested it.
+                        if (applyColor === editor.applyPickedColor) applyColor?.invoke(color or (255 shl 24))
                         mutable.update { it.copy(photo = it.photo.copy(picked = color)) }
+                    }
                     delay(32)
                 }
             } catch (_: CancellationException) {} catch (error: Exception) {

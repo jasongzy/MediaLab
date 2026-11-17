@@ -70,7 +70,20 @@ internal class PhotoEditorState(info: PhotoInfo, hasAlpha: Boolean, previous: Ph
     )
     var color: Int by mutableIntStateOf(previous?.color ?: Color.WHITE)
     var lossless: Boolean by mutableStateOf(previous?.lossless ?: false)
-    var dropper by mutableStateOf(false)
+    var applyPickedColor by mutableStateOf<((Int) -> Unit)?>(null)
+        private set
+    var dropper: Boolean
+        get() = applyPickedColor != null
+        set(active) {
+            if (active == dropper) return
+            applyPickedColor = if (!active) null else when (tool) {
+                PhotoTool.EXPAND -> { picked -> background = picked }
+                PhotoTool.ROTATE -> { picked -> rotationBackground = picked }
+                PhotoTool.BACKGROUND -> { picked -> cutoutBackground = picked }
+                PhotoTool.COVER -> { picked -> color = picked }
+                else -> null
+            }
+        }
     var pixelX by mutableIntStateOf(info.width / 2)
     var pixelY by mutableIntStateOf(info.height / 2)
     var export: ExportOptions by mutableStateOf(previous?.export ?: ExportOptions())
