@@ -261,6 +261,6 @@
     <string name="edit_metadata">编辑元数据</string>
     <string name="edit_metadata_hint">点击条目以修改或删除</string>
     <string name="invalid_metadata">元数据值无效，请检查格式和取值范围</string>
-    <string name="metadata_not_saved">此格式无法保存该元数据修改，请选择其他导出格式</string>
+    <string name="metadata_not_saved">此格式无法保留当前元数据，请选择其他导出格式</string>
     <string name="photo_metadata_format">请选择 JPEG、PNG 或 WebP 以保存元数据修改</string>
 </resources>

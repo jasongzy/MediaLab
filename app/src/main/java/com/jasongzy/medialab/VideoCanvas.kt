@@ -300,7 +300,7 @@ internal fun VideoCanvas(
                                     shape,
                                 )
                             else null
-                        if (painting && cover != null && !cover.visible(editor.positionMs))
+                        if (painting && cover != null && !initial.showsCover(editor.positionMs))
                             editor.seekPosition = cover.startMs
                         if (painting && shape == CoverShape.BRUSH) brushPoint = point(down.position)
                         var transform = false
@@ -433,7 +433,7 @@ internal fun VideoCanvas(
                 val cover = edits?.cover
                 if (
                     cover != null &&
-                        (cover.visible(editor.positionMs) ||
+                        (edits.showsCover(editor.positionMs) ||
                             brushPoint != null ||
                             selectionStroke != null)
                 )

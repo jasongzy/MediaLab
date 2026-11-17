@@ -11,6 +11,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.IntSize
 import java.io.File
+import java.io.RandomAccessFile
 import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.ceil
@@ -45,6 +46,11 @@ internal data class VideoInfo(
     val color: String,
     val videoIndex: Long,
     val metadata: List<VideoMetadata>,
+    val hasCoverArt: Boolean = false,
+    val frameCount: Long? = null,
+    val videoStartMs: Long = 0,
+    val videoEndMs: Long = durationMs,
+    val inputOffsetMs: Long = 0,
 ) {
     val size
         get() = IntSize(width, height)
@@ -74,6 +80,8 @@ internal data class VideoInfo(
             }).takeIf { it.entries.isNotEmpty() }
         }
 
+    fun containerTags(edits: VideoEdits) = metadata(edits).firstOrNull { it.streamIndex == null }?.entries.orEmpty()
+
     fun editMetadata(edits: VideoEdits, tag: VideoTag, value: String?): VideoEdits {
         val original = requireNotNull(descriptiveMetadata(edits.clearMetadata)
             .firstOrNull { it.streamIndex == tag.streamIndex }?.entries?.firstOrNull { it.first == tag.key }).second
@@ -82,15 +90,22 @@ internal data class VideoInfo(
         return edits.copy(metadataEdits = changes)
     }
 
-    fun edits() =
-        VideoEdits(
+    fun edits(gifFrameTimes: LongArray = longArrayOf()): VideoEdits {
+        val format = exportFormat ?: VideoFormat.MP4
+        val rate = if (gifFrameTimes.size > 1) {
+            // Use the lowest integer frame rate that can represent every GIF frame boundary.
+            tailrec fun gcd(a: Long, b: Long): Long = if (b == 0L) a else gcd(b, a % b)
+            (1000 / gifFrameTimes.fold(gcd(1000, durationMs), ::gcd)).toInt()
+        } else fps.roundToInt()
+        return VideoEdits(
             durationMs,
             IntRect(0, 0, width, height),
             IntRect(0, 0, width, height),
             bitrateKbps = (bitrate / 1000).coerceIn(500, 200000).toInt(),
-            fps = fps.roundToInt().coerceIn(1, 120),
-            format = exportFormat ?: VideoFormat.MP4,
+            fps = rate.coerceIn(1, format.maxFps),
+            format = format,
         )
+    }
 }
 
 internal data class VideoPoster(val file: File, val positionMs: Long, val bitmap: Bitmap)
@@ -101,8 +116,9 @@ internal class VideoDocument(
     val sourceUri: Uri?,
     val info: VideoInfo,
     val playable: File,
+    val gifFrameTimes: LongArray = longArrayOf(),
 ) {
-    val editor = VideoEditor(info.edits())
+    val editor = VideoEditor(info.edits(gifFrameTimes))
     val sourceMime get() = MediaFiles.mime(info.format, ImportType.VIDEO).takeUnless { it == "application/octet-stream" } ?: "video/*"
     val previews = VideoPreviewCache()
     var selectedAudioTrack by mutableStateOf(info.audioTracks.firstOrNull()?.index)
@@ -114,6 +130,23 @@ internal class VideoDocument(
     var poster by mutableStateOf<VideoPoster?>(null)
     val playbackFile
         get() = appliedPreview ?: playable
+
+    fun framePosition(positionMs: Long): Pair<Long, Long> {
+        val preview = appliedInfo
+        if (preview == null && gifFrameTimes.isNotEmpty()) {
+            val index = gifFrameTimes.binarySearch(positionMs)
+            val frame = if (index >= 0) index else (-index - 2).coerceAtLeast(0)
+            return frame + 1L to gifFrameTimes.size.toLong()
+        }
+        val track = preview ?: info
+        val fps = if (preview == null) info.fps else editor.history.value.previewFps.toDouble()
+        val duration = track.videoEndMs - track.videoStartMs
+        val total = track.frameCount ?: ceil(duration * fps / 1000).toLong().coerceAtLeast(1)
+        val elapsed = (positionMs - track.videoStartMs).coerceAtLeast(0)
+        val frame = if (elapsed >= duration) total
+            else (elapsed * fps / 1000).toLong().coerceAtMost(total - 1) + 1
+        return frame to total
+    }
 
     val workingFiles
         get() = setOfNotNull(file, playable, appliedPreview, previewFile?.takeIf { editor.showPreview })
@@ -127,6 +160,16 @@ internal class VideoDocument(
 }
 
 internal object Videos {
+    // The MOV and MP4 muxers have different native tag sets; other keys need an mdta table.
+    private val commonMovieTags = setOf("artist", "title", "album", "date", "comment", "genre", "copyright",
+        "keywords")
+    private val nativeMovieTags = mapOf(
+        VideoFormat.MOV to commonMovieTags + setOf("author", "make", "model", "location", "xmp"),
+        VideoFormat.MP4 to commonMovieTags + setOf("album_artist", "composer", "grouping", "lyrics",
+            "description", "synopsis", "show", "episode_id", "network", "episode_sort", "season_number", "media_type",
+            "hd_video", "gapless_playback", "compilation", "track", "disc"),
+    )
+
     fun normalizeMetadata(tag: VideoTag, value: String?, error: Int = R.string.invalid_metadata): String? {
         if (value == null) return null
         if (value.length > 32768 || '\u0000' in value)
@@ -144,7 +187,42 @@ internal object Videos {
         }
     }
 
-    private fun verifyMetadata(source: VideoInfo, edits: VideoEdits, result: VideoInfo) {
+    private fun needsKeyedTag(key: String, value: String, nativeTags: Set<String>): Boolean {
+        val tag = key.lowercase(Locale.ROOT)
+        if (tag == "creation_time") return try {
+            val date = java.time.OffsetDateTime.parse(value).toInstant()
+            // The muxer uses whole seconds since 1904 and treats Unix time zero as unset.
+            date.nano != 0 || date.epochSecond !in 1..(0xffff_ffffL - 2_082_844_800L)
+        } catch (_: java.time.DateTimeException) {
+            true
+        }
+        if (tag !in nativeTags) return true
+        fun nativeInteger(text: String, range: IntRange) =
+            text.toIntOrNull()?.takeIf { it in range }?.toString() == text
+        return when (tag) {
+            "track", "disc" -> value.split('/', limit = 3).let { parts ->
+                parts.size > 2 || parts.any { !nativeInteger(it, 1..Short.MAX_VALUE.toInt()) }
+            }
+            "episode_sort", "season_number", "media_type", "hd_video", "gapless_playback", "compilation" ->
+                !nativeInteger(value, 0..255)
+            else -> false
+        }
+    }
+
+    private suspend fun verifyOutput(source: VideoInfo, edits: VideoEdits, file: File): VideoInfo {
+        val result = inspect(file)
+        if (edits.format in nativeMovieTags) {
+            val written = result.metadata.firstOrNull { it.streamIndex == null }?.entries.orEmpty()
+                .associate { it.first.lowercase(Locale.ROOT) to it.second }
+            for ((key, value) in source.containerTags(edits)) {
+                val actual = written[key.lowercase(Locale.ROOT)] ?: throw UnsupportedMediaException(R.string.metadata_not_saved)
+                if (actual != value) {
+                    val tag = VideoTag(null, key)
+                    if (normalizeMetadata(tag, actual, R.string.metadata_not_saved) != normalizeMetadata(tag, value, R.string.metadata_not_saved))
+                        throw UnsupportedMediaException(R.string.metadata_not_saved)
+                }
+            }
+        }
         for ((tag, expected) in edits.metadataEdits) {
             val stream = when (tag.streamIndex) {
                 null -> null
@@ -160,8 +238,12 @@ internal object Videos {
             val normalized = normalizeMetadata(tag, actual, R.string.metadata_not_saved)
             if (normalized != expected) throw UnsupportedMediaException(R.string.metadata_not_saved)
         }
+        return result
     }
     private val protocols = listOf("-protocol_whitelist", "file,pipe")
+    private val matroskaDuration = Regex("""(\d+):([0-5]\d):([0-5]\d(?:\.\d+)?)""")
+    private val vp9 = listOf("-c:v", "libvpx-vp9", "-deadline", "realtime", "-cpu-used", "6", "-row-mt", "1")
+    private const val yuv420 = "pad=ceil(iw/2)*2:ceil(ih/2)*2:color=black,scale=out_color_matrix=bt709:out_range=tv,format=yuv420p"
 
     suspend fun inspect(file: File): VideoInfo {
         val info = MediaProcessing.inspect(file, "mov,matroska,webm,avi,gif,mpeg,mpegts,flv,asf,ogg")
@@ -185,24 +267,27 @@ internal object Videos {
         val swapped = abs(rotation % 180) == 90
         val width = if (swapped) rawHeight else rawWidth
         val height = if (swapped) rawWidth else rawHeight
-        val duration =
-            ((properties.optDouble("duration", 0.0).takeIf { it > 0 }
-                    ?: info.duration?.toDoubleOrNull()
-                    ?: 0.0) * 1000)
-                .toLong()
-        if (width <= 0 || height <= 0 || duration <= 0)
-            throw UnsupportedMediaException(R.string.select_video_only)
         val transfer = properties.optString("color_transfer")
         val format = when (val container = info.container()) {
             "m4a" -> "mp4"
-            "matroska" -> {
-                // FFprobe shares a demuxer for Matroska and WebM; the EBML header identifies WebM.
-                val header = ByteArray(256)
-                file.inputStream().use { it.read(header) }
-                if (header.toString(Charsets.ISO_8859_1).contains("webm")) "webm" else "mkv"
-            }
+            "matroska" -> matroskaFormat(file)
             else -> container
         }
+        val inputStart = info.startTime?.toDoubleOrNull() ?: 0.0
+        // Matroska playback uses segment timestamps; FFmpeg rebases input to its first packet.
+        val matroska = format == "mkv" || format == "webm"
+        val origin = if (matroska) 0.0 else inputStart
+        val start = properties.optDouble("start_time", inputStart) - origin
+        val end = properties.optDouble("duration").takeIf { it > 0 }?.let { start + it }
+            ?: if (matroska)
+                // Matroska writes the track end timestamp in DURATION.
+                matroskaDuration.matchEntire(stream.tags?.optString("DURATION").orEmpty())?.destructured?.let { (h, m, s) ->
+                    h.toDouble() * 3600 + m.toInt() * 60 + s.toDouble()
+                } else null
+        val duration = mediaMilliseconds(info.duration?.toDoubleOrNull()?.takeIf { it > 0 } ?: end ?: 0.0)
+        if (width <= 0 || height <= 0 || duration <= 0)
+            throw UnsupportedMediaException(R.string.select_video_only)
+        val startMs = mediaMilliseconds(start).coerceIn(0, duration - 1)
         return VideoInfo(
             width,
             height,
@@ -253,24 +338,66 @@ internal object Videos {
                 addTags(null, info.tags)
                 info.streams.forEach { addTags(it.index, it.allProperties.optJSONObject("tags")) }
             },
+            info.streams.any { it.allProperties.optJSONObject("disposition")?.optInt("attached_pic") == 1 },
+            frameCount = properties.optLong("nb_frames").takeIf { it > 0 },
+            inputOffsetMs = mediaMilliseconds(inputStart - origin),
+            videoStartMs = startMs,
+            videoEndMs = end?.takeIf { it > start }?.let {
+                mediaMilliseconds(it).coerceIn(startMs + 1, duration)
+            } ?: duration,
         )
     }
 
-    private fun input(file: File, startMs: Long? = null) =
-        (if (startMs == null) emptyList()
-        else listOf("-ss", mediaSeconds(startMs), "-noaccurate_seek")) +
-            protocols +
-            listOf("-threads", "2", "-i", file.path)
+    // FFprobe shares a demuxer for Matroska and WebM. Only the EBML DocType identifies the container.
+    private fun matroskaFormat(file: File): String = RandomAccessFile(file, "r").use { input ->
+        fun vint(keepMarker: Boolean): Long {
+            val first = input.read()
+            if (first <= 0) return -1
+            val marker = Integer.highestOneBit(first)
+            var value = (if (keepMarker) first else first xor marker).toLong()
+            repeat(7 - marker.countTrailingZeroBits()) {
+                val byte = input.read()
+                if (byte < 0) return -1
+                value = (value shl 8) or byte.toLong()
+            }
+            return value
+        }
+        if (vint(true) != 0x1A45DFA3L) return@use "mkv"
+        val headerSize = vint(false)
+        if (headerSize !in 1..(input.length() - input.filePointer)) return@use "mkv"
+        val end = input.filePointer + headerSize
+        while (input.filePointer < end) {
+            val id = vint(true)
+            val size = vint(false)
+            if (id < 0 || size !in 0..(end - input.filePointer)) break
+            if (id == 0x4282L) {
+                if (size >= 4) {
+                    val type = ByteArray(4).also(input::readFully).toString(Charsets.US_ASCII)
+                    if (type == "webm" && (size == 4L || input.read() == 0)) return@use "webm"
+                }
+                break
+            }
+            input.seek(input.filePointer + size)
+        }
+        "mkv"
+    }
+
+    private fun input(file: File, info: VideoInfo? = null, startMs: Long = 0): List<String> {
+        val offset = info?.inputOffsetMs ?: 0L
+        val timing = when {
+            startMs > 0 && startMs > offset -> listOf("-ss", mediaSeconds(startMs - offset), "-noaccurate_seek")
+            startMs != offset -> listOf("-itsoffset", mediaSeconds(offset - startMs))
+            else -> emptyList()
+        }
+        return timing + protocols + listOf("-threads", "2", "-i", file.path)
+    }
 
     private fun audioFilter(steps: List<VideoEdits>) =
-        steps
-            .mapIndexed { index, step ->
-                val start = if (index == 0) 0 else step.startMs
-                "atrim=start=${mediaSeconds(start)}:duration=${mediaSeconds(step.endMs - step.startMs)}," +
-                    "asetpts=PTS-${mediaSeconds(start)}/TB,aresample=async=1:first_pts=0," +
-                    step.time.audioOutputFilter()
-            }
-            .joinToString(",")
+        steps.joinToString(",") { step ->
+            val start = mediaSeconds(step.startMs)
+            "atrim=start=$start:end=${mediaSeconds(step.endMs)},asetpts=PTS-$start/TB," +
+                "aresample=async=1:first_pts=0," + step.time.audioOutputFilter()
+        }
 
     private fun renderSteps(info: VideoInfo, edits: VideoEdits): List<VideoEdits> =
         edits.steps
@@ -335,7 +462,7 @@ internal object Videos {
         directory: File,
         temporary: MutableList<File>,
         index: Int,
-        timed: Boolean,
+        frames: LongRange? = null,
     ): String? {
         if (cover.strokes.isEmpty()) return null
         val left =
@@ -377,28 +504,43 @@ internal object Videos {
         } finally {
             bitmap.recycle()
         }
-        // Compare integer AVTB timestamps so floating-point rounding cannot exclude a boundary
-        // frame.
-        // The generated path is private app storage, not an imported filename.
         return "null[base$index];movie=filename=${file.path}:dec_threads=1[cover$index];" +
             "[base$index][cover$index]overlay=x=${bounds.left}:y=${bounds.top}:format=auto" +
-            if (timed)
-                ":enable='gte(round(t*1000000),${cover.startMs * 1000})*lt(round(t*1000000),${cover.endMs * 1000})'"
-            else ""
+            if (frames != null) ":enable='between(n,${frames.first},${frames.last})'" else ""
     }
 
-    private fun metadataOptions(info: VideoInfo, edits: VideoEdits, audioTrack: Long? = null): List<String> {
-        val args = mutableListOf("-map_metadata", if (edits.clearMetadata) "-1" else "0", "-map_chapters", "-1")
-        if (edits.clearMetadata) args += listOf("-map_metadata:s", "-1", "-metadata", "encoder=", "-metadata:s", "encoder=")
-        val streams = if (audioTrack != null) listOf(audioTrack)
-            else listOf(info.videoIndex) + if (edits.mute || edits.format == VideoFormat.GIF) emptyList() else info.audioTracks.map { it.index }
-        if (!edits.clearMetadata) streams.forEachIndexed { index, source ->
-            args += listOf("-map_metadata:s:$index", "0:s:$source")
+    private fun metadataOptions(
+        info: VideoInfo,
+        edits: VideoEdits,
+        inputIndex: Int = 0,
+        inheritStreamTags: Boolean = false,
+    ): List<String> {
+        val keepChapters = !edits.clearMetadata && edits.format != VideoFormat.GIF &&
+            edits.steps.all { it.time == MediaTimeEdit(info.durationMs) }
+        val nativeTags = nativeMovieTags[edits.format]
+        // FFmpeg writes attached MP4 artwork only with its native tags.
+        val keyedTags = if (nativeTags != null && !(inheritStreamTags && info.hasCoverArt))
+            info.containerTags(edits).takeIf { tags -> tags.any { (key, value) -> needsKeyedTag(key, value, nativeTags) } }
+        else null
+        val args = mutableListOf("-map_metadata", if (edits.clearMetadata || keyedTags != null) "-1" else inputIndex.toString(),
+            "-map_chapters", if (keepChapters) inputIndex.toString() else "-1")
+        if (keyedTags != null) {
+            args += listOf("-movflags", "+use_metadata_tags")
+            keyedTags.forEach { (key, value) -> args += listOf("-metadata", "$key=$value") }
         }
-        edits.metadataEdits.forEach { (tag, value) ->
-            val index = tag.streamIndex?.let(streams::indexOf)
-            if (index == null || index >= 0)
-                args += listOf(if (index == null) "-metadata" else "-metadata:s:$index", "${tag.key}=${value.orEmpty()}")
+        if (edits.clearMetadata) args += listOf("-map_metadata:s", "-1", "-metadata", "encoder=", "-metadata:s", "encoder=")
+        val streams = buildMap {
+            put(info.videoIndex, "V:0")
+            if (!edits.mute && edits.format != VideoFormat.GIF)
+                info.audioTracks.forEachIndexed { index, track -> put(track.index, "a:$index") }
+        }
+        if (!edits.clearMetadata && !inheritStreamTags) streams.forEach { (source, target) ->
+            args += listOf("-map_metadata:s:$target", "$inputIndex:s:$source")
+        }
+        for ((tag, value) in edits.metadataEdits) {
+            if (keyedTags != null && tag.streamIndex == null) continue
+            val option = if (tag.streamIndex == null) "-metadata" else "-metadata:s:${streams[tag.streamIndex] ?: continue}"
+            args += listOf(option, "${tag.key}=${value.orEmpty()}")
         }
         return args
     }
@@ -406,7 +548,7 @@ internal object Videos {
     fun canCopy(info: VideoInfo, edits: VideoEdits) =
         edits.format != VideoFormat.GIF &&
             (info.exportFormat == edits.format || when (edits.format) {
-                VideoFormat.MP4 -> info.codec in setOf("h264", "hevc", "av1", "mpeg4")
+                VideoFormat.MP4 -> info.codec in setOf("h264", "hevc", "av1", "vp9", "mpeg4")
                 VideoFormat.MOV -> info.codec in setOf("h264", "hevc", "prores", "mjpeg", "mpeg4")
                 VideoFormat.WEBM -> info.codec in setOf("vp8", "vp9", "av1")
                 VideoFormat.MKV -> info.codec in setOf("h264", "hevc", "av1", "vp8", "vp9", "mpeg4", "mpeg2video", "ffv1", "prores", "mjpeg", "theora")
@@ -416,6 +558,28 @@ internal object Videos {
             edits.bitrateKbps == info.edits().bitrateKbps &&
             edits.steps.all { it.isIdentity(info.size, info.durationMs) }
 
+    private fun remuxStreams(info: VideoInfo, edits: VideoEdits): List<String> = buildList {
+        if (info.exportFormat == edits.format) {
+            if (edits.clearMetadata) addAll(listOf("-map", "0:V", "-map", "0:a?", "-map", "0:s?"))
+            else addAll(listOf("-map", "0"))
+            if (edits.mute) addAll(listOf("-map", "-0:a?"))
+            addAll(listOf("-c", "copy"))
+            return@buildList
+        }
+        addAll(listOf("-map", "0:${info.videoIndex}", "-c:v", "copy"))
+        if (!edits.mute) info.audioTracks.forEachIndexed { index, track ->
+            val compatible = when (edits.format) {
+                VideoFormat.MP4 -> track.codec in setOf("aac", "mp3", "ac3", "eac3", "alac", "opus")
+                VideoFormat.MOV -> track.codec in setOf("aac", "mp3", "ac3", "eac3", "alac", "pcm_s16le", "pcm_s24le", "pcm_s32le")
+                VideoFormat.WEBM -> track.codec in setOf("opus", "vorbis")
+                VideoFormat.MKV -> track.codec in setOf("aac", "mp3", "flac", "opus", "vorbis", "ac3", "eac3", "dts", "alac", "pcm_s16le", "pcm_s24le", "pcm_s32le")
+                VideoFormat.GIF -> false
+            }
+            addAll(listOf("-map", "0:${track.index}", "-c:a:$index",
+                if (compatible) "copy" else if (edits.format == VideoFormat.WEBM) "libopus" else "aac"))
+        }
+    }
+
     suspend fun export(
         file: File,
         info: VideoInfo,
@@ -423,41 +587,38 @@ internal object Videos {
         target: File,
         stage: (Int) -> Unit = {},
         progress: (Long) -> Unit = {},
-    ) {
-        edits.validate(info.size, info.durationMs)
+    ): VideoInfo {
         if (canCopy(info, edits)) {
             try {
-                val args = input(file) + listOf("-map", "0:${info.videoIndex}", "-c:v", "copy")
-                val audio = mutableListOf<String>()
-                if (!edits.mute) info.audioTracks.forEachIndexed { index, track ->
-                    val compatible = info.exportFormat == edits.format || when (edits.format) {
-                        VideoFormat.MP4 -> track.codec in setOf("aac", "mp3", "ac3", "eac3", "alac")
-                        VideoFormat.MOV -> track.codec in setOf("aac", "mp3", "ac3", "eac3", "alac", "pcm_s16le", "pcm_s24le", "pcm_s32le")
-                        VideoFormat.WEBM -> track.codec in setOf("opus", "vorbis")
-                        VideoFormat.MKV -> track.codec in setOf("aac", "mp3", "flac", "opus", "vorbis", "ac3", "eac3", "dts", "alac", "pcm_s16le", "pcm_s24le", "pcm_s32le")
-                        VideoFormat.GIF -> false
+                if (edits.format == info.exportFormat && !edits.mute && !edits.clearMetadata && edits.metadataEdits.isEmpty()) {
+                    val bytes = file.length()
+                    file.inputStream().use { input ->
+                        target.outputStream().use { output ->
+                            MediaFiles.copy(input, output, bytes) { progress((it.toDouble() / bytes * info.durationMs).toLong()) }
+                        }
                     }
-                    audio += listOf("-map", "0:${track.index}", "-c:a:$index",
-                        if (compatible) "copy" else if (edits.format == VideoFormat.WEBM) "libopus" else "aac")
+                    return info
                 }
                 MediaProcessing.execute(
-                    args + audio + metadataOptions(info, edits) + target.path,
+                    input(file, info) + remuxStreams(info, edits) +
+                        metadataOptions(info, edits, inheritStreamTags = info.exportFormat == edits.format) + target.path,
                     progress,
                 )
-                verifyMetadata(info, edits, inspect(target))
+                return verifyOutput(info, edits, target)
             } catch (error: Throwable) {
                 target.delete()
                 throw error
             }
-            return
         }
+        edits.validate(info.size, info.durationMs)
         val temporary = mutableListOf<File>()
         try {
             val steps = renderSteps(info, edits)
             val frames = videoFrameRanges(steps, edits.fps)
+            // Hold the last picture through longer audio; the first trim bounds the output.
             val filters =
                 mutableListOf(
-                    "tpad=stop_mode=clone:stop=1,fps=${edits.fps}:start_time=0:round=down,settb=AVTB"
+                    "tpad=stop_mode=clone:stop=-1,fps=${edits.fps}:start_time=0:round=up:eof_action=pass,settb=AVTB"
                 )
             steps.forEachIndexed { index, step ->
                 val range = frames[index]
@@ -471,7 +632,7 @@ internal object Videos {
                             checkNotNull(target.parentFile),
                             temporary,
                             index,
-                            timed = true,
+                            cover.frames(edits.fps),
                         )
                         ?.let { filters += it }
                 }
@@ -488,7 +649,7 @@ internal object Videos {
                             if (step.holdFrames) "start_mode=clone:stop_mode=clone"
                             else "start_mode=add:stop_mode=add:color=${colorCode(step.timeColor)}"
             }
-            val args = input(file, steps.first().startMs).toMutableList()
+            val args = input(file, info, steps.first().startMs).toMutableList()
             // MediaCodec supplies headers after encoding; Matroska needs them at muxer startup.
             val encoded =
                 if (edits.format == VideoFormat.MKV)
@@ -511,23 +672,18 @@ internal object Videos {
                         if (edits.gifLoop) "0" else "-1",
                     )
             } else {
+                val withAudio = !edits.mute && info.audioTracks.isNotEmpty()
+                // Seeking by video keyframe can skip the audio packet that spans the cut.
+                val audioInput = if (withAudio && steps.first().startMs > 0) {
+                    args += input(file, info)
+                    1
+                } else 0
                 // 4:2:0 encoders require even dimensions; pad instead of stretching or trimming
                 // pixels.
-                filters +=
-                    "pad=ceil(iw/2)*2:ceil(ih/2)*2:color=black,scale=out_color_matrix=bt709:out_range=tv,format=yuv420p"
+                filters += yuv420
                 args += listOf("-map", "0:${info.videoIndex}", "-vf", filters.joinToString(","))
                 args +=
-                    if (edits.format == VideoFormat.WEBM)
-                        listOf(
-                            "-c:v",
-                            "libvpx-vp9",
-                            "-deadline",
-                            "realtime",
-                            "-cpu-used",
-                            "6",
-                            "-row-mt",
-                            "1",
-                        )
+                    if (edits.format == VideoFormat.WEBM) vp9
                     else
                         listOf(
                             "-c:v",
@@ -550,8 +706,8 @@ internal object Videos {
                         "-color_range",
                         "tv",
                     )
-                if (!edits.mute && info.audioTracks.isNotEmpty()) {
-                    info.audioTracks.forEach { args += listOf("-map", "0:${it.index}") }
+                if (withAudio) {
+                    info.audioTracks.forEach { args += listOf("-map", "$audioInput:${it.index}") }
                     args +=
                         listOf(
                             "-af",
@@ -565,23 +721,21 @@ internal object Videos {
                 if (edits.format in listOf(VideoFormat.MP4, VideoFormat.MOV))
                     args += listOf("-movflags", "+faststart")
             }
-            args +=
-                listOf(
-                    "-t",
-                    mediaSeconds(edits.durationMs),
-                ) + metadataOptions(info, edits) + encoded.path
+            args += listOf("-t", mediaSeconds(edits.durationMs))
+            args += if (encoded == target) metadataOptions(info, edits) else listOf("-map_chapters", "-1")
+            args += encoded.path
             try {
                 // Two passes keep palette generation from buffering the entire video.
                 if (palette != null) {
                     stage(R.string.analyzing_gif_colors)
                     MediaProcessing.execute(
-                        input(file, steps.first().startMs) +
+                        input(file, info, steps.first().startMs) +
                             listOf(
                                 "-map",
                                 "0:${info.videoIndex}",
                                 "-vf",
                                 filters.joinToString(",") +
-                                    ",palettegen=stats_mode=diff:max_colors=${edits.gifColors}",
+                                    ",palettegen=max_colors=${edits.gifColors}",
                                 "-frames:v",
                                 "1",
                                 "-threads",
@@ -593,9 +747,12 @@ internal object Videos {
                 stage(if (palette == null) R.string.preparing_video else R.string.encoding_gif)
                 progress(0)
                 MediaProcessing.execute(args, progress)
-                if (encoded != target)
-                    MediaProcessing.execute(input(encoded) + listOf("-map", "0", "-c", "copy", target.path))
-                verifyMetadata(info, edits, inspect(target))
+                if (encoded != target) {
+                    // Matroska supports tags that the intermediate MP4 cannot carry.
+                    MediaProcessing.execute(input(encoded) + input(file) + listOf("-map", "0", "-c", "copy") +
+                        metadataOptions(info, edits, inputIndex = 1) + target.path)
+                }
+                return verifyOutput(info, edits, target)
             } catch (error: Throwable) {
                 target.delete()
                 throw error
@@ -614,20 +771,21 @@ internal object Videos {
         edits: VideoEdits,
         work: File,
         progress: (Long) -> Unit,
-    ): File {
+    ): VideoPreviewCache.Preview {
         val scale = minOf(1.0, 1280.0 / maxOf(edits.size.width, edits.size.height))
         val options =
             edits.copy(
                 format = VideoFormat.MP4,
                 width = (edits.size.width * scale).roundToInt().coerceAtLeast(1),
                 height = (edits.size.height * scale).roundToInt().coerceAtLeast(1),
-                fps = minOf(30, edits.fps),
+                fps = edits.previewFps,
                 bitrateKbps = 3000,
+                clearMetadata = true,
                 metadataEdits = emptyMap(),
             )
         var target = MediaFiles.temporary(work, "mp4")
         try {
-            try {
+            val rendered = try {
                 export(file, info, options, target, progress = progress)
             } catch (error: UnsupportedMediaException) {
                 if (error.messageRes != R.string.video_encoder_unsupported) throw error
@@ -641,7 +799,7 @@ internal object Videos {
                     progress = progress,
                 )
             }
-            return target
+            return VideoPreviewCache.Preview(target, rendered)
         } catch (error: Throwable) {
             target.delete()
             throw error
@@ -655,6 +813,7 @@ internal object Videos {
         target: File,
         edits: VideoEdits,
     ) {
+        if (!edits.canExtractFrame) throw UnsupportedMediaException(R.string.video_frame_size_limit)
         val temporary = mutableListOf<File>()
         try {
             val steps = renderSteps(info, edits)
@@ -673,13 +832,12 @@ internal object Videos {
                             checkNotNull(target.parentFile),
                             temporary,
                             index,
-                            timed = false,
                         )
                         ?.let { filters += it }
                 filters += spatialFilters(steps[index], size)
             }
             // Whole-second seeking avoids rounding past frames in coarse input time bases.
-            val seekUs = positionUs.coerceIn(0, info.durationMs * 1000 - 1)
+            val seekUs = positionUs.coerceIn(info.videoStartMs * 1000, info.videoEndMs * 1000 - 1)
             // Shift the selected instant to zero, then keep its displayed frame before spatial
             // edits.
             filters.add(
@@ -701,12 +859,7 @@ internal object Videos {
                             filters.joinToString(","),
                         )
                     else
-                        listOf(
-                            "-ss",
-                            (seekUs / 1_000_000).toString(),
-                            "-noaccurate_seek",
-                        ) +
-                            input(file) +
+                        input(file, info, seekUs / 1_000_000 * 1000) +
                             listOf(
                                 "-map",
                                 "0:${info.videoIndex}",
@@ -741,11 +894,18 @@ internal object Videos {
         target: File,
     ) {
         require(info.audioTracks.any { it.index == track })
-        edits.validate(info.size, info.durationMs)
         val steps = renderSteps(info, edits)
+        steps.fold(info.durationMs) { duration, step ->
+            step.time.validate(duration)
+            step.durationMs
+        }
+        // FLAC stores file-level tags. The selected track takes precedence over the container.
+        val groups = info.metadata(edits)
+        val tags = groups.firstOrNull { it.streamIndex == null }?.entries.orEmpty() +
+            groups.firstOrNull { it.streamIndex == track }?.entries.orEmpty()
         try {
             MediaProcessing.execute(
-                input(file, steps.first().startMs) +
+                input(file, info) +
                     listOf(
                         "-map",
                         "0:$track",
@@ -756,8 +916,9 @@ internal object Videos {
                         mediaSeconds(edits.durationMs),
                         "-c:a",
                         "flac",
+                        "-map_metadata", "-1", "-map_metadata:s", "-1", "-map_chapters", "-1",
                     ) +
-                    metadataOptions(info, edits, track) +
+                    tags.flatMap { (key, value) -> listOf("-metadata", "$key=$value") } +
                     target.path
             )
             check(target.length() > 0) { "Empty audio output" }
@@ -774,30 +935,32 @@ internal object Videos {
         work: File,
         info: VideoInfo,
     ): VideoDocument {
-        var playable = file
+        if (info.format != "gif") return VideoDocument(file, name, uri, info, file)
+        val playable = MediaFiles.temporary(work, "webm")
+        val timestamps = MediaFiles.temporary(work, "txt")
         try {
-            if (info.format == "gif") {
-                playable = MediaFiles.temporary(work, "webm")
-                val scale = minOf(1.0, 960.0 / maxOf(info.width, info.height))
-                export(
-                    file,
-                    info,
-                    info
-                        .edits()
-                        .copy(
-                            format = VideoFormat.WEBM,
-                            width = (info.width * scale).roundToInt().coerceAtLeast(1),
-                            height = (info.height * scale).roundToInt().coerceAtLeast(1),
-                            bitrateKbps = 2000,
-                            fps = minOf(30, info.edits().fps),
-                        ),
-                    playable,
-                )
+            val scale = minOf(1.0, 960.0 / maxOf(info.width, info.height))
+            val width = (info.width * scale).roundToInt().coerceAtLeast(1)
+            val height = (info.height * scale).roundToInt().coerceAtLeast(1)
+            val track = listOf("-map", "0:${info.videoIndex}")
+            // VP9 can discard GIF packet durations. Keep the final frame until the GIF ends.
+            val durations = "setts=duration='if(gt(NEXT_PTS,PTS),NEXT_PTS-PTS,round(${mediaSeconds(info.durationMs)}/TB)-PTS)'"
+            MediaProcessing.execute(input(file) + track + listOf(
+                "-vf", "scale=$width:$height:flags=lanczos,setsar=1,$yuv420",
+                "-fps_mode", "vfr", "-enc_time_base", "1:1000",
+            ) + vp9 + listOf("-b:v", "2000k", "-threads", "2", "-colorspace", "bt709", "-color_range", "tv",
+                "-bsf:v", durations, playable.path) +
+                track + listOf("-c:v", "copy", "-f", "mkvtimestamp_v2", timestamps.path))
+            val coroutine = currentCoroutineContext()
+            val times = timestamps.useLines { lines ->
+                lines.drop(1).map { coroutine.ensureActive(); it.toLong() }.toList().toLongArray()
             }
-            return VideoDocument(file, name, uri, info, playable)
+            return VideoDocument(file, name, uri, info, playable, times)
         } catch (error: Throwable) {
-            if (playable != file) playable.delete()
+            playable.delete()
             throw error
+        } finally {
+            timestamps.delete()
         }
     }
 }

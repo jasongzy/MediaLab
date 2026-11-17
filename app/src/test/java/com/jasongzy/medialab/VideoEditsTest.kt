@@ -99,6 +99,9 @@ class VideoEditsTest {
             videoFrameSource(listOf(applied.copy(previous = emptyList())), position, 10, active)
             assertEquals(position in 200L until 600L, active.isNotEmpty())
         }
+        val brief = initial.copy(cover = cover.copy(startMs = 251, endMs = 260), fps = 10)
+        assertTrue(brief.showsCover(251))
+        assertFalse(brief.showsCover(300))
         assertThrows(IllegalArgumentException::class.java) {
             applied.copy(cover = cover.copy(endMs = 1001)).validate(initial.size, 1000)
         }
@@ -130,9 +133,8 @@ class VideoEditsTest {
         val fast = editor.applyTool(VideoTool.TIME)
         fast.validate(initial.size, initial.durationMs)
         assertEquals(4750L, fast.durationMs)
-        assertEquals(1000L, fast.sourcePosition(0))
-        assertEquals(3000L, fast.sourcePosition(1500))
-        assertEquals(1500L, fast.outputPosition(3000))
+        assertEquals(500L, fast.positionFrom(initial, 0))
+        assertEquals(4499L, fast.positionFrom(initial, 9500))
         assertEquals(1500L, fast.positionFrom(initial, 3000))
         assertEquals(3000L, initial.positionFrom(fast, 1500))
         editor.history.change(fast)
@@ -154,15 +156,15 @@ class VideoEditsTest {
             videoFrameRanges(listOf(short.copy(speedPercent = 800)), 10).single().outputCount,
         )
         assertEquals(
-            599999L to -1,
+            500000L to -1,
             videoFrameSource(listOf(short.copy(speedPercent = 50)), 1000, 10),
         )
         assertEquals(
-            299999L to -1,
+            200000L to -1,
             videoFrameSource(listOf(short.copy(speedPercent = 200)), 100, 10),
         )
         assertEquals(
-            99999L to -1,
+            0L to -1,
             videoFrameSource(
                 short.copy(speedPercent = 200).next().copy(speedPercent = 50).steps,
                 100,
@@ -224,25 +226,35 @@ class VideoEditsTest {
     }
 
     @Test
-    fun framePositionUsesOneBasedIndicesAndClampsTheEnd() {
-        assertEquals(1L to 150L, videoFramePosition(0, 5000, 30.0))
-        assertEquals(2L to 150L, videoFramePosition(34, 5000, 30.0))
-        assertEquals(150L to 150L, videoFramePosition(5000, 5000, 30.0))
-        assertEquals(30L to 30L, videoFramePosition(1001, 1001, 30000.0 / 1001))
-        assertEquals(1L to 1L, videoFramePosition(0, 1, 30.0))
+    fun framePositionFollowsTheDisplayedTrack() {
+        val file = File("input.gif")
+        val info = VideoInfo(64, 48, 5000, 0.4, 1000, "gif", emptyList(), "gif", false, "", 0, emptyList())
+        val video = VideoDocument(file, file.name, null, info, file, longArrayOf(0, 100))
+        assertEquals(1L to 2L, video.framePosition(99))
+        assertEquals(2L to 2L, video.framePosition(100))
+        assertEquals(50, info.edits(longArrayOf(0, 20)).next().previewFps)
+
+        video.appliedInfo = info.copy(durationMs = 1098, videoEndMs = 1000, frameCount = 10)
+        assertEquals(2L to 10L, video.framePosition(100))
+        assertEquals(10L to 10L, video.framePosition(1097))
+        video.appliedInfo = info.copy(durationMs = 1098, videoStartMs = 200, videoEndMs = 900)
+        assertEquals(1L to 7L, video.framePosition(100))
+        assertEquals(4L to 7L, video.framePosition(500))
+        assertEquals(7L to 7L, video.framePosition(1097))
+        video.appliedInfo = null
+        assertEquals(2L to 2L, video.framePosition(1097))
     }
 
     @Test
     fun editsKeepTimeAndFrameBoundsConsistent() {
         val source = IntSize(1920, 1080)
         val full = IntRect(0, 0, source.width, source.height)
+        val original = VideoEdits(10000, full, full)
         val edits = VideoEdits(8000, full, full, startMs = 1000, beforeMs = 2000, afterMs = 500)
         edits.validate(source, 10000)
         assertEquals(9500L, edits.durationMs)
-        assertEquals(1000L, edits.sourcePosition(0))
-        assertEquals(1500L, edits.sourcePosition(2500))
-        assertEquals(7999L, edits.sourcePosition(9499))
-        assertEquals(2500L, edits.outputPosition(1500))
+        assertEquals(1000L, original.positionFrom(edits, 0))
+        assertEquals(7999L, original.positionFrom(edits, 9499))
         val crop = edits.copy(width = 640, height = 360).withCrop(IntRect(5, 7, 1006, 708))
         assertEquals(IntRect(0, 0, 1001, 701), crop.canvas)
         assertEquals(IntSize(640, 360), crop.size)
@@ -271,14 +283,17 @@ class VideoEditsTest {
     @Test
     fun applyingDraftsKeepsExportAndHistorySeparate() {
         val full = IntRect(0, 0, 1920, 1080)
-        val initial = VideoEdits(10000, full, full)
+        val initial = VideoEdits(10000, full, full, fps = 60)
         val editor = VideoEditor(initial)
         editor.draft.change(initial.copy(startMs = 1000))
         editor.tool = VideoTool.CROP
         editor.draft.change(initial.withCrop(IntRect(10, 20, 1010, 520)))
         assertEquals(listOf(VideoTool.TIME, VideoTool.CROP), editor.pending)
         assertEquals(initial, editor.output)
+        editor.format = VideoFormat.GIF
+        assertEquals(50, editor.output.fps)
         editor.format = VideoFormat.WEBM
+        assertEquals(60, editor.output.fps)
         editor.brushWidth = 320f
         editor.history.change(editor.applyTool(editor.tool))
         editor.resetDrafts()
@@ -353,12 +368,17 @@ class VideoEditsTest {
         assertEquals(400L, cropped.positionFrom(expanded, 400))
         assertEquals(200L, trimmed.positionFrom(cropped, 700))
         assertEquals(700L, cropped.positionFrom(trimmed, 200))
-        assertEquals(500L, trimmed.sourcePosition(1000))
+        assertEquals(500L, original.positionFrom(trimmed, 1000))
         assertThrows(IllegalArgumentException::class.java) {
             trimmed.next().copy(endMs = 3000).validate(original.size, original.durationMs)
         }
         val large = VideoEdits(10000, IntRect(0, 0, 10000, 9000), IntRect(0, 0, 10000, 9000))
+        assertFalse(large.canExtractFrame)
+        assertTrue(large.withCrop(IntRect(0, 0, 10000, 32)).canExtractFrame)
         large.next().withCrop(IntRect(100, 100, 200, 200)).validate(large.size, large.durationMs)
+        val scaled = large.next().copy(width = 1000, height = 900)
+        scaled.validate(large.size, large.durationMs)
+        assertFalse(scaled.copy(canvas = IntRect(-1, 0, 10000, 9000)).validSize)
     }
 
     @Test
@@ -374,8 +394,8 @@ class VideoEditsTest {
                 afterMs = 200,
                 holdFrames = true,
             )
-        assertEquals(350999L to -1, videoFrameSource(listOf(held), 0, 10))
-        assertEquals(750999L to -1, videoFrameSource(listOf(held), 999, 10))
+        assertEquals(251000L to -1, videoFrameSource(listOf(held), 0, 10))
+        assertEquals(651000L to -1, videoFrameSource(listOf(held), 999, 10))
         val solid = held.copy(holdFrames = false)
         assertEquals(0L to 0, videoFrameSource(listOf(solid), 0, 10))
         assertEquals(0L to 0, videoFrameSource(listOf(solid), 999, 10))
@@ -384,15 +404,15 @@ class VideoEditsTest {
                 .next()
                 .copy(startMs = 150, endMs = 650, beforeMs = 100, afterMs = 100, holdFrames = true)
         assertEquals(0L to 0, videoFrameSource(next.steps, 0, 10))
-        assertEquals(650999L to -1, videoFrameSource(next.steps, 699, 10))
+        assertEquals(451000L to -1, videoFrameSource(next.steps, 699, 10))
         assertEquals(
-            750999L to -1,
+            551000L to -1,
             videoFrameSource(next.copy(startMs = 137, endMs = 677).steps, 739, 10),
         )
-        assertEquals(33333L to -1, videoFrameSource(listOf(held.copy(startMs = 0)), 0, 30))
+        assertEquals(66667L to -1, videoFrameSource(listOf(held.copy(startMs = 0, beforeMs = 0)), 67, 30))
         val tail = VideoEdits(1000, full, full).next().copy(startMs = 999)
         assertEquals(VideoFrameRange(9, 1, 1), videoFrameRanges(tail.steps, 10).last())
-        assertEquals(999999L to -1, videoFrameSource(tail.steps, 0, 10))
+        assertEquals(900000L to -1, videoFrameSource(tail.steps, 0, 10))
     }
 
     @Test

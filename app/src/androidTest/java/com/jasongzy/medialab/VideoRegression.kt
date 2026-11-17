@@ -10,6 +10,7 @@ import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.IntSize
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModelStore
+import com.arthenica.ffmpegkit.FFprobeKit
 import java.io.File
 import java.util.UUID
 import kotlin.math.abs
@@ -20,6 +21,85 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 
 internal object VideoRegression {
+    suspend fun wideStreamCopy(context: Application) {
+        val input = File(context.filesDir, "wide.mkv")
+        val chapters = File(context.filesDir, "chapters.txt").apply {
+            writeText(";FFMETADATA1\n[CHAPTER]\nTIMEBASE=1/1000\nSTART=0\nEND=400\ntitle=Intro\n")
+        }
+        val caption = File(context.filesDir, "caption.srt").apply {
+            writeText("1\n00:00:00,000 --> 00:00:00,400\nCaption\n")
+        }
+        MediaProcessing.execute(listOf("-itsoffset", "1.001", "-f", "lavfi", "-i", "color=size=9000x32:rate=1000/143:duration=1",
+            "-f", "lavfi", "-i", "sine=duration=4.004:sample_rate=48000", "-i", chapters.path, "-i", caption.path,
+            "-map", "3:s", "-map", "1:a", "-map", "0:v", "-map_chapters", "2", "-attach", caption.path,
+            "-metadata:s:t:0", "mimetype=text/plain", "-metadata:s:s:0", "language=eng", "-c:s", "srt", "-c:v", "ffv1", "-c:a", "flac",
+            "-metadata", "title=webm", "-output_ts_offset", "2", input.path))
+        val info = Videos.inspect(input)
+        check(info.exportFormat == VideoFormat.MKV)
+        check(info.videoStartMs == 3001L && info.videoEndMs == 4002L && info.durationMs == 6004L)
+        val output = File(context.filesDir, "muted.mkv")
+        Videos.export(input, info, info.edits(), output)
+        check(output.readBytes().contentEquals(input.readBytes()))
+        val muted = info.edits().copy(mute = true)
+        Videos.export(input, info, muted.copy(metadataEdits = mapOf(VideoTag(info.videoIndex, "title") to "Edited")), output)
+        fun probeOutput() = checkNotNull(FFprobeKit.getMediaInformation(output.path).mediaInformation)
+        val withTags = probeOutput()
+        val streams = withTags.streams
+        check(streams.map { it.type } == listOf("subtitle", "video", "attachment"))
+        check(streams.first().tags.getString("language") == "eng" && streams.last().tags.getString("filename") == caption.name)
+        check(withTags.chapters.single().tags.getString("title") == "Intro")
+        val edits = muted.copy(clearMetadata = true)
+        Videos.export(input, info, edits, output)
+        val cleaned = probeOutput()
+        check(cleaned.chapters.isEmpty() && cleaned.streams.map { it.type } == listOf("video", "subtitle"))
+        val copied = checkNotNull(cleaned.videoTrack)
+        check(copied.width == info.width.toLong() && copied.height == info.height.toLong() && copied.codec == "ffv1")
+        check(cleaned.tags?.has("title") != true && cleaned.streams.none { it.tags?.has("title") == true })
+        val audio = File(context.filesDir, "track.flac")
+        Videos.audio(input, info, edits, info.audioTracks.single().index, audio)
+        val samples = decodeAudio(audio, File(context.cacheDir, "wide.pcm"))
+        check(samples.size == 6004 * 8 && (0 until 15900).all { samples[it].toInt() == 0 } &&
+            (16000 until 16800).any { abs(samples[it].toInt()) > 100 })
+        val frame = File(context.filesDir, "wide.png")
+        Videos.frame(input, info, info.durationMs, frame, edits)
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(frame.path, bounds)
+        check(bounds.outWidth == info.width && bounds.outHeight == info.height)
+    }
+
+    suspend fun gifTiming(context: Application, instrumentation: Instrumentation) {
+        val source = File(context.filesDir, "held.gif")
+        instrumentation.context.assets.open("held.gif").use { input -> source.outputStream().use(input::copyTo) }
+        val info = Videos.inspect(source)
+        val video = Videos.read(source, source.name, null, context.cacheDir, info)
+        val preview = Videos.inspect(video.playable)
+        check(preview.exportFormat == VideoFormat.WEBM)
+        check(preview.durationMs == info.durationMs && preview.durationMs == 5000L) {
+            "GIF duration: source=${info.durationMs}, preview=${preview.durationMs}, frames=${video.gifFrameTimes.contentToString()}"
+        }
+        check(video.gifFrameTimes.contentEquals(longArrayOf(0, 100))) { video.gifFrameTimes.contentToString() }
+        val frame = File(context.cacheDir, "held-frame.png")
+        suspend fun checkFrame(file: File, media: VideoInfo, at: Long, red: Boolean, edits: VideoEdits = media.edits()) {
+            Videos.frame(file, media, at, frame, edits)
+            val bitmap = checkNotNull(BitmapFactory.decodeFile(frame.path))
+            try {
+                val color = bitmap.getPixel(0, 0)
+                check(if (red) Color.red(color) > 235 && Color.blue(color) < 16
+                    else Color.blue(color) > 235 && Color.red(color) < 16)
+            } finally { bitmap.recycle() }
+        }
+        checkFrame(video.playable, preview, 0, red = true)
+        checkFrame(video.playable, preview, 100, red = false)
+        checkFrame(source, info, info.durationMs, red = false)
+        val cut = info.edits().copy(endMs = 100, fps = 1)
+        checkFrame(source, info, 0, red = true, edits = cut)
+        val exported = File(context.cacheDir, "export.gif")
+        checkFrame(exported, Videos.export(source, info, cut, exported), 0, red = true)
+        val result = Videos.export(source, info, video.editor.output, exported)
+        checkFrame(exported, result, 99, red = true)
+        checkFrame(exported, result, 100, red = false)
+    }
+
     suspend fun run(context: Application, instrumentation: Instrumentation) {
         try {
             verify(context, instrumentation)
@@ -69,9 +149,10 @@ internal object VideoRegression {
                     "-c:a",
                     "aac",
                     "-metadata",
-                    "creation_time=2020-02-03T04:05:06Z",
+                    "creation_time=2020-02-03T04:05:06.000000Z",
                     "-metadata",
                     "comment=拍摄信息",
+                    "-metadata", "custom_camera=Rear camera", "-metadata", "track=01/12", "-movflags", "+use_metadata_tags",
                     "-metadata:s:v:0",
                     "handler_name=画面轨道",
                     input.path,
@@ -129,6 +210,8 @@ internal object VideoRegression {
                 val output = Videos.inspect(disguised)
                 disguised.delete()
                 check(output.format == format.extension)
+                if (format == VideoFormat.MP4 || format == VideoFormat.MOV)
+                    check(output.metadata.first { it.streamIndex == null }.entries.toMap()["custom_camera"] == "Rear camera")
                 val editor = VideoEditor(output.edits())
                 check(editor.format == null && editor.output.format == format)
                 check(
@@ -184,7 +267,7 @@ internal object VideoRegression {
             Videos.export(
                 input,
                 info,
-                info.edits().copy(format = VideoFormat.GIF, gifColors = 16, gifLoop = true),
+                info.edits().copy(startMs = 650, fps = 2, format = VideoFormat.GIF, gifColors = 16, gifLoop = true),
                 paletteGif,
             )
             check(paletteGif.readBytes().toString(Charsets.ISO_8859_1).contains("NETSCAPE2.0"))
@@ -215,7 +298,7 @@ internal object VideoRegression {
                                         CoverShape.RECTANGLE,
                                     )
                                 ),
-                                200,
+                                251,
                                 600,
                             )
                     )
@@ -228,7 +311,7 @@ internal object VideoRegression {
             check(
                 cleaned.metadata
                     .flatMap { it.entries }
-                    .none { it.first in listOf("comment", "creation_time") || it.second == "画面轨道" }
+                    .none { it.first in listOf("comment", "creation_time", "custom_camera") || it.second == "画面轨道" }
             )
             val hashes =
                 listOf(input, clean).mapIndexed { index, file ->
@@ -322,6 +405,20 @@ internal object VideoRegression {
             }
             val muted = File(context.filesDir, "muted.mp4")
             stage("mute and extract")
+            val updated = info.editMetadata(info.edits().copy(mute = true), VideoTag(null, "custom_camera"), "Front camera")
+            Videos.export(input, info, updated, muted)
+            val remuxedTags = Videos.inspect(muted).metadata.first { it.streamIndex == null }.entries.toMap()
+            check(remuxedTags["custom_camera"] == "Front camera" && remuxedTags["comment"] == "拍摄信息")
+            val numbered = info.editMetadata(updated, VideoTag(null, "custom_camera"), null)
+            Videos.export(input, info, numbered, muted)
+            check(Videos.inspect(muted).metadata.first { it.streamIndex == null }.entries.toMap()["track"] == "01/12")
+            val dated = info.editMetadata(
+                info.editMetadata(numbered, VideoTag(null, "track"), null),
+                VideoTag(null, "creation_time"), "2020-02-03T04:05:06.123456Z",
+            )
+            Videos.export(input, info, dated, muted)
+            val datedTags = Videos.inspect(muted).metadata.first { it.streamIndex == null }.entries.toMap()
+            check(datedTags["creation_time"] == "2020-02-03T04:05:06.123456Z" && "custom_camera" !in datedTags)
             Videos.export(
                 input,
                 info,
@@ -419,13 +516,16 @@ internal object VideoRegression {
             )
             firstFrame.recycle()
             val sequenceFile = File(context.filesDir, "sequence.webm")
-            Videos.export(input, info, sequence, sequenceFile)
-            val sequenceInfo = Videos.inspect(sequenceFile)
+            val sequenceInfo = Videos.export(input, info, sequence, sequenceFile)
             check(
                 sequenceInfo.width == 80 &&
                     sequenceInfo.height == 60 &&
                     abs(sequenceInfo.durationMs - 700) < 110
             )
+            val mp4 = Videos.export(
+                sequenceFile, sequenceInfo, sequenceInfo.edits().copy(format = VideoFormat.MP4), File(context.filesDir, "sequence.mp4"),
+            )
+            check(mp4.codec == "vp9" && mp4.audioTracks.single().codec == "opus")
             Videos.frame(sequenceFile, sequenceInfo, 0, frame, sequenceInfo.edits())
             val encodedFrame = checkNotNull(BitmapFactory.decodeFile(frame.path))
             check(Color.blue(encodedFrame.getPixel(1, 1)) > 220)
@@ -438,8 +538,8 @@ internal object VideoRegression {
             val tail =
                 info.edits().next().withCrop(IntRect(0, 0, 80, 60)).next().copy(startMs = 999)
             val tailPreview = Videos.preview(input, info, tail, context.cacheDir) {}
-            check(Videos.inspect(tailPreview).size == IntSize(80, 60))
-            check(tailPreview.delete())
+            check(tailPreview.info.size == IntSize(80, 60))
+            check(tailPreview.file.delete())
             for ((width, height) in listOf(1 to 1, 4000 to 2000)) {
                 val playable =
                     Videos.preview(
@@ -448,13 +548,13 @@ internal object VideoRegression {
                         edits.copy(width = width, height = height),
                         context.cacheDir,
                     ) {}
-                val size = Videos.inspect(playable).size
+                val size = playable.info.size
                 check(
                     size ==
                         if (width == 1) androidx.compose.ui.unit.IntSize(2, 2)
                         else androidx.compose.ui.unit.IntSize(1280, 640)
                 )
-                check(playable.delete())
+                check(playable.file.delete())
             }
             val audio = File(context.filesDir, "track.flac")
             Videos.audio(input, info, edits, info.audioTracks.single().index, audio)
@@ -481,27 +581,12 @@ internal object VideoRegression {
                     .next()
                     .withCrop(IntRect(0, 0, 80, 60))
             val paddedPreview = Videos.preview(input, info, paddedCrop, context.cacheDir) {}
-            val paddedSamples = decodeAudio(paddedPreview, pcm)
+            val paddedSamples = decodeAudio(paddedPreview.file, pcm)
             check(abs(paddedSamples.size - 17600) < 200)
             check((0 until 7600).all { abs(paddedSamples[it].toInt()) < 2 })
             check((8400 until 10400).any { abs(paddedSamples[it].toInt()) > 100 })
             check((12000 until paddedSamples.size).all { abs(paddedSamples[it].toInt()) < 2 })
-            check(paddedPreview.delete())
-            val gif = File(context.filesDir, "video-result.gif")
-            stage("GIF playback")
-            val imported = Videos.read(gif, "test.gif", null, context.cacheDir, Videos.inspect(gif))
-            check(imported.playable.extension == "webm")
-            check(abs(imported.info.fps - 10) < 0.01)
-            val held = File(context.filesDir, "held.gif")
-            stage("held frame")
-            instrumentation.context.assets.open("held.gif").use { source ->
-                held.outputStream().use(source::copyTo)
-            }
-            val heldInfo = Videos.inspect(held)
-            Videos.frame(held, heldInfo, heldInfo.durationMs, frame, heldInfo.edits())
-            val last = checkNotNull(BitmapFactory.decodeFile(frame.path))
-            check(Color.blue(last.getPixel(0, 0)) > 240 && Color.red(last.getPixel(0, 0)) < 10)
-            last.recycle()
+            check(paddedPreview.file.delete())
             stage("full-resolution frame")
             val fullHd = File(context.filesDir, "full-hd.mp4")
             MediaProcessing.execute(
@@ -554,9 +639,12 @@ internal object VideoRegression {
                     "-map",
                     "3:a",
                     "-c:v",
-                    "copy",
+                    "mpeg4", "-g", "1",
                     "-c:a",
                     "pcm_s16le",
+                    "-metadata",
+                    "PROJECT=concert",
+                    "-metadata", "title=Concert",
                     "-metadata:s:a:0",
                     "title=First",
                     "-metadata:s:a:0",
@@ -573,22 +661,37 @@ internal object VideoRegression {
             stage("export all audio tracks")
             for (format in VideoFormat.entries.filter { it != VideoFormat.GIF }) {
                 val target = File(context.filesDir, "multi-export.${format.extension}")
-                Videos.export(multi, multiInfo, audioEdits.copy(format = format), target)
+                var edits = audioEdits.copy(format = format)
+                if (format == VideoFormat.MKV) {
+                    val track = multiInfo.audioTracks.first().index
+                    edits = multiInfo.editMetadata(edits, VideoTag(track, "title"), "Edited")
+                    edits = multiInfo.editMetadata(edits, VideoTag(track, "language"), "FRE-CA")
+                }
+                Videos.export(multi, multiInfo, edits, target)
                 val exported = Videos.inspect(target)
                 check(exported.audioTracks.size == 3)
-                check(exported.metadata.first { it.streamIndex == exported.audioTracks.first().index }
-                    .entries.toMap()["language"] == "eng")
+                val firstAudioTags = exported.metadata.first { it.streamIndex == exported.audioTracks.first().index }.entries.toMap()
+                check(firstAudioTags["language"] == if (format == VideoFormat.MKV) "fre-ca" else "eng")
+                if (format == VideoFormat.MKV) {
+                    check(firstAudioTags["title"] == "Edited")
+                    check(exported.metadata.first { it.streamIndex == null }.entries.toMap()["PROJECT"] == "concert")
+                }
                 for ((track, frequency) in listOf(400, 800, 1200).withIndex()) {
                     val samples = decodeAudio(target, pcm, track)
                     check(magnitude(samples, 2800, 1600, frequency) > 1000)
                 }
                 check(target.delete())
             }
+            val extractionEdits = multiInfo.editMetadata(audioEdits, VideoTag(0, "title"), "Edited")
             for (track in multiInfo.audioTracks) {
-                Videos.audio(multi, multiInfo, audioEdits, track.index, audio)
+                Videos.audio(multi, multiInfo, extractionEdits, track.index, audio)
+                val tags = checkNotNull(MediaProcessing.inspect(audio)?.tags)
+                check(tags.optString("title") == if (track.index == 0L) "Edited" else "Concert")
+                check(tags.optString("language") == if (track.index == 0L) "eng" else "")
                 val extracted = decodeAudio(audio, pcm)
                 check(abs(extracted.size - 7200) <= 1)
                 check((0 until 800).all { abs(extracted[it].toInt()) < 2 })
+                if (track.index != 2L) check((800 until 840).any { abs(extracted[it].toInt()) > 3500 })
                 check((5680 until extracted.size).all { abs(extracted[it].toInt()) < 2 })
                 for ((index, frequency) in listOf(0L to 400, 2L to 800, 3L to 1200)) {
                     val magnitude = magnitude(extracted, 2800, 1600, frequency)
@@ -617,7 +720,7 @@ internal object VideoRegression {
                 instrumentation,
                 input,
                 multi,
-                gif,
+                File(context.filesDir, "video-result.gif"),
                 edits.copy(beforeMs = 800, afterMs = 800, speedPercent = 50),
             )
             val cancelled = File(context.filesDir, "cancelled.gif")
@@ -749,8 +852,8 @@ internal object VideoRegression {
                     video.editor.current.crop ==
                         IntRect(0, 0, 120, video.editor.history.value.size.height)
             )
-            check(Videos.inspect(applied).width == 120)
-            check(video.appliedInfo == Videos.inspect(applied))
+            val appliedInfo = Videos.inspect(applied)
+            check(appliedInfo.width == 120 && video.appliedInfo == appliedInfo)
             val committed = video.editor.history.value
             onMain {
                 video.editor.positionMs = 0

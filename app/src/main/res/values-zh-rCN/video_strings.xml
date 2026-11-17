@@ -31,6 +31,7 @@
     <string name="video_result_duration">预计时长：%1$s\u00a0s</string>
     <string name="video_frame_position">当前第 &lt;big&gt;&lt;b&gt;%1$d&lt;/b&gt;&lt;/big&gt;/%2$d 帧</string>
     <string name="video_frame_hint">在预览中拖动进度选择帧</string>
+    <string name="video_frame_estimate_hint">在预览中拖动进度选择帧，帧号按平均帧率估算</string>
     <string name="video_frame_edit">发送当前帧到图像页</string>
     <string name="video_frame_save">保存帧</string>
     <string name="video_audio_selection">音轨 · %1$d/%2$d</string>
@@ -61,12 +62,13 @@
     <string name="video_hdr_hint">当前导出设置需要重新编码，HDR 画面将以 SDR 导出</string>
     <string name="video_hdr_title">此操作无法保留 HDR</string>
     <string name="video_hdr_message">继续后，生成的画面将使用标准动态范围（SDR），高光和色彩可能与原视频不同。</string>
-    <string name="video_size_limit">画布和输出的宽高应为 1 到 8192 像素</string>
+    <string name="video_size_limit">处理画面时，输出和扩展画布的宽高须在 1 到 8192 像素之间</string>
+    <string name="video_frame_size_limit">当前画面过大，请先缩放视频再提取帧</string>
     <string name="video_encoder_unsupported">设备不支持以当前参数编码 H.264，请调整尺寸、帧率或码率，或选择 WebM、GIF</string>
     <string name="video_gif_preview_failed">无法预览此 GIF，可保存后用其他应用查看</string>
     <string name="gif_colors">颜色数量</string>
     <string name="gif_loop">无限循环</string>
     <string name="video_cover_time">遮盖时间段</string>
-    <string name="video_clear_metadata_hint">删除拍摄时间、位置等描述信息</string>
+    <string name="video_clear_metadata_hint">删除拍摄时间、位置等描述信息，同时移除章节、附件和数据轨</string>
     <string name="video_copy_hint">直接复制视频流，保留原始画质。音轨按目标格式处理</string>
 </resources>

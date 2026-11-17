@@ -4,14 +4,16 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.IntSize
 import java.util.IdentityHashMap
-import kotlin.math.ceil
 
-internal enum class VideoFormat(val extension: String) {
+internal const val MAX_VIDEO_EDGE = 8192
+
+internal enum class VideoFormat(val extension: String, val maxFps: Int = 120) {
     MP4("mp4"),
     MOV("mov"),
     MKV("mkv"),
     WEBM("webm"),
-    GIF("gif"),
+    // Android plays GIF frames of 10 ms or less for 100 ms.
+    GIF("gif", 50),
 }
 
 internal enum class VideoTool(val label: Int, val icon: Int) {
@@ -58,7 +60,8 @@ internal data class VideoRotation(
 }
 
 internal data class VideoCover(val strokes: List<Stroke>, val startMs: Long, val endMs: Long) {
-    fun visible(positionMs: Long) = positionMs in startMs until endMs
+    // Cover every frame displayed during any part of [startMs, endMs).
+    fun frames(fps: Int) = (startMs * fps / 1000)..((endMs * fps - 1) / 1000)
 }
 
 internal data class VideoEdits(
@@ -101,29 +104,29 @@ internal data class VideoEdits(
     val durationMs
         get() = time.durationMs
 
-    fun sourcePosition(positionMs: Long): Long =
-        steps.asReversed().fold(positionMs) { position, step ->
-            ((position - step.beforeMs) * step.speedPercent / 100 + step.startMs).coerceIn(
-                step.startMs,
-                step.endMs - 1,
-            )
-        }
+    val previewFps get() = if ((previous.firstOrNull() ?: this).format == VideoFormat.GIF) fps else minOf(fps, 30)
 
-    fun outputPosition(sourceMs: Long): Long =
-        steps.fold(sourceMs) { position, step ->
-            ((position - step.startMs) * 100 / step.speedPercent + step.beforeMs).coerceIn(
-                0,
-                step.durationMs - 1,
-            )
-        }
+    fun showsCover(positionMs: Long): Boolean {
+        val frame = minOf(positionMs * previewFps / 1000, (durationMs * previewFps - 1) / 1000)
+        return cover?.let { frame in it.frames(previewFps) } == true
+    }
 
     fun positionFrom(other: VideoEdits, positionMs: Long): Long {
         val before = other.steps
         val after = steps
-        val shared = before.zip(after).takeWhile { (a, b) -> a == b }.size
+        var shared = 0
+        while (shared < before.size && shared < after.size && before[shared].time == after[shared].time) shared++
         var position = positionMs
-        for (step in before.drop(shared).asReversed()) position = step.sourcePosition(position)
-        for (step in after.drop(shared)) position = step.outputPosition(position)
+        for (i in before.lastIndex downTo shared) {
+            val step = before[i]
+            position = ((position - step.beforeMs) * step.speedPercent / 100 + step.startMs)
+                .coerceIn(step.startMs, step.endMs - 1)
+        }
+        for (i in shared..after.lastIndex) {
+            val step = after[i]
+            position = ((position - step.startMs) * 100 / step.speedPercent + step.beforeMs)
+                .coerceIn(step.beforeMs, step.durationMs - step.afterMs - 1)
+        }
         return position.coerceIn(0, durationMs - 1)
     }
 
@@ -236,7 +239,7 @@ internal data class VideoEdits(
                 canvas.bottom >= crop.height
         )
         require(validSize)
-        require(fps in 1..120 && bitrateKbps in 100..200000 && gifColors in 4..256)
+        require(fps in 1..format.maxFps && bitrateKbps in 100..200000 && gifColors in 4..256)
         cover?.let {
             require(it.startMs >= 0 && it.endMs in (it.startMs + 1)..(endMs - startMs))
             require(
@@ -253,10 +256,12 @@ internal data class VideoEdits(
 
     val validSize
         get() =
-            canvas.width in 1..8192 &&
-                canvas.height in 1..8192 &&
-                size.width in 1..8192 &&
-                size.height in 1..8192
+            size.width in 1..MAX_VIDEO_EDGE && size.height in 1..MAX_VIDEO_EDGE &&
+                (canvas == IntRect(0, 0, crop.width, crop.height) ||
+                    (canvas.width in 1..MAX_VIDEO_EDGE && canvas.height in 1..MAX_VIDEO_EDGE))
+
+    val canExtractFrame
+        get() = size.let { it.width.toLong() * it.height in 1L..(MAX_VIDEO_EDGE.toLong() * MAX_VIDEO_EDGE) }
 }
 
 internal class VideoEditor(initial: VideoEdits) {
@@ -371,16 +376,18 @@ internal class VideoEditor(initial: VideoEdits) {
                 tool,
             )
 
-    val output
-        get() =
-            history.value.copy(
-                format = format ?: original.format,
-                fps = fps,
+    val output: VideoEdits
+        get() {
+            val outputFormat = format ?: original.format
+            return history.value.copy(
+                format = outputFormat,
+                fps = fps.coerceAtMost(outputFormat.maxFps),
                 bitrateKbps = bitrateKbps,
                 mute = mute,
                 gifColors = gifColors,
                 gifLoop = gifLoop,
             )
+        }
 
     private fun newDrafts() =
         listOf(VideoTool.TIME, VideoTool.CROP, VideoTool.EXPAND, VideoTool.COVER).associateWith {
@@ -428,7 +435,7 @@ internal data class VideoFrameRange(val start: Long, val count: Long, val output
 internal fun videoFrameRanges(steps: List<VideoEdits>, fps: Int): List<VideoFrameRange> {
     var available = Long.MAX_VALUE
     return steps.mapIndexed { index, step ->
-        val start = if (index == 0) 0 else minOf((step.startMs * fps + 999) / 1000, available - 1)
+        val start = if (index == 0) 0 else minOf(step.startMs * fps / 1000, available - 1)
         val count = minOf(((step.endMs - step.startMs) * fps + 999) / 1000, available - start)
         check(count > 0) { "No frame in the selected interval" }
         val divisor = 1000L * step.speedPercent
@@ -465,17 +472,11 @@ internal fun videoFrameSource(
             (frame.coerceIn(0, range.outputCount - 1) * step.speedPercent / 100).coerceAtMost(
                 range.count - 1
             )
-        if (step.cover?.visible(frame * 1000 / fps) == true) activeCovers?.add(index)
+        if (step.cover?.let { frame in it.frames(fps) } == true) activeCovers?.add(index)
         frame += range.start
     }
-    // Match the fps filter's downward timestamp rounding.
-    return (steps.first().startMs * 1000 + ((frame + 1) * 1_000_000 + fps - 1) / fps - 1) to -1
-}
-
-internal fun videoFramePosition(positionMs: Long, durationMs: Long, fps: Double): Pair<Long, Long> {
-    val total = ceil(durationMs * fps / 1000).toLong().coerceAtLeast(1)
-    val frame = (positionMs.coerceAtLeast(0) * fps / 1000).toLong().coerceAtMost(total - 1) + 1
-    return frame to total
+    // Sample the source at the output frame's presentation timestamp.
+    return (steps.first().startMs * 1000 + (frame * 1_000_000 + fps / 2) / fps) to -1
 }
 
 internal fun evenVideoSize(size: IntSize) =

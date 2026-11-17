@@ -44,6 +44,8 @@ class RegressionTests : Instrumentation() {
                     "raw" to { photos.raw() },
                     "publication" to { media.publication() },
                     "artwork" to { media.artwork() },
+                    "gifTiming" to { VideoRegression.gifTiming(app, this@RegressionTests) },
+                    "wideStreamCopy" to { VideoRegression.wideStreamCopy(app) },
                     "video" to { VideoRegression.run(app, this@RegressionTests) },
                     "audio" to { AudioRegression.run(app, this@RegressionTests) },
                     "modelStorage" to { ModelStorageRegression.run(this@RegressionTests) },

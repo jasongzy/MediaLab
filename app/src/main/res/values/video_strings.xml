@@ -31,6 +31,7 @@
     <string name="video_result_duration">Estimated duration: %1$s\u00a0s</string>
     <string name="video_frame_position">Current frame &lt;big&gt;&lt;b&gt;%1$d&lt;/b&gt;&lt;/big&gt;/%2$d</string>
     <string name="video_frame_hint">Seek in the preview to choose a frame</string>
+    <string name="video_frame_estimate_hint">Seek in the preview to choose a frame. Frame numbers are estimated from the average frame rate</string>
     <string name="video_frame_edit">Send current frame to Images</string>
     <string name="video_frame_save">Save frame</string>
     <string name="video_audio_selection">Audio track · %1$d/%2$d</string>
@@ -61,12 +62,13 @@
     <string name="video_hdr_hint">These export settings require re-encoding, so HDR footage will be exported in SDR</string>
     <string name="video_hdr_title">This operation cannot preserve HDR</string>
     <string name="video_hdr_message">If you continue, the result will use standard dynamic range (SDR). Highlights and colors may look different from the original video.</string>
-    <string name="video_size_limit">Canvas and output dimensions must be between 1 and 8192 pixels</string>
+    <string name="video_size_limit">Frame processing supports output and expanded canvas dimensions from 1 to 8192 pixels</string>
+    <string name="video_frame_size_limit">This frame is too large to extract. Scale down the video first</string>
     <string name="video_encoder_unsupported">This device cannot encode H.264 with these settings. Adjust the size, frame rate or bitrate, or choose WebM or GIF</string>
     <string name="video_gif_preview_failed">Could not preview this GIF. Save it to view in another app</string>
     <string name="gif_colors">Number of colors</string>
     <string name="gif_loop">Loop forever</string>
     <string name="video_cover_time">Cover time range</string>
-    <string name="video_clear_metadata_hint">Remove recording dates, location and other descriptive tags</string>
+    <string name="video_clear_metadata_hint">Remove recording dates, location and other descriptive tags, along with chapters, attachments and data tracks</string>
     <string name="video_copy_hint">Keeps the original video quality. Audio is processed for the selected format</string>
 </resources>

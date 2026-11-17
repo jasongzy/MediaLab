@@ -489,7 +489,7 @@ internal class LabViewModel(application: Application, savedState: SavedStateHand
         if (!editor.inputValid || !applicable) return@work
         if (editor.pending.any { it != editor.tool } && !confirm(Confirmation.APPLY)) return@work
         val next = editor.applyTool(editor.tool)
-        next.validate(video.info.size, video.info.durationMs)
+        if (editor.tool != VideoTool.CLEAN) next.validate(video.info.size, video.info.durationMs)
         val draft = editor.capture()
         updateVideoPreview(video, next) { editor.commit(next, draft) }
         mutable.update { it.copy(notice = Notice(R.string.changes_applied)) }
@@ -512,10 +512,10 @@ internal class LabViewModel(application: Application, savedState: SavedStateHand
                 if (video.info.hdr && video.appliedPreview == null && !confirm(Confirmation.VIDEO_COLOR))
                     throw CancellationException()
                 mutable.update { it.copy(showProgress = true) }
-                generated = Videos.preview(video.file, video.info, next, workspace.work) { time ->
+                preview = Videos.preview(video.file, video.info, next, workspace.work) { time ->
                     mutable.update { it.copy(progress = (time.toFloat() / next.durationMs).coerceIn(0f, 1f)) }
                 }
-                preview = VideoPreviewCache.Preview(generated, Videos.inspect(generated))
+                generated = preview.file
             }
             currentCoroutineContext().ensureActive()
             val position = if (samePicture) editor.positionMs else next.positionFrom(editor.history.value, editor.positionMs)
@@ -653,9 +653,9 @@ internal class LabViewModel(application: Application, savedState: SavedStateHand
                 if (audio)
                     Videos.audio(video.file, video.info, edits, checkNotNull(video.selectedAudioTrack), file)
                 else {
-                    edits.validate(video.info.size, video.info.durationMs)
                     if (video.info.hdr && video.appliedPreview == null && !confirm(Confirmation.VIDEO_COLOR)) return@work
-                    Videos.frame(video.file, video.info, video.editor.positionMs, file, edits)
+                    val frameEdits = if (video.appliedPreview == null) edits else edits.copy(fps = edits.previewFps)
+                    Videos.frame(video.file, video.info, video.editor.positionMs, file, frameEdits)
                 }
                 if (save) {
                     val path = MediaFiles.save(context, file, name, type)

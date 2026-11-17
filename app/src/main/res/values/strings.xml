@@ -263,6 +263,6 @@
     <string name="edit_metadata">Edit metadata</string>
     <string name="edit_metadata_hint">Tap an entry to edit or delete it</string>
     <string name="invalid_metadata">Check the format and range of the metadata value</string>
-    <string name="metadata_not_saved">This format cannot save the metadata change. Choose another export format</string>
+    <string name="metadata_not_saved">This format cannot preserve the current metadata. Choose another export format</string>
     <string name="photo_metadata_format">Export as JPEG, PNG or WebP to save metadata changes</string>
 </resources>

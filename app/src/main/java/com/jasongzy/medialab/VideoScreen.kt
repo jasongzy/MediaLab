@@ -59,8 +59,13 @@ internal fun VideoScreen(model: LabViewModel, state: LabState, active: Boolean) 
     val pending = editor.pending
     val pendingDescription = stringResource(R.string.unapplied_changes)
     val edits = editor.output
-    val validSize =
-        if (editor.tool.editable) editor.applyTool(editor.tool).validSize else edits.validSize
+    val copyVideo = editor.tool == VideoTool.EXPORT && Videos.canCopy(video.info, edits)
+    val validSize = when {
+        editor.tool.editable -> editor.applyTool(editor.tool).validSize
+        editor.tool == VideoTool.EXPORT -> copyVideo || edits.validSize
+        editor.tool == VideoTool.EXTRACT -> history.value.canExtractFrame
+        else -> true
+    }
     var menu by rememberSaveable(video) { mutableStateOf(false) }
     val exportHighlight = remember(editor) { Animatable(0f) }
     val highlightColor = MaterialTheme.colorScheme.primary
@@ -232,7 +237,7 @@ internal fun VideoScreen(model: LabViewModel, state: LabState, active: Boolean) 
                     ) {
                         if (!validSize)
                             Text(
-                                stringResource(R.string.video_size_limit),
+                                stringResource(if (editor.tool == VideoTool.EXTRACT) R.string.video_frame_size_limit else R.string.video_size_limit),
                                 color = MaterialTheme.colorScheme.error,
                                 style = MaterialTheme.typography.bodySmall,
                             )
@@ -272,13 +277,8 @@ internal fun VideoScreen(model: LabViewModel, state: LabState, active: Boolean) 
                                     }
                                 }
                                 VideoTool.EXTRACT -> {
-                                    val (frame, count) =
-                                        videoFramePosition(
-                                            editor.positionMs,
-                                            history.value.durationMs,
-                                            if (video.appliedPreview == null) video.info.fps
-                                            else history.value.fps.toDouble(),
-                                        )
+                                    val (frame, count) = video.framePosition(editor.positionMs)
+                                    val estimated = video.appliedInfo?.let { it.frameCount == null } ?: video.gifFrameTimes.isEmpty()
                                     Text(
                                         AnnotatedString.fromHtml(
                                             stringResource(
@@ -290,7 +290,8 @@ internal fun VideoScreen(model: LabViewModel, state: LabState, active: Boolean) 
                                         style = MaterialTheme.typography.labelLarge,
                                     )
                                     Text(
-                                        stringResource(R.string.video_frame_hint),
+                                        stringResource(if (estimated)
+                                            R.string.video_frame_estimate_hint else R.string.video_frame_hint),
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
@@ -369,30 +370,30 @@ internal fun VideoScreen(model: LabViewModel, state: LabState, active: Boolean) 
                                     var colorsRevision by remember { mutableIntStateOf(0) }
                                     var fpsRevision by remember { mutableIntStateOf(0) }
                                     var bitrateRevision by remember { mutableIntStateOf(0) }
-                                    val inputValid =
-                                        fpsValid &&
-                                            (if (edits.format == VideoFormat.GIF) colorsValid
-                                            else bitrateValid)
+                                    val isGif = edits.format == VideoFormat.GIF
+                                    val inputValid = fpsValid && (if (isGif) colorsValid else bitrateValid)
                                     SideEffect { editor.inputValid = inputValid }
+                                    val maxFps = edits.format.maxFps
+                                    val defaultFps = editor.original.fps.coerceAtMost(maxFps)
                                     ChoiceChips(
-                                        listOf(15, 24, 25, 30, 50, 60, 120).map { it to "$it" },
+                                        listOf(15, 24, 25, 30, 50, 60, 120).filter { it <= maxFps }.map { it to "$it" },
                                         edits.fps,
                                     ) {
                                         editor.fps = it
                                         fpsRevision++
                                     }
-                                    key(fpsRevision) {
+                                    key(fpsRevision, maxFps) {
                                         NumberField(
                                             R.string.video_fps,
                                             edits.fps,
                                             Modifier.fillMaxWidth(),
-                                            1..120,
+                                            1..maxFps,
                                             onValidityChanged = { fpsValid = it },
                                         ) {
                                             editor.fps = it
                                         }
                                     }
-                                    if (edits.format == VideoFormat.GIF) {
+                                    if (isGif) {
                                         ChoiceChips(
                                             listOf(16, 32, 64, 128, 256).map { it to "$it" },
                                             edits.gifColors,
@@ -449,12 +450,10 @@ internal fun VideoScreen(model: LabViewModel, state: LabState, active: Boolean) 
                                             editor.mute = it
                                         }
                                     }
-                                    val size =
-                                        if (edits.format == VideoFormat.GIF) edits.size
-                                        else evenVideoSize(edits.size)
+                                    val size = if (isGif) edits.size else evenVideoSize(edits.size)
                                     if (supportedFormat) Text(
                                         stringResource(
-                                            if (Videos.canCopy(video.info, edits))
+                                            if (copyVideo)
                                                 R.string.video_copy_hint
                                             else
                                                 when (edits.format) {
@@ -467,15 +466,12 @@ internal fun VideoScreen(model: LabViewModel, state: LabState, active: Boolean) 
                                         ),
                                         style = MaterialTheme.typography.bodySmall,
                                     )
-                                    if (supportedFormat && !Videos.canCopy(video.info, edits) && size != edits.size)
+                                    if (supportedFormat && !copyVideo && size != edits.size)
                                         Text(
                                             stringResource(R.string.video_even_size_hint),
                                             style = MaterialTheme.typography.bodySmall,
                                         )
-                                    if (
-                                        supportedFormat && video.info.hdr &&
-                                            !Videos.canCopy(video.info, edits)
-                                    )
+                                    if (supportedFormat && video.info.hdr && !copyVideo)
                                         Text(
                                             stringResource(R.string.video_hdr_hint),
                                             style = MaterialTheme.typography.bodySmall,
@@ -492,17 +488,15 @@ internal fun VideoScreen(model: LabViewModel, state: LabState, active: Boolean) 
                                     ) {
                                         TextButton(
                                             {
-                                                editor.fps = editor.original.fps
-                                                editor.bitrateKbps = editor.original.bitrateKbps
-                                                editor.gifColors = editor.original.gifColors
+                                                if (edits.fps != defaultFps) editor.fps = editor.original.fps
+                                                if (isGif) editor.gifColors = editor.original.gifColors
+                                                else editor.bitrateKbps = editor.original.bitrateKbps
                                                 editor.inputRevision++
                                             },
                                             enabled =
-                                                !inputValid ||
-                                                    editor.gifColors != editor.original.gifColors ||
-                                                    editor.fps != editor.original.fps ||
-                                                    editor.bitrateKbps !=
-                                                        editor.original.bitrateKbps,
+                                                !inputValid || edits.fps != defaultFps ||
+                                                    (if (isGif) edits.gifColors != editor.original.gifColors
+                                                    else edits.bitrateKbps != editor.original.bitrateKbps),
                                         ) {
                                             Text(stringResource(R.string.video_reset_values))
                                         }
@@ -979,7 +973,7 @@ private fun VideoResizePanel(video: VideoDocument, apply: () -> Unit) {
         editor.resize,
         editor.current.size,
         editor.lockRatio,
-        8192,
+        MAX_VIDEO_EDGE,
         onValidityChanged = { editor.inputValid = it },
         onDraftChanged = { hasDraft = it },
     ) {
