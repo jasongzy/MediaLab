@@ -733,7 +733,7 @@ internal class PhotoRegression(
             }
             idle(model)
             check(model.state.value.photo === photo && model.state.value.audio != null)
-            val tag = TagDraft("TITLE", emptyList()).apply { text = "Unsaved" }
+            val tag = TagDraft("TITLE", emptyList()).apply { fields[0] = "Unsaved" }
             instrumentation.runOnMainSync {
                 model.state.value.audio!!.editor.tag = tag
                 model.open(Uri.fromFile(audio), ImportType.AUDIO)

@@ -3,6 +3,7 @@ package com.jasongzy.medialab
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.toMutableStateList
 import com.kyant.taglib.Picture
 import com.kyant.taglib.AudioProperties
 import java.io.File
@@ -54,7 +55,8 @@ internal class AudioEditorState(val original: AudioFrame, val exportDefaults: Au
     val hasDraft: Boolean
         get() = tag != null || picture != null || pending.isNotEmpty()
 
-    val pendingTime get() = time.value != MediaTimeEdit(history.value.media.durationMs) || !inputValid
+    val pendingTime get() = time.value != MediaTimeEdit(history.value.media.durationMs) ||
+        (tool == AudioTool.TIME && !inputValid)
     val pending get() = AudioTool.entries.filter { tool ->
         when (tool) {
             AudioTool.TIME -> pendingTime
@@ -85,6 +87,7 @@ internal class AudioEditorState(val original: AudioFrame, val exportDefaults: Au
     }
 
     fun commit(frame: AudioFrame, action: Int) {
+        if (frame == history.value) return
         val metadata = history.value.metadata
         history.change(frame, action)
         if (metadata.tags != frame.metadata.tags) resetMetadata(AudioTool.TAGS)
@@ -99,19 +102,31 @@ internal class AudioEditorState(val original: AudioFrame, val exportDefaults: Au
             steps = steps.drop(1)
         }
         if (steps.size != snapshot.steps.size)
-            history.restore(ToolHistory.Snapshot(steps, steps.lastIndex, frame, snapshot.actions.takeLast(steps.size)))
+            history.restore(snapshot.copy(
+                steps = steps, position = steps.lastIndex, actions = snapshot.actions.takeLast(steps.size),
+            ))
     }
 }
 
-internal class TagDraft(val original: String, values: List<String>) {
+internal class TagDraft(val original: String, private val initialValues: List<String>) {
     var key by mutableStateOf(original)
-    var text by mutableStateOf(values.joinToString("\n"))
+    val normalizedKey get() = original.ifEmpty { key.trim().uppercase() }
+    private val hasLineBreaks = initialValues.any { '\n' in it || '\r' in it }
+    val multilineValue get() = normalizedKey.equals("LYRICS", true) || normalizedKey.equals("COMMENT", true) || hasLineBreaks
+    private val initialFields = if (multilineValue) initialValues.ifEmpty { listOf("") }
+        else listOf(initialValues.joinToString("\n"))
+    val fields = initialFields.toMutableStateList()
+    val values: List<String>
+        get() {
+            val texts = fields.toList()
+            if (texts == initialFields) return initialValues
+            return (if (multilineValue) texts else texts.single().lines()).filter { it.isNotBlank() }
+        }
 }
 
 internal class PictureDraft(val index: Int, picture: Picture) {
-    var description by mutableStateOf(picture.description)
-    var type by mutableStateOf(picture.pictureType)
+    var picture by mutableStateOf(picture)
     var deleting by mutableStateOf(false)
 }
 
-internal data class CoverRequest(val index: Int? = null)
+internal data class CoverRequest(val replacement: PictureDraft? = null)

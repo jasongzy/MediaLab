@@ -7,6 +7,19 @@ import org.junit.Test
 
 class AudioEditsTest {
     @Test
+    fun tagEditsKeepMultilineValuesSeparate() {
+        val comments = TagDraft("COMMENT", listOf("first\nline", "second"))
+        comments.fields[1] = "edited\ncomment"
+        assertEquals(listOf("first\nline", "edited\ncomment"), comments.values)
+        val newTag = TagDraft("", emptyList())
+        newTag.key = " lyrics "
+        newTag.fields[0] = "one\ntwo"
+        assertEquals(listOf("one\ntwo"), newTag.values)
+        newTag.key = "ARTIST"
+        assertEquals(listOf("one", "two"), newTag.values)
+    }
+
+    @Test
     fun numericTagsAllowFormattingChangesButRejectLostValues() {
         assertTrue(AudioFiles.sameTagValues("DISCNUMBER", listOf("01/00"), listOf("1")))
         assertTrue(AudioFiles.sameTagValues("TRACKNUMBER", listOf("003/012"), listOf("3/12")))
@@ -97,13 +110,21 @@ class AudioEditsTest {
     }
 
     @Test
-    fun restoringTheOriginalKeepsAnUndoStepForLargeFiles() {
+    fun restoringTheOriginalPreservesLargeEditsAcrossUndoAndRedo() {
         val original = AudioFrame(AudioMedia(File("original"), AudioProperties(0, 0, 0, 0), emptyList()), AudioMetadata(emptyMap(), emptyList()))
         val edited = original.copy(media = original.media.copy(file = object : File("large-edit") {
             override fun length() = 600L * 1024 * 1024
         }))
         val editor = AudioEditorState(original)
         editor.commit(edited, R.string.video_time)
+        val tagged = edited.copy(metadata = edited.metadata.copy(tags = mapOf("TITLE" to listOf("Edit"))))
+        editor.commit(tagged, R.string.tags)
+        editor.history.undo()
+        editor.history.undo()
+        editor.commit(original, R.string.restore_original_audio)
+        assertEquals(edited, editor.history.redoValue)
+        editor.history.redo()
+        assertEquals(tagged, editor.history.redoValue)
         editor.commit(original, R.string.restore_original_audio)
         assertEquals(edited, editor.history.undoValue)
         assertTrue(editor.files.containsAll(listOf(original.media.file, edited.media.file)))

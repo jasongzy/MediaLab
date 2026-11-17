@@ -8,7 +8,7 @@ import androidx.compose.runtime.setValue
 internal class ToolHistory<T>(initial: T) {
     data class Snapshot<T>(
         val steps: List<T>, val position: Int, val value: T,
-        val actions: List<Int?> = List(steps.size) { null },
+        val actions: List<Int?>,
     )
 
     private var steps by mutableStateOf(listOf(initial))

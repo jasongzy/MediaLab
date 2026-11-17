@@ -30,7 +30,6 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import java.util.Locale
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -93,17 +92,10 @@ internal fun AudioScreen(model: LabViewModel, state: LabState, active: Boolean) 
                 model.cover(uri) { picture ->
                     val current = model.state.value.audio ?: return@cover
                     if (current.editor !== editor) return@cover
-                    val index = request.index
-                    if (index != null && index !in editor.pictures.value.indices) return@cover
-                    val pictures = editor.pictures.value.toMutableList()
-                    if (index != null)
-                        pictures[index] =
-                            picture.copy(
-                                description = pictures[index].description,
-                                pictureType = pictures[index].pictureType,
-                            )
-                    else pictures += picture
-                    editor.pictures.change(pictures)
+                    val draft = request.replacement
+                    if (draft == null) editor.pictures.change(editor.pictures.value + picture)
+                    else if (editPicture === draft)
+                        draft.picture = draft.picture.copy(data = picture.data, mimeType = picture.mimeType)
                 }
         }
     val context = LocalContext.current
@@ -365,8 +357,7 @@ internal fun AudioScreen(model: LabViewModel, state: LabState, active: Boolean) 
     editTag?.let { draft ->
         val original = draft.original
         var key by draft::key
-        var text by draft::text
-        val normalized = key.trim().uppercase(Locale.ROOT)
+        val normalized = draft.normalizedKey
         AlertDialog(
             onDismissRequest = { editTag = null },
             title = {
@@ -375,7 +366,7 @@ internal fun AudioScreen(model: LabViewModel, state: LabState, active: Boolean) 
                 )
             },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     OutlinedTextField(
                         key,
                         { key = it },
@@ -383,28 +374,24 @@ internal fun AudioScreen(model: LabViewModel, state: LabState, active: Boolean) 
                         singleLine = true,
                         readOnly = original.isNotBlank(),
                     )
-                    OutlinedTextField(
-                        text,
-                        { text = it },
-                        label = {
-                            Text(
-                                if (original in listOf("LYRICS", "COMMENT")) tagLabel(original)
-                                else stringResource(R.string.tag_values)
-                            )
-                        },
-                        modifier = Modifier.heightIn(max = 300.dp),
-                        minLines = 2,
-                    )
+                    draft.fields.forEachIndexed { index, text ->
+                        OutlinedTextField(
+                            text,
+                            { draft.fields[index] = it },
+                            label = {
+                                Text(if (draft.multilineValue) tagLabel(normalized) else stringResource(R.string.tag_values))
+                            },
+                            modifier = Modifier.heightIn(max = 300.dp),
+                            minLines = 2,
+                        )
+                    }
                 }
             },
             confirmButton = {
                 TextButton(
                     {
                         val tags = editor.tags.value.toMutableMap()
-                        val newValues =
-                            (if (normalized in listOf("LYRICS", "COMMENT")) listOf(text)
-                                else text.lines())
-                                .filter { it.isNotBlank() }
+                        val newValues = draft.values
                         if (newValues.isEmpty()) tags.remove(normalized)
                         else tags[normalized] = newValues
                         editor.tags.change(tags)
@@ -435,13 +422,11 @@ internal fun AudioScreen(model: LabViewModel, state: LabState, active: Boolean) 
         ?.takeIf { it.index in editor.pictures.value.indices }
         ?.let { draft ->
             val index = draft.index
-            val picture = editor.pictures.value[index]
+            var picture by draft::picture
             val bitmap by
                 produceState<Bitmap?>(null, picture.data) {
                     value = withContext(Dispatchers.IO) { AudioFiles.thumbnail(picture.data, 1024) }
                 }
-            var description by draft::description
-            var type by draft::type
             var deleting by draft::deleting
             AlertDialog(
                 onDismissRequest = { editPicture = null },
@@ -473,26 +458,25 @@ internal fun AudioScreen(model: LabViewModel, state: LabState, active: Boolean) 
                                 }
                             }
                             OutlinedTextField(
-                                description,
-                                { description = it },
+                                picture.description,
+                                { picture = picture.copy(description = it) },
                                 label = { Text(stringResource(R.string.description)) },
                             )
                             OutlinedTextField(
-                                type,
-                                { type = it },
+                                picture.pictureType,
+                                { picture = picture.copy(pictureType = it) },
                                 label = { Text(stringResource(R.string.cover_type)) },
                                 singleLine = true,
                             )
                             val types = listOf("Front Cover", "Back Cover", "Other")
                             ChoiceChips(
                                 types.mapIndexed { i, value -> i to pictureLabel(value) },
-                                types.indexOf(type),
+                                types.indexOf(picture.pictureType),
                             ) {
-                                type = types[it]
+                                picture = picture.copy(pictureType = types[it])
                             }
                             TextButton({
-                                editor.coverRequest = CoverRequest(index)
-                                editPicture = null
+                                editor.coverRequest = CoverRequest(draft)
                                 coverPicker.launch(arrayOf("image/*"))
                             }) {
                                 Text(stringResource(R.string.replace_cover))
@@ -503,9 +487,7 @@ internal fun AudioScreen(model: LabViewModel, state: LabState, active: Boolean) 
                     TextButton({
                         val pictures = editor.pictures.value.toMutableList()
                         if (deleting) pictures.removeAt(index)
-                        else
-                            pictures[index] =
-                                picture.copy(description = description, pictureType = type)
+                        else pictures[index] = picture
                         editor.pictures.change(pictures)
                         editPicture = null
                     }) {

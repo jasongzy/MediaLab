@@ -44,6 +44,10 @@ class EditorInteractionTest {
         val metadata = AudioMetadata(mapOf("TITLE" to listOf("Original")), emptyList())
         val audio = AudioDocument(File("song.mp3"), "song.mp3", AudioProperties(0, 0, 0, 0), metadata, emptyList())
         val editor = audio.editor
+        editor.tool = AudioTool.TIME
+        editor.inputValid = false
+        assertEquals(listOf(AudioTool.TIME), editor.pending)
+        editor.tool = AudioTool.TAGS
         val tags = mapOf("TITLE" to listOf("Edited"))
         val picture = Picture(byteArrayOf(1, 2, 3), "Cover", "Front Cover", "image/png")
         editor.tags.change(tags)
