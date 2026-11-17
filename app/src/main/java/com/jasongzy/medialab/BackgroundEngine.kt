@@ -9,6 +9,7 @@ import com.google.ai.edge.litert.Accelerator
 import com.google.ai.edge.litert.CompiledModel
 import com.google.ai.edge.litert.Environment
 import java.io.File
+import java.security.DigestInputStream
 import java.security.MessageDigest
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -26,26 +27,15 @@ internal class BackgroundEngine(private val context: Context) {
             check(isDirectory || mkdirs()) { "Cannot create model directory" }
         }
         val target = File(directory, model.file)
-        if (target.length() == manifest.getLong("bytes")) return target
+        val bytes = manifest.getLong("bytes")
+        if (target.length() == bytes) return target
         val temporary = File(directory, "model.part")
         try {
             val digest = MessageDigest.getInstance("SHA-256")
-            context.assets.open("models/${model.file}").use { input ->
-                temporary.outputStream().buffered().use { output ->
-                    val buffer = ByteArray(1024 * 1024)
-                    while (true) {
-                        currentCoroutineContext().ensureActive()
-                        val count = input.read(buffer)
-                        if (count < 0) break
-                        output.write(buffer, 0, count)
-                        digest.update(buffer, 0, count)
-                    }
-                }
+            DigestInputStream(context.assets.open("models/${model.file}"), digest).use { input ->
+                temporary.outputStream().use { MediaFiles.copy(input, it, bytes) }
             }
-            check(temporary.length() == manifest.getLong("bytes")) { "Incomplete model" }
-            check(digest.digest().joinToString("") { "%02x".format(it) } == hash) {
-                "Model checksum mismatch"
-            }
+            check(digest.digest().toHexString() == hash) { "Model checksum mismatch" }
             check(temporary.renameTo(target)) { "Cannot install model" }
             return target
         } finally {
@@ -126,8 +116,7 @@ internal class BackgroundEngine(private val context: Context) {
     }
 
     private suspend fun mnn(path: File, compiled: File, input: FloatArray, progress: (Int) -> Unit): FloatArray {
-        val system = MessageDigest.getInstance("SHA-256").digest(Build.FINGERPRINT.toByteArray())
-            .joinToString("") { "%02x".format(it) }
+        val system = MessageDigest.getInstance("SHA-256").digest(Build.FINGERPRINT.toByteArray()).toHexString()
         val directory = File(compiled, "mnn-${BuildConfig.MNN_VERSION}/$system").apply {
             check(isDirectory || mkdirs()) { "Cannot create model directory" }
         }

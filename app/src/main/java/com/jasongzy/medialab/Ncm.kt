@@ -14,8 +14,8 @@ internal data class NcmResult(val extension: String, val metadata: String?, val 
 // NCM container algorithm: taurusxin/ncmdump and Pacoshao/DeNcm (MIT).
 internal object Ncm {
     private const val MAGIC = "CTENFDAM"
-    private val coreKey = "687a4852416d736f356b496e62617857".hex()
-    private val metaKey = "2331346c6a6b5f215c5d2630553c2728".hex()
+    private val coreKey = "687a4852416d736f356b496e62617857".hexToByteArray()
+    private val metaKey = "2331346c6a6b5f215c5d2630553c2728".hexToByteArray()
 
     fun outputName(sourceName: String, extension: String): String = "$sourceName.$extension"
 
@@ -32,93 +32,92 @@ internal object Ncm {
     ): NcmResult {
         try {
             val counted = CountingInput(source.buffered())
-            DataInputStream(counted).use { input ->
-                fun block(limit: Int, mask: Int = 0): ByteArray {
-                    val size = input.littleInt()
-                    require(size <= limit && (total < 0 || size <= total - counted.position)) {
-                        "Invalid NCM block length"
-                    }
-                    val bytes = ByteArray(size)
-                    input.readFully(bytes)
-                    if (mask != 0) for (i in bytes.indices) bytes[i] = (bytes[i].toInt() xor mask).toByte()
-                    return bytes
+            val input = DataInputStream(counted)
+            fun block(limit: Int, mask: Int = 0): ByteArray {
+                val size = input.littleInt()
+                require(size <= limit && (total < 0 || size <= total - counted.position)) {
+                    "Invalid NCM block length"
                 }
-                val magic = ByteArray(MAGIC.length).also { input.readFully(it) }
-                require(magic.contentEquals(MAGIC.toByteArray())) { "Invalid NCM header" }
-                input.readUnsignedShort()
-                val key = decrypt(coreKey, block(16 * 1024 * 1024, 0x64))
-                require(
-                    key.size > 17 &&
-                        key.copyOfRange(0, 17).contentEquals("neteasecloudmusic".toByteArray())
-                ) {
-                    "Invalid NCM key"
-                }
-                val stream = keyStream(key.copyOfRange(17, key.size))
-                val encoded = block(16 * 1024 * 1024, 0x63)
-                val metadata =
-                    if (encoded.isEmpty()) null
-                    else {
-                        require(
-                            encoded.size > 22 &&
-                                encoded
-                                    .copyOfRange(0, 22)
-                                    .contentEquals("163 key(Don't modify):".toByteArray())
-                        ) {
-                            "Invalid NCM metadata"
-                        }
-                        val plain =
-                            decrypt(
-                                    metaKey,
-                                    Base64.getDecoder()
-                                        .decode(encoded.copyOfRange(22, encoded.size)),
-                                )
-                                .toString(Charsets.UTF_8)
-                        require(plain.startsWith("music:")) { "Invalid NCM metadata prefix" }
-                        plain.substring(6)
-                    }
-                input.readInt()
-                input.readUnsignedByte()
-                val frameLength = input.littleInt()
-                val cover = block(32 * 1024 * 1024)
-                require(frameLength >= cover.size && frameLength <= 64 * 1024 * 1024) {
-                    "Invalid NCM cover frame"
-                }
-                var padding = frameLength - cover.size
-                val buffer = ByteArray(128 * 1024)
-                while (padding > 0) {
-                    progress(counted.position, total)
-                    val count = minOf(padding, buffer.size)
-                    input.readFully(buffer, 0, count)
-                    padding -= count
-                }
-                val extension = output.outputStream().buffered().use { target ->
-                    var offset = 0L
-                    fun write(start: Int, count: Int) {
-                        for (i in 0 until count) {
-                            val keyByte = stream[((offset + i) and 255).toInt()]
-                            buffer[start + i] = (buffer[start + i].toInt() xor keyByte).toByte()
-                        }
-                        target.write(buffer, start, count)
-                        offset += count
-                    }
-                    val format = readNcmAudioFormat(buffer) { start, count ->
-                        progress(counted.position, total)
-                        input.readFully(buffer, start, count)
-                        write(start, count)
-                    }
-                    onFormat(format)
-                    while (true) {
-                        progress(counted.position, total)
-                        val count = input.read(buffer)
-                        if (count < 0) break
-                        write(0, count)
-                    }
-                    format
-                }
-                require(total < 0 || counted.position == total) { "Truncated NCM audio" }
-                progress(counted.position, counted.position)
-                return NcmResult(extension, metadata, cover)
+                val bytes = ByteArray(size)
+                input.readFully(bytes)
+                if (mask != 0) for (i in bytes.indices) bytes[i] = (bytes[i].toInt() xor mask).toByte()
+                return bytes
             }
+            val magic = ByteArray(MAGIC.length).also { input.readFully(it) }
+            require(magic.contentEquals(MAGIC.toByteArray())) { "Invalid NCM header" }
+            input.readUnsignedShort()
+            val key = decrypt(coreKey, block(16 * 1024 * 1024, 0x64))
+            require(
+                key.size > 17 &&
+                    key.copyOfRange(0, 17).contentEquals("neteasecloudmusic".toByteArray())
+            ) {
+                "Invalid NCM key"
+            }
+            val stream = keyStream(key.copyOfRange(17, key.size))
+            val encoded = block(16 * 1024 * 1024, 0x63)
+            val metadata =
+                if (encoded.isEmpty()) null
+                else {
+                    require(
+                        encoded.size > 22 &&
+                            encoded
+                                .copyOfRange(0, 22)
+                                .contentEquals("163 key(Don't modify):".toByteArray())
+                    ) {
+                        "Invalid NCM metadata"
+                    }
+                    val plain =
+                        decrypt(
+                                metaKey,
+                                Base64.getDecoder()
+                                    .decode(encoded.copyOfRange(22, encoded.size)),
+                            )
+                            .toString(Charsets.UTF_8)
+                    require(plain.startsWith("music:")) { "Invalid NCM metadata prefix" }
+                    plain.substring(6)
+                }
+            input.readInt()
+            input.readUnsignedByte()
+            val frameLength = input.littleInt()
+            val cover = block(32 * 1024 * 1024)
+            require(frameLength >= cover.size && frameLength <= 64 * 1024 * 1024) {
+                "Invalid NCM cover frame"
+            }
+            var padding = frameLength - cover.size
+            val buffer = ByteArray(128 * 1024)
+            while (padding > 0) {
+                progress(counted.position, total)
+                val count = minOf(padding, buffer.size)
+                input.readFully(buffer, 0, count)
+                padding -= count
+            }
+            val extension = output.outputStream().buffered().use { target ->
+                var offset = 0L
+                fun write(start: Int, count: Int) {
+                    for (i in 0 until count) {
+                        val keyByte = stream[((offset + i) and 255).toInt()]
+                        buffer[start + i] = (buffer[start + i].toInt() xor keyByte).toByte()
+                    }
+                    target.write(buffer, start, count)
+                    offset += count
+                }
+                val format = readNcmAudioFormat(buffer) { start, count ->
+                    progress(counted.position, total)
+                    input.readFully(buffer, start, count)
+                    write(start, count)
+                }
+                onFormat(format)
+                while (true) {
+                    progress(counted.position, total)
+                    val count = input.read(buffer)
+                    if (count < 0) break
+                    write(0, count)
+                }
+                format
+            }
+            require(total < 0 || counted.position == total) { "Truncated NCM audio" }
+            progress(counted.position, counted.position)
+            return NcmResult(extension, metadata, cover)
         } catch (error: Exception) {
             output.delete()
             throw error
@@ -162,6 +161,4 @@ internal object Ncm {
         override fun read(bytes: ByteArray, offset: Int, length: Int): Int =
             `in`.read(bytes, offset, length).also { if (it > 0) position += it }
     }
-
-    private fun String.hex(): ByteArray = chunked(2).map { it.toInt(16).toByte() }.toByteArray()
 }

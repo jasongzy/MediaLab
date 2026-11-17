@@ -85,7 +85,7 @@ internal class BatchFiles(private val context: Context, val tree: Uri?) {
                 return null
             }
             if (actual != expected) return null
-            return CleanupCandidate(item.file, saved, sourceDigest, AudioFingerprint.hex(hash.digest()))
+            return CleanupCandidate(item.file, saved, sourceDigest, hash.digest().toHexString())
         }
         val name = Ncm.outputName(item.file.name, extension)
         val directory = item.file.directory
@@ -210,7 +210,7 @@ internal class BatchFiles(private val context: Context, val tree: Uri?) {
             }
             progress(0.85f)
             val coroutine = currentCoroutineContext()
-            val expected = AudioFingerprint.hex(hash.digest())
+            val expected = hash.digest().toHexString()
             check(digest(context, uri) == expected) {
                 context.getString(R.string.batch_verification_failed)
             }

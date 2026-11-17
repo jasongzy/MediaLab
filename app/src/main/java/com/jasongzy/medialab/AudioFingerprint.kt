@@ -44,10 +44,8 @@ internal object AudioFingerprint {
             if (count < 0) break
             if (count > 0) hash.update(buffer, 0, count)
         }
-        return hex(hash.digest())
+        return hash.digest().toHexString()
     }
-
-    fun hex(bytes: ByteArray): String = bytes.joinToString("") { "%02x".format(it) }
 
     // Compare encoded audio rather than tags, which an unlocker may restore differently.
     fun payload(file: File, extension: String, check: () -> Unit = {}): String =
@@ -109,6 +107,6 @@ internal object AudioFingerprint {
                 hash.update(buffer, 0, count)
                 remaining -= count
             }
-            "$extension:${end - start}:${hex(hash.digest())}"
+            "$extension:${end - start}:${hash.digest().toHexString()}"
         }
 }

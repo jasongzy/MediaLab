@@ -34,12 +34,9 @@ class NcmTest {
         }
         assertArrayEquals(MessageDigest.getInstance("SHA-256").digest(source.readBytes()), digest.digest())
         assertEquals("flac", result.extension)
-        assertEquals(150004L, output.length())
         assertEquals(
             "c911da932bacc7bf0f5b7e5d195fa2d95856e06da2ef1ead2993223c0b9e0310",
-            MessageDigest.getInstance("SHA-256").digest(output.readBytes()).joinToString("") {
-                "%02x".format(it)
-            },
+            MessageDigest.getInstance("SHA-256").digest(output.readBytes()).toHexString(),
         )
         assertTrue(result.metadata!!.contains("Media Lab"))
         assertEquals(79, result.cover.size)
