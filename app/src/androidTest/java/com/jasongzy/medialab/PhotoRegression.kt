@@ -1353,6 +1353,9 @@ internal class PhotoRegression(
             instrumentation.runOnMainSync { model.loadMask() }
             idle(model)
             check(model.state.value.photo.editor!!.cutout?.mask === stored)
+            instrumentation.runOnMainSync { model.storeMask() }
+            idle(model)
+            check(model.state.value.storedMask === stored)
         } finally {
             reference.recycle()
             instrumentation.runOnMainSync { store.clear() }

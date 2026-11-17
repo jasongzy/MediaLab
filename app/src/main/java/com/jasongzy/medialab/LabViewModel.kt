@@ -954,9 +954,15 @@ internal class LabViewModel(application: Application, savedState: SavedStateHand
         val photo = state.value.photo
         val draft = photo.editor?.cutout ?: return@work
         val info = checkNotNull(photo.info)
-        discardResize()
-        checkNotNull(history).reserve(info.width.toLong() * info.height, keep = null)
-        val stored = Photos.storeMask(draft, info.width, info.height)
+        val mask = draft.mask
+        val stored =
+            if (mask is CutoutMask.Stored && mask.width == info.width && mask.height == info.height && draft.history.value.isEmpty())
+                mask
+            else {
+                discardResize()
+                checkNotNull(history).reserve(info.width.toLong() * info.height, keep = null)
+                Photos.storeMask(draft, info.width, info.height)
+            }
         currentCoroutineContext().ensureActive()
         mutable.update { it.copy(storedMask = stored, notice = Notice(R.string.mask_stored)) }
     }

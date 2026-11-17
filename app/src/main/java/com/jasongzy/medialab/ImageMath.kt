@@ -52,10 +52,9 @@ internal object ImageMath {
     ) {
         val horizontal = kernels(width, outWidth)
         val vertical = kernels(height, outHeight)
-        val intermediate = IntArray(Math.multiplyExact(outWidth, height))
         val sourceRow = IntArray(width)
         val shifts = intArrayOf(16, 8, 0)
-        for (y in 0 until height) {
+        fun horizontalRow(y: Int, output: IntArray) {
             readRow(y, sourceRow)
             for (x in 0 until outWidth) {
                 val kernel = horizontal[x]
@@ -68,20 +67,30 @@ internal object ImageMath {
                     }
                     pixel = pixel or ((value shr PRECISION).coerceIn(0, 255) shl shift)
                 }
-                intermediate[y * outWidth + x] = pixel
+                output[x] = pixel
             }
         }
         val row = IntArray(outWidth)
+        val cache = Array(vertical.maxOf { it.weights.size }) { IntArray(outWidth) }
+        var nextSource = 0
         for (y in 0 until outHeight) {
             val kernel = vertical[y]
+            val rows = Array(kernel.weights.size) { offset ->
+                val sourceY = kernel.start + offset
+                val cached = cache[sourceY % cache.size]
+                if (sourceY >= nextSource) {
+                    horizontalRow(sourceY, cached)
+                    nextSource = sourceY + 1
+                }
+                cached
+            }
             for (x in 0 until outWidth) {
                 var pixel = 0
                 for (shift in shifts) {
                     var value = UNIT / 2
                     for (i in kernel.weights.indices) {
                         value +=
-                            ((intermediate[(kernel.start + i) * outWidth + x] ushr shift) and 255) *
-                                kernel.weights[i]
+                            ((rows[i][x] ushr shift) and 255) * kernel.weights[i]
                     }
                     pixel = pixel or ((value shr PRECISION).coerceIn(0, 255) shl shift)
                 }
@@ -138,6 +147,7 @@ internal object ImageMath {
         }
         val xScale = SIZE.toFloat() / width
         val yScale = SIZE.toFloat() / height
+        fun interpolate(a: Float, b: Float, fraction: Float) = a + (b - a) * fraction
         fun sample(x: Int, y: Int, xScale: Float, yScale: Float): Float {
             val sx = max(0f, (x + 0.5f) * xScale - 0.5f)
             val sy = max(0f, (y + 0.5f) * yScale - 0.5f)
@@ -147,8 +157,9 @@ internal object ImageMath {
             val y1 = min(y0 + 1, SIZE - 1)
             val fx = sx - x0
             val fy = sy - y0
-            return (1 - fy) * ((1 - fx) * mask[y0 * SIZE + x0] + fx * mask[y0 * SIZE + x1]) +
-                fy * ((1 - fx) * mask[y1 * SIZE + x0] + fx * mask[y1 * SIZE + x1])
+            val top = interpolate(mask[y0 * SIZE + x0], mask[y0 * SIZE + x1], fx)
+            val bottom = interpolate(mask[y1 * SIZE + x0], mask[y1 * SIZE + x1], fx)
+            return interpolate(top, bottom, fy)
         }
         var low = Float.POSITIVE_INFINITY
         var high = Float.NEGATIVE_INFINITY
@@ -185,6 +196,16 @@ internal object ImageMath {
         readRow: (Int, IntArray) -> Unit,
         writeRow: (Int, IntArray) -> Unit,
     ) {
+        if (width == outWidth && height == outHeight) {
+            require(width > 0 && height > 0)
+            val row = IntArray(width)
+            for (y in 0 until height) {
+                checkCancelled()
+                readRow(y, row)
+                writeRow(y, row)
+            }
+            return
+        }
         val horizontal = kernels(width, outWidth, bicubic)
         val vertical = kernels(height, outHeight, bicubic)
         val sourceRow = IntArray(width)

@@ -561,12 +561,13 @@ internal object Photos {
         bitmap.setHasAlpha(bitmap.hasAlpha() || background ushr 24 == 0)
         val fill = Color.valueOf(background).convert(bitmap.colorSpace!!).components
         val row = FloatArray(bitmap.width * 4)
-        maskRows(mask, bitmap.width, bitmap.height, edits) { y, coverage ->
+        maskRows(mask, bitmap.width, bitmap.height, edits) { y, alpha ->
             BitmapPixels.readRow(bitmap, y, row)
-            for (x in coverage.indices) {
-                val a = (if (opaque) 1f else row[x * 4 + 3]) * coverage[x]
+            for (x in alpha.indices) {
+                val coverage = alpha[x] / 255f
+                val a = (if (opaque) 1f else row[x * 4 + 3]) * coverage
                 for (c in 0..2)
-                    row[x * 4 + c] = row[x * 4 + c] * coverage[x] + fill[c] * fill[3] * (1f - a)
+                    row[x * 4 + c] = row[x * 4 + c] * coverage + fill[c] * fill[3] * (1f - a)
                 row[x * 4 + 3] = a + fill[3] * (1f - a)
             }
             BitmapPixels.writeRow(bitmap, y, row)
@@ -576,7 +577,7 @@ internal object Photos {
     suspend fun storeMask(draft: CutoutDraft, width: Int, height: Int): CutoutMask.Stored {
         val pixels = ByteArray(Math.multiplyExact(width, height))
         maskRows(draft.mask, width, height, draft.history.value) { y, row ->
-            for (x in row.indices) pixels[y * width + x] = (row[x] * 255).roundToInt().toByte()
+            for (x in row.indices) pixels[y * width + x] = row[x].toByte()
         }
         return CutoutMask.Stored(width, height, pixels, draft.mask.model)
     }
@@ -586,48 +587,46 @@ internal object Photos {
         width: Int,
         height: Int,
         edits: List<MaskEdit>,
-        writeRow: (Int, FloatArray) -> Unit,
+        writeRow: (Int, IntArray) -> Unit,
     ) {
         val coroutine = currentCoroutineContext()
-        val row = FloatArray(width)
-        val tileHeight = if (edits.isEmpty()) 1 else minOf(height, 128, maxOf(1, 256 * 1024 / width))
+        if (edits.isEmpty()) return mask.alpha(width, height, { coroutine.ensureActive() }, writeRow = writeRow)
+        val tileHeight = minOf(height, 128, maxOf(1, 256 * 1024 / width))
         val pixels = IntArray(width * tileHeight)
         // Match the floating-point preview layers while blending overlapping soft strokes.
-        val tile = if (edits.isEmpty()) null else createBitmap(width, tileHeight, Bitmap.Config.RGBA_F16)
+        val tile = createBitmap(width, tileHeight, Bitmap.Config.RGBA_F16)
         try {
-            val canvas = tile?.let(::Canvas)
+            val canvas = Canvas(tile)
             mask.alpha(width, height, { coroutine.ensureActive() }) { y, alpha ->
                 val tileRow = y % tileHeight
                 for (x in alpha.indices) pixels[tileRow * width + x] = (alpha[x] shl 24) or 0x00ffffff
                 if (tileRow == tileHeight - 1 || y == height - 1) {
                     val rows = tileRow + 1
                     val startY = y - tileRow
-                    if (tile != null && canvas != null) {
-                        tile.setPixels(pixels, 0, width, 0, 0, width, rows)
-                        canvas.withTranslation(0f, -startY.toFloat()) {
-                            for (edit in edits) {
-                                coroutine.ensureActive()
-                                when (edit) {
-                                    is Stroke -> cover(this, listOf(edit))
-                                    MaskEdit.Harden -> {
-                                        tile.getPixels(pixels, 0, width, 0, 0, width, rows)
-                                        for (i in 0 until rows * width)
-                                            pixels[i] = if (pixels[i] ushr 24 >= 128) Color.WHITE else Color.TRANSPARENT
-                                        tile.setPixels(pixels, 0, width, 0, 0, width, rows)
-                                    }
+                    tile.setPixels(pixels, 0, width, 0, 0, width, rows)
+                    canvas.withTranslation(0f, -startY.toFloat()) {
+                        for (edit in edits) {
+                            coroutine.ensureActive()
+                            when (edit) {
+                                is Stroke -> cover(this, listOf(edit))
+                                MaskEdit.Harden -> {
+                                    tile.getPixels(pixels, 0, width, 0, 0, width, rows)
+                                    for (i in 0 until rows * width)
+                                        pixels[i] = if (pixels[i] ushr 24 >= 128) Color.WHITE else Color.TRANSPARENT
+                                    tile.setPixels(pixels, 0, width, 0, 0, width, rows)
                                 }
                             }
                         }
-                        tile.getPixels(pixels, 0, width, 0, 0, width, rows)
                     }
+                    tile.getPixels(pixels, 0, width, 0, 0, width, rows)
                     for (i in 0 until rows) {
-                        for (x in row.indices) row[x] = (pixels[i * width + x] ushr 24) / 255f
-                        writeRow(startY + i, row)
+                        for (x in alpha.indices) alpha[x] = pixels[i * width + x] ushr 24
+                        writeRow(startY + i, alpha)
                     }
                 }
             }
         } finally {
-            tile?.recycle()
+            tile.recycle()
         }
     }
 

@@ -6,6 +6,25 @@ import java.util.zip.CRC32
 
 class ImageMathTest {
     @Test
+    fun rgbPreprocessingMatchesPillowAcrossAspectRatios() {
+        // CRC32 of the RGB bytes produced by Pillow's bilinear resize.
+        for ((shape, expected) in listOf(listOf(7, 53, 18, 9) to 2424210996L, listOf(47, 5, 11, 17) to 4163178826L)) {
+            val (width, height, outWidth, outHeight) = shape
+            val crc = CRC32()
+            ImageMath.resize(width, height, outWidth, outHeight, { y, row ->
+                for (x in row.indices) row[x] = (x * 0x120024 + y * 0x0317) and 0xffffff
+            }) { _, row ->
+                for (pixel in row) {
+                    crc.update(pixel ushr 16)
+                    crc.update(pixel ushr 8)
+                    crc.update(pixel)
+                }
+            }
+            assertEquals(expected, crc.value)
+        }
+    }
+
+    @Test
     fun storedMaskPreservesAlphaAndResizesAcrossDimensions() {
         val mask = CutoutMask.Stored(2, 2, byteArrayOf(0, 64, 128.toByte(), 255.toByte()), BackgroundModel.RMBG20)
         val same = mutableListOf<Int>()
@@ -49,7 +68,7 @@ class ImageMathTest {
         val rows = mutableListOf<IntArray>()
         ImageMath.alpha(mask, 3, 2) { _, row -> rows += row.clone() }
         rows.forEach { assertArrayEquals(intArrayOf(0, 127, 255), it) }
-        ImageMath.alpha(FloatArray(size * size) { 0.5f }, 3, 2) { _, row ->
+        ImageMath.alpha(FloatArray(size * size) { 0.93f }, 3, 2) { _, row ->
             assertArrayEquals(IntArray(3), row)
         }
         for (opacity in listOf(0f, 0.5f, 1f)) {
